@@ -136,10 +136,10 @@ def _add_vertical_wall_faces(bm, uv_layer, x, y, ts, wh, wt, z_base=0):
     bm.verts.ensure_lookup_table()
 
     face_data = [
-        ([v0, v3, v2, v1], [(0, 0), (1, 0), (1, 1), (0, 1)]),
+        ([v0, v3, v2, v1], [(0, 0), (0, 1), (1, 1), (1, 0)]),
         ([v4, v5, v6, v7], [(0, 0), (1, 0), (1, 1), (0, 1)]),
         ([v0, v4, v7, v3], [(0, 0), (1, 0), (1, 1), (0, 1)]),
-        ([v1, v2, v6, v5], [(0, 0), (1, 0), (1, 1), (0, 1)]),
+        ([v1, v2, v6, v5], [(0, 0), (0, 1), (1, 1), (1, 0)]),
     ]
     for verts, uvs in face_data:
         face = bm.faces.new(verts)
@@ -423,7 +423,7 @@ def build_maze_objects(props, maze_data, context, collection=None):
                             mat = Matrix.Translation(Vector((x0 + ts / 2, yc + tw, hw))) @ Matrix.Rotation(math.radians(-90), 4, 'X') @ cent
                             _add_mesh_at(bm_wall, custom_wall_north, mat, uv_wall)
                         else:
-                            verts = [bm_wall.verts.new(v) for v in [(x0, yc + tw, z_off), (x1, yc + tw, z_off), (x1, yc + tw, z_off + seg_h), (x0, yc + tw, z_off + seg_h)]]
+                            verts = [bm_wall.verts.new(v) for v in [(x1, yc + tw, z_off), (x0, yc + tw, z_off), (x0, yc + tw, z_off + seg_h), (x1, yc + tw, z_off + seg_h)]]
                             bm_wall.verts.ensure_lookup_table()
                             f = bm_wall.faces.new(verts)
                             for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
@@ -468,10 +468,10 @@ def build_maze_objects(props, maze_data, context, collection=None):
                             mat = Matrix.Translation(Vector((xc - tw, y0 + ts / 2, hw))) @ Matrix.Rotation(math.radians(-90), 4, 'Y') @ cent
                             _add_mesh_at(bm_wall, custom_wall_west, mat, uv_wall, swap_uv=True)
                         else:
-                            verts = [bm_wall.verts.new(v) for v in [(xc - tw, y0, z_off), (xc - tw, y1, z_off), (xc - tw, y1, z_off + seg_h), (xc - tw, y0, z_off + seg_h)]]
+                            verts = [bm_wall.verts.new(v) for v in [(xc - tw, y1, z_off), (xc - tw, y0, z_off), (xc - tw, y0, z_off + seg_h), (xc - tw, y1, z_off + seg_h)]]
                             bm_wall.verts.ensure_lookup_table()
                             f = bm_wall.faces.new(verts)
-                            for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
+                            for loop, uv in zip(f.loops, [(1,0),(0,0),(0,1),(1,1)]):
                                 loop[uv_wall].uv = uv
                         # South end-cap (always generated)
                         verts = [bm_wall.verts.new(v) for v in [(xc - tw, y0, z_off), (xc + tw, y0, z_off), (xc + tw, y0, z_off + seg_h), (xc - tw, y0, z_off + seg_h)]]
