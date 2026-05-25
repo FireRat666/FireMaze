@@ -20,18 +20,18 @@ def _get_wall_segments(maze_data):
     return segments
 
 
-def _add_wall_face(bm, uv_layer, cx, cy, ts, wh, direction):
+def _add_wall_face(bm, uv_layer, cx, cy, ts, wh, direction, z_base=0):
     if direction == '+Y':
-        pts = [(cx, cy + ts, 0), (cx, cy + ts, wh), (cx + ts, cy + ts, wh), (cx + ts, cy + ts, 0)]
+        pts = [(cx, cy + ts, z_base), (cx, cy + ts, z_base + wh), (cx + ts, cy + ts, z_base + wh), (cx + ts, cy + ts, z_base)]
         uvs = [(0, 0), (0, 1), (1, 1), (1, 0)]
     elif direction == '-Y':
-        pts = [(cx, cy, 0), (cx + ts, cy, 0), (cx + ts, cy, wh), (cx, cy, wh)]
+        pts = [(cx, cy, z_base), (cx + ts, cy, z_base), (cx + ts, cy, z_base + wh), (cx, cy, z_base + wh)]
         uvs = [(0, 0), (1, 0), (1, 1), (0, 1)]
     elif direction == '+X':
-        pts = [(cx + ts, cy, 0), (cx + ts, cy + ts, 0), (cx + ts, cy + ts, wh), (cx + ts, cy, wh)]
+        pts = [(cx + ts, cy, z_base), (cx + ts, cy + ts, z_base), (cx + ts, cy + ts, z_base + wh), (cx + ts, cy, z_base + wh)]
         uvs = [(0, 0), (1, 0), (1, 1), (0, 1)]
     elif direction == '-X':
-        pts = [(cx, cy, 0), (cx, cy, wh), (cx, cy + ts, wh), (cx, cy + ts, 0)]
+        pts = [(cx, cy, z_base), (cx, cy, z_base + wh), (cx, cy + ts, z_base + wh), (cx, cy + ts, z_base)]
         uvs = [(0, 0), (0, 1), (1, 1), (1, 0)]
     verts = [bm.verts.new(p) for p in pts]
     bm.verts.ensure_lookup_table()
@@ -81,18 +81,18 @@ def _add_floor_tile(bm, uv_layer, x, y, ts):
         loop[uv_layer].uv = uv
 
 
-def _add_horizontal_wall_faces(bm, uv_layer, x, y, ts, wh, wt):
+def _add_horizontal_wall_faces(bm, uv_layer, x, y, ts, wh, wt, z_base=0):
     x0, x1 = x * ts, (x + 1) * ts
     yc = y * ts
     t = wt / 2
-    v0 = bm.verts.new((x0, yc - t, 0))
-    v1 = bm.verts.new((x1, yc - t, 0))
-    v2 = bm.verts.new((x1, yc - t, wh))
-    v3 = bm.verts.new((x0, yc - t, wh))
-    v4 = bm.verts.new((x0, yc + t, 0))
-    v5 = bm.verts.new((x1, yc + t, 0))
-    v6 = bm.verts.new((x1, yc + t, wh))
-    v7 = bm.verts.new((x0, yc + t, wh))
+    v0 = bm.verts.new((x0, yc - t, z_base))
+    v1 = bm.verts.new((x1, yc - t, z_base))
+    v2 = bm.verts.new((x1, yc - t, z_base + wh))
+    v3 = bm.verts.new((x0, yc - t, z_base + wh))
+    v4 = bm.verts.new((x0, yc + t, z_base))
+    v5 = bm.verts.new((x1, yc + t, z_base))
+    v6 = bm.verts.new((x1, yc + t, z_base + wh))
+    v7 = bm.verts.new((x0, yc + t, z_base + wh))
     bm.verts.ensure_lookup_table()
 
     face_data = [
@@ -121,18 +121,18 @@ def _add_horizontal_roof_face(bm, uv_layer, x, y, ts, wh, wt):
         loop[uv_layer].uv = uv
 
 
-def _add_vertical_wall_faces(bm, uv_layer, x, y, ts, wh, wt):
+def _add_vertical_wall_faces(bm, uv_layer, x, y, ts, wh, wt, z_base=0):
     xc = x * ts
     y0, y1 = y * ts, (y + 1) * ts
     t = wt / 2
-    v0 = bm.verts.new((xc - t, y0, 0))
-    v1 = bm.verts.new((xc - t, y1, 0))
-    v2 = bm.verts.new((xc - t, y1, wh))
-    v3 = bm.verts.new((xc - t, y0, wh))
-    v4 = bm.verts.new((xc + t, y0, 0))
-    v5 = bm.verts.new((xc + t, y1, 0))
-    v6 = bm.verts.new((xc + t, y1, wh))
-    v7 = bm.verts.new((xc + t, y0, wh))
+    v0 = bm.verts.new((xc - t, y0, z_base))
+    v1 = bm.verts.new((xc - t, y1, z_base))
+    v2 = bm.verts.new((xc - t, y1, z_base + wh))
+    v3 = bm.verts.new((xc - t, y0, z_base + wh))
+    v4 = bm.verts.new((xc + t, y0, z_base))
+    v5 = bm.verts.new((xc + t, y1, z_base))
+    v6 = bm.verts.new((xc + t, y1, z_base + wh))
+    v7 = bm.verts.new((xc + t, y0, z_base + wh))
     bm.verts.ensure_lookup_table()
 
     face_data = [
@@ -238,7 +238,13 @@ def _add_floor_tile_at(bm, uv_layer, x0, y0, ts):
 
 def build_maze_objects(props, maze_data, context, collection=None):
     ts = props.tile_size
-    wh = props.wall_height
+    tiled = props.wall_height_tiled
+    tiles_high = props.wall_height_tiles if tiled else 1
+    if tiled:
+        wh = ts * tiles_high
+    else:
+        wh = props.wall_height
+    seg_h = ts if tiled else wh
     wt = props.wall_thickness
     wall_mode = props.wall_mode
 
@@ -325,39 +331,41 @@ def build_maze_objects(props, maze_data, context, collection=None):
         bm_wall = bmesh.new()
         uv_wall = bm_wall.loops.layers.uv.new("UVMap")
         cent = Matrix.Translation(Vector((-ts / 2, -ts / 2, 0))) if not centered else Matrix.Identity(4)
-        hw = wh / 2
-        for gy in range(gh):
-            for gx in range(gw):
-                if tiles[gy][gx]:
-                    cx, cy = gx * ts, gy * ts
-                    # +Y (north)
-                    if gy + 1 >= gh or not tiles[gy + 1][gx]:
-                        if custom_wall_north:
-                            mat = Matrix.Translation(Vector((cx + ts / 2, cy + ts, hw))) @ Matrix.Rotation(math.radians(-90), 4, 'X') @ cent
-                            _add_mesh_at(bm_wall, custom_wall_north, mat, uv_wall)
-                        else:
-                            _add_wall_face(bm_wall, uv_wall, cx, cy, ts, wh, '+Y')
-                    # -Y (south)
-                    if gy - 1 < 0 or not tiles[gy - 1][gx]:
-                        if custom_wall_south:
-                            mat = Matrix.Translation(Vector((cx + ts / 2, cy, hw))) @ Matrix.Rotation(math.radians(90), 4, 'X') @ cent
-                            _add_mesh_at(bm_wall, custom_wall_south, mat, uv_wall)
-                        else:
-                            _add_wall_face(bm_wall, uv_wall, cx, cy, ts, wh, '-Y')
-                    # +X (east)
-                    if gx + 1 >= gw or not tiles[gy][gx + 1]:
-                        if custom_wall_east:
-                            mat = Matrix.Translation(Vector((cx + ts, cy + ts / 2, hw))) @ Matrix.Rotation(math.radians(90), 4, 'Y') @ cent
-                            _add_mesh_at(bm_wall, custom_wall_east, mat, uv_wall, swap_uv=True)
-                        else:
-                            _add_wall_face(bm_wall, uv_wall, cx, cy, ts, wh, '+X')
-                    # -X (west)
-                    if gx - 1 < 0 or not tiles[gy][gx - 1]:
-                        if custom_wall_west:
-                            mat = Matrix.Translation(Vector((cx, cy + ts / 2, hw))) @ Matrix.Rotation(math.radians(-90), 4, 'Y') @ cent
-                            _add_mesh_at(bm_wall, custom_wall_west, mat, uv_wall, swap_uv=True)
-                        else:
-                            _add_wall_face(bm_wall, uv_wall, cx, cy, ts, wh, '-X')
+        for level in range(tiles_high):
+            z_off = level * seg_h
+            hw = z_off + seg_h / 2
+            for gy in range(gh):
+                for gx in range(gw):
+                    if tiles[gy][gx]:
+                        cx, cy = gx * ts, gy * ts
+                        # +Y (north)
+                        if gy + 1 >= gh or not tiles[gy + 1][gx]:
+                            if custom_wall_north:
+                                mat = Matrix.Translation(Vector((cx + ts / 2, cy + ts, hw))) @ Matrix.Rotation(math.radians(-90), 4, 'X') @ cent
+                                _add_mesh_at(bm_wall, custom_wall_north, mat, uv_wall)
+                            else:
+                                _add_wall_face(bm_wall, uv_wall, cx, cy, ts, seg_h, '+Y', z_base=z_off)
+                        # -Y (south)
+                        if gy - 1 < 0 or not tiles[gy - 1][gx]:
+                            if custom_wall_south:
+                                mat = Matrix.Translation(Vector((cx + ts / 2, cy, hw))) @ Matrix.Rotation(math.radians(90), 4, 'X') @ cent
+                                _add_mesh_at(bm_wall, custom_wall_south, mat, uv_wall)
+                            else:
+                                _add_wall_face(bm_wall, uv_wall, cx, cy, ts, seg_h, '-Y', z_base=z_off)
+                        # +X (east)
+                        if gx + 1 >= gw or not tiles[gy][gx + 1]:
+                            if custom_wall_east:
+                                mat = Matrix.Translation(Vector((cx + ts, cy + ts / 2, hw))) @ Matrix.Rotation(math.radians(90), 4, 'Y') @ cent
+                                _add_mesh_at(bm_wall, custom_wall_east, mat, uv_wall, swap_uv=True)
+                            else:
+                                _add_wall_face(bm_wall, uv_wall, cx, cy, ts, seg_h, '+X', z_base=z_off)
+                        # -X (west)
+                        if gx - 1 < 0 or not tiles[gy][gx - 1]:
+                            if custom_wall_west:
+                                mat = Matrix.Translation(Vector((cx, cy + ts / 2, hw))) @ Matrix.Rotation(math.radians(-90), 4, 'Y') @ cent
+                                _add_mesh_at(bm_wall, custom_wall_west, mat, uv_wall, swap_uv=True)
+                            else:
+                                _add_wall_face(bm_wall, uv_wall, cx, cy, ts, seg_h, '-X', z_base=z_off)
         bmesh.ops.remove_doubles(bm_wall, verts=bm_wall.verts, dist=0.001)
         _create_object_from_bm(bm_wall, "FireMaze_Walls", col, materials["wall"])
 
@@ -400,87 +408,89 @@ def build_maze_objects(props, maze_data, context, collection=None):
         bm_wall = bmesh.new()
         uv_wall = bm_wall.loops.layers.uv.new("UVMap")
         has_any_wall_custom = custom_wall_north or custom_wall_south or custom_wall_east or custom_wall_west
-        if has_any_wall_custom:
-            cent = Matrix.Translation(Vector((-ts / 2, -ts / 2, 0))) if not centered else Matrix.Identity(4)
-            hw = wh / 2
-            tw = wt / 2
-            for seg_type, a, b in segments:
-                if seg_type == 'H':
-                    x0, x1 = a * ts, (a + 1) * ts
-                    yc = b * ts
-                    # North face (+Y)
-                    if custom_wall_north:
-                        mat = Matrix.Translation(Vector((x0 + ts / 2, yc + tw, hw))) @ Matrix.Rotation(math.radians(-90), 4, 'X') @ cent
-                        _add_mesh_at(bm_wall, custom_wall_north, mat, uv_wall)
-                    else:
-                        verts = [bm_wall.verts.new(v) for v in [(x0, yc + tw, 0), (x1, yc + tw, 0), (x1, yc + tw, wh), (x0, yc + tw, wh)]]
+        cent = Matrix.Translation(Vector((-ts / 2, -ts / 2, 0))) if not centered else Matrix.Identity(4)
+        tw = wt / 2
+        for level in range(tiles_high):
+            z_off = level * seg_h
+            hw = z_off + seg_h / 2
+            if has_any_wall_custom:
+                for seg_type, a, b in segments:
+                    if seg_type == 'H':
+                        x0, x1 = a * ts, (a + 1) * ts
+                        yc = b * ts
+                        # North face (+Y)
+                        if custom_wall_north:
+                            mat = Matrix.Translation(Vector((x0 + ts / 2, yc + tw, hw))) @ Matrix.Rotation(math.radians(-90), 4, 'X') @ cent
+                            _add_mesh_at(bm_wall, custom_wall_north, mat, uv_wall)
+                        else:
+                            verts = [bm_wall.verts.new(v) for v in [(x0, yc + tw, z_off), (x1, yc + tw, z_off), (x1, yc + tw, z_off + seg_h), (x0, yc + tw, z_off + seg_h)]]
+                            bm_wall.verts.ensure_lookup_table()
+                            f = bm_wall.faces.new(verts)
+                            for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
+                                loop[uv_wall].uv = uv
+                        # South face (-Y)
+                        if custom_wall_south:
+                            mat = Matrix.Translation(Vector((x0 + ts / 2, yc - tw, hw))) @ Matrix.Rotation(math.radians(90), 4, 'X') @ cent
+                            _add_mesh_at(bm_wall, custom_wall_south, mat, uv_wall)
+                        else:
+                            verts = [bm_wall.verts.new(v) for v in [(x0, yc - tw, z_off), (x1, yc - tw, z_off), (x1, yc - tw, z_off + seg_h), (x0, yc - tw, z_off + seg_h)]]
+                            bm_wall.verts.ensure_lookup_table()
+                            f = bm_wall.faces.new(verts)
+                            for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
+                                loop[uv_wall].uv = uv
+                        # West end-cap (always generated)
+                        verts = [bm_wall.verts.new(v) for v in [(x0, yc + tw, z_off), (x0, yc - tw, z_off), (x0, yc - tw, z_off + seg_h), (x0, yc + tw, z_off + seg_h)]]
                         bm_wall.verts.ensure_lookup_table()
                         f = bm_wall.faces.new(verts)
                         for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
                             loop[uv_wall].uv = uv
-                    # South face (-Y)
-                    if custom_wall_south:
-                        mat = Matrix.Translation(Vector((x0 + ts / 2, yc - tw, hw))) @ Matrix.Rotation(math.radians(90), 4, 'X') @ cent
-                        _add_mesh_at(bm_wall, custom_wall_south, mat, uv_wall)
-                    else:
-                        verts = [bm_wall.verts.new(v) for v in [(x0, yc - tw, 0), (x1, yc - tw, 0), (x1, yc - tw, wh), (x0, yc - tw, wh)]]
+                        # East end-cap (always generated)
+                        verts = [bm_wall.verts.new(v) for v in [(x1, yc - tw, z_off), (x1, yc + tw, z_off), (x1, yc + tw, z_off + seg_h), (x1, yc - tw, z_off + seg_h)]]
                         bm_wall.verts.ensure_lookup_table()
                         f = bm_wall.faces.new(verts)
                         for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
                             loop[uv_wall].uv = uv
-                    # West end-cap (always generated)
-                    verts = [bm_wall.verts.new(v) for v in [(x0, yc + tw, 0), (x0, yc - tw, 0), (x0, yc - tw, wh), (x0, yc + tw, wh)]]
-                    bm_wall.verts.ensure_lookup_table()
-                    f = bm_wall.faces.new(verts)
-                    for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
-                        loop[uv_wall].uv = uv
-                    # East end-cap (always generated)
-                    verts = [bm_wall.verts.new(v) for v in [(x1, yc - tw, 0), (x1, yc + tw, 0), (x1, yc + tw, wh), (x1, yc - tw, wh)]]
-                    bm_wall.verts.ensure_lookup_table()
-                    f = bm_wall.faces.new(verts)
-                    for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
-                        loop[uv_wall].uv = uv
-                else:
-                    xc = a * ts
-                    y0, y1 = b * ts, (b + 1) * ts
-                    # East face (+X)
-                    if custom_wall_east:
-                        mat = Matrix.Translation(Vector((xc + tw, y0 + ts / 2, hw))) @ Matrix.Rotation(math.radians(90), 4, 'Y') @ cent
-                        _add_mesh_at(bm_wall, custom_wall_east, mat, uv_wall, swap_uv=True)
                     else:
-                        verts = [bm_wall.verts.new(v) for v in [(xc + tw, y0, 0), (xc + tw, y1, 0), (xc + tw, y1, wh), (xc + tw, y0, wh)]]
+                        xc = a * ts
+                        y0, y1 = b * ts, (b + 1) * ts
+                        # East face (+X)
+                        if custom_wall_east:
+                            mat = Matrix.Translation(Vector((xc + tw, y0 + ts / 2, hw))) @ Matrix.Rotation(math.radians(90), 4, 'Y') @ cent
+                            _add_mesh_at(bm_wall, custom_wall_east, mat, uv_wall, swap_uv=True)
+                        else:
+                            verts = [bm_wall.verts.new(v) for v in [(xc + tw, y0, z_off), (xc + tw, y1, z_off), (xc + tw, y1, z_off + seg_h), (xc + tw, y0, z_off + seg_h)]]
+                            bm_wall.verts.ensure_lookup_table()
+                            f = bm_wall.faces.new(verts)
+                            for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
+                                loop[uv_wall].uv = uv
+                        # West face (-X)
+                        if custom_wall_west:
+                            mat = Matrix.Translation(Vector((xc - tw, y0 + ts / 2, hw))) @ Matrix.Rotation(math.radians(-90), 4, 'Y') @ cent
+                            _add_mesh_at(bm_wall, custom_wall_west, mat, uv_wall, swap_uv=True)
+                        else:
+                            verts = [bm_wall.verts.new(v) for v in [(xc - tw, y0, z_off), (xc - tw, y1, z_off), (xc - tw, y1, z_off + seg_h), (xc - tw, y0, z_off + seg_h)]]
+                            bm_wall.verts.ensure_lookup_table()
+                            f = bm_wall.faces.new(verts)
+                            for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
+                                loop[uv_wall].uv = uv
+                        # South end-cap (always generated)
+                        verts = [bm_wall.verts.new(v) for v in [(xc - tw, y0, z_off), (xc + tw, y0, z_off), (xc + tw, y0, z_off + seg_h), (xc - tw, y0, z_off + seg_h)]]
                         bm_wall.verts.ensure_lookup_table()
                         f = bm_wall.faces.new(verts)
                         for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
                             loop[uv_wall].uv = uv
-                    # West face (-X)
-                    if custom_wall_west:
-                        mat = Matrix.Translation(Vector((xc - tw, y0 + ts / 2, hw))) @ Matrix.Rotation(math.radians(-90), 4, 'Y') @ cent
-                        _add_mesh_at(bm_wall, custom_wall_west, mat, uv_wall, swap_uv=True)
-                    else:
-                        verts = [bm_wall.verts.new(v) for v in [(xc - tw, y0, 0), (xc - tw, y1, 0), (xc - tw, y1, wh), (xc - tw, y0, wh)]]
+                        # North end-cap (always generated)
+                        verts = [bm_wall.verts.new(v) for v in [(xc + tw, y1, z_off), (xc - tw, y1, z_off), (xc - tw, y1, z_off + seg_h), (xc + tw, y1, z_off + seg_h)]]
                         bm_wall.verts.ensure_lookup_table()
                         f = bm_wall.faces.new(verts)
                         for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
                             loop[uv_wall].uv = uv
-                    # South end-cap (always generated)
-                    verts = [bm_wall.verts.new(v) for v in [(xc - tw, y0, 0), (xc + tw, y0, 0), (xc + tw, y0, wh), (xc - tw, y0, wh)]]
-                    bm_wall.verts.ensure_lookup_table()
-                    f = bm_wall.faces.new(verts)
-                    for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
-                        loop[uv_wall].uv = uv
-                    # North end-cap (always generated)
-                    verts = [bm_wall.verts.new(v) for v in [(xc + tw, y1, 0), (xc - tw, y1, 0), (xc - tw, y1, wh), (xc + tw, y1, wh)]]
-                    bm_wall.verts.ensure_lookup_table()
-                    f = bm_wall.faces.new(verts)
-                    for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
-                        loop[uv_wall].uv = uv
-        else:
-            for seg_type, a, b in segments:
-                if seg_type == 'H':
-                    _add_horizontal_wall_faces(bm_wall, uv_wall, a, b, ts, wh, wt)
-                else:
-                    _add_vertical_wall_faces(bm_wall, uv_wall, a, b, ts, wh, wt)
+            else:
+                for seg_type, a, b in segments:
+                    if seg_type == 'H':
+                        _add_horizontal_wall_faces(bm_wall, uv_wall, a, b, ts, seg_h, wt, z_base=z_off)
+                    else:
+                        _add_vertical_wall_faces(bm_wall, uv_wall, a, b, ts, seg_h, wt, z_base=z_off)
         _create_object_from_bm(bm_wall, "FireMaze_Walls", col, materials["wall"])
 
         # Roof

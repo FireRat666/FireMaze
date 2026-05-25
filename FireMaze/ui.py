@@ -18,7 +18,11 @@ class VIEW3D_PT_fire_maze(bpy.types.Panel):
         col.prop(props, "width")
         col.prop(props, "depth")
         col.separator(factor=0.5)
-        col.prop(props, "wall_height")
+        col.prop(props, "wall_height_tiled")
+        if props.wall_height_tiled:
+            col.prop(props, "wall_height_tiles")
+        else:
+            col.prop(props, "wall_height")
         col.row().prop(props, "wall_mode", expand=True)
         if props.wall_mode == 'thin':
             col.prop(props, "wall_thickness")

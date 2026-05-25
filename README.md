@@ -37,7 +37,9 @@ The panel appears in the 3D Viewport sidebar under the **FireRat** tab.
 | Setting | Description |
 | --- | --- |
 | **Width / Depth** | Number of cells along X / Y (3–200) |
-| **Wall Height** | Height of the wall geometry |
+| **Wall Height** | Height of the wall geometry. When Tiled Height is off, this is the absolute height in Blender units |
+| **Wall Height Tiled** | When enabled, `wh = Tile Size × Tiles High`. Each tile-height segment gets its own full `[0,1]²` UV, and custom wall meshes are placed once per level. Vertices are merged at segment seams (`remove_doubles`) |
+| **Tiles High** | (Tiled mode only) Number of tile-height segments to stack |
 | **Wall Mode** | **Thin** — narrow boxes on grid lines with configurable thickness; **Cube** — full tile blocks at every wall position |
 | **Wall Thickness** | (Thin mode only) Width of each wall segment |
 | **Tile Size** | Side length of each square tile |
@@ -60,6 +62,17 @@ FireMaze accepts any mesh object as a tile replacement for floors, walls (four d
 
 - **Tiles Centered ON** (default): the mesh origin is at its center, spanning `[-ts/2, ts/2]` in X and Y. This is how Blender primitives (grid, plane, etc.) are created.
 - **Tiles Centered OFF**: the mesh origin is at its bottom-left corner, spanning `[0, ts]` in X and Y.
+
+### Tiled height mode
+
+Enable **Wall Height Tiled** to stack wall segments that are each one tile tall. When combined with custom meshes:
+
+- The custom wall mesh is placed once per level at the center of each segment.
+- Each level gets its own full `[0,1]²` UV space.
+- Vertices at segment boundaries are merged via `remove_doubles`.
+- The roof is placed at the top of the stack (`Z = ts × tiles_high`).
+
+This is useful when you have a custom tile-height mesh and want to build taller walls without distorted UVs.
 
 ### Thin mode custom meshes
 

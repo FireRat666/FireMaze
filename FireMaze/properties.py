@@ -18,11 +18,23 @@ class FireMazeProperties(bpy.types.PropertyGroup):
     )
     wall_height: bpy.props.FloatProperty(
         name="Wall Height",
-        description="Height of walls",
+        description="Height of walls (used when Tiled Height is off)",
         default=1.0,
         min=0.1,
         max=100.0,
         unit='LENGTH',
+    )
+    wall_height_tiled: bpy.props.BoolProperty(
+        name="Tiled Height",
+        description="Stack walls in tile-height increments for consistent UV",
+        default=False,
+    )
+    wall_height_tiles: bpy.props.IntProperty(
+        name="Tiles High",
+        description="Number of tile-height segments to stack",
+        default=1,
+        min=1,
+        max=100,
     )
     wall_thickness: bpy.props.FloatProperty(
         name="Wall Thickness",
