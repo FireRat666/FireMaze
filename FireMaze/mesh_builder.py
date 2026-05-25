@@ -105,26 +105,27 @@ def _add_horizontal_wall_faces(bm, uv_layer, x, y, ts, wh, wt, z_base=0):
             loop[uv_layer].uv = uv
 
 
-def _add_horizontal_end_cap(bm, uv_layer, x, y, ts, wh, wt, z_base=0):
+def _add_horizontal_end_cap(bm, uv_layer, x, y, ts, wh, wt, h_positions=None, z_base=0):
     x0, x1 = x * ts, (x + 1) * ts
     yc = y * ts
     t = wt / 2
-    v0 = bm.verts.new((x0, yc + t, z_base))
-    v1 = bm.verts.new((x0, yc - t, z_base))
-    v2 = bm.verts.new((x0, yc - t, z_base + wh))
-    v3 = bm.verts.new((x0, yc + t, z_base + wh))
-    v4 = bm.verts.new((x1, yc - t, z_base))
-    v5 = bm.verts.new((x1, yc + t, z_base))
-    v6 = bm.verts.new((x1, yc + t, z_base + wh))
-    v7 = bm.verts.new((x1, yc - t, z_base + wh))
-    bm.verts.ensure_lookup_table()
-    face_data = [
-        ([v0, v1, v2, v3], [(0, 0), (1, 0), (1, 1), (0, 1)]),
-        ([v5, v4, v7, v6], [(0, 0), (1, 0), (1, 1), (0, 1)]),
-    ]
-    for verts, uvs in face_data:
-        face = bm.faces.new(verts)
-        for loop, uv in zip(face.loops, uvs):
+    if not h_positions or (x - 1, y) not in h_positions:
+        v0 = bm.verts.new((x0, yc + t, z_base))
+        v1 = bm.verts.new((x0, yc - t, z_base))
+        v2 = bm.verts.new((x0, yc - t, z_base + wh))
+        v3 = bm.verts.new((x0, yc + t, z_base + wh))
+        bm.verts.ensure_lookup_table()
+        f = bm.faces.new([v0, v1, v2, v3])
+        for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
+            loop[uv_layer].uv = uv
+    if not h_positions or (x + 1, y) not in h_positions:
+        v4 = bm.verts.new((x1, yc - t, z_base))
+        v5 = bm.verts.new((x1, yc + t, z_base))
+        v6 = bm.verts.new((x1, yc + t, z_base + wh))
+        v7 = bm.verts.new((x1, yc - t, z_base + wh))
+        bm.verts.ensure_lookup_table()
+        f = bm.faces.new([v4, v5, v6, v7])
+        for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
             loop[uv_layer].uv = uv
 
 
@@ -166,33 +167,35 @@ def _add_vertical_wall_faces(bm, uv_layer, x, y, ts, wh, wt, z_base=0):
             loop[uv_layer].uv = uv
 
 
-def _add_vertical_end_cap(bm, uv_layer, x, y, ts, wh, wt, z_base=0):
+def _add_vertical_end_cap(bm, uv_layer, x, y, ts, wh, wt, v_positions=None, z_base=0):
     xc = x * ts
     y0, y1 = y * ts, (y + 1) * ts
     t = wt / 2
-    v0 = bm.verts.new((xc - t, y0, z_base))
-    v1 = bm.verts.new((xc + t, y0, z_base))
-    v2 = bm.verts.new((xc + t, y0, z_base + wh))
-    v3 = bm.verts.new((xc - t, y0, z_base + wh))
-    v4 = bm.verts.new((xc + t, y1, z_base))
-    v5 = bm.verts.new((xc - t, y1, z_base))
-    v6 = bm.verts.new((xc - t, y1, z_base + wh))
-    v7 = bm.verts.new((xc + t, y1, z_base + wh))
-    bm.verts.ensure_lookup_table()
-    face_data = [
-        ([v0, v1, v2, v3], [(0, 0), (1, 0), (1, 1), (0, 1)]),
-        ([v5, v4, v7, v6], [(0, 0), (1, 0), (1, 1), (0, 1)]),
-    ]
-    for verts, uvs in face_data:
-        face = bm.faces.new(verts)
-        for loop, uv in zip(face.loops, uvs):
+    if not v_positions or (x, y - 1) not in v_positions:
+        v0 = bm.verts.new((xc - t, y0, z_base))
+        v1 = bm.verts.new((xc + t, y0, z_base))
+        v2 = bm.verts.new((xc + t, y0, z_base + wh))
+        v3 = bm.verts.new((xc - t, y0, z_base + wh))
+        bm.verts.ensure_lookup_table()
+        f = bm.faces.new([v0, v1, v2, v3])
+        for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
+            loop[uv_layer].uv = uv
+    if not v_positions or (x, y + 1) not in v_positions:
+        v4 = bm.verts.new((xc + t, y1, z_base))
+        v5 = bm.verts.new((xc - t, y1, z_base))
+        v6 = bm.verts.new((xc - t, y1, z_base + wh))
+        v7 = bm.verts.new((xc + t, y1, z_base + wh))
+        bm.verts.ensure_lookup_table()
+        f = bm.faces.new([v4, v5, v6, v7])
+        for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
             loop[uv_layer].uv = uv
 
 
-def _add_vertical_roof_face(bm, uv_layer, x, y, ts, wh, wt):
+def _add_vertical_roof_face(bm, uv_layer, x, y, ts, wh, wt, trim_south=False, trim_north=False):
     xc = x * ts
-    y0, y1 = y * ts, (y + 1) * ts
     t = wt / 2
+    y0 = y * ts + (t if trim_south else 0)
+    y1 = (y + 1) * ts - (t if trim_north else 0)
     v0 = bm.verts.new((xc - t, y0, wh))
     v1 = bm.verts.new((xc + t, y0, wh))
     v2 = bm.verts.new((xc + t, y1, wh))
@@ -430,6 +433,16 @@ def build_maze_objects(props, maze_data, context, collection=None):
     else:
         # Thin wall mode — walls on grid lines between adjacent floor cells
         segments = list(_get_wall_segments(maze_data))
+        h_positions = set()
+        v_positions = set()
+        h_endpoints = set()
+        for seg_type, a, b in segments:
+            if seg_type == 'H':
+                h_positions.add((a, b))
+                h_endpoints.add((a, b))
+                h_endpoints.add((a + 1, b))
+            else:
+                v_positions.add((a, b))
 
         # Floor
         bm_floor = bmesh.new()
@@ -483,17 +496,19 @@ def build_maze_objects(props, maze_data, context, collection=None):
                             for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
                                 loop[uv_wall].uv = uv
                         # West end-cap
-                        verts = [bm_cap.verts.new(v) for v in [(x0, yc + tw, z_off), (x0, yc - tw, z_off), (x0, yc - tw, z_off + seg_h), (x0, yc + tw, z_off + seg_h)]]
-                        bm_cap.verts.ensure_lookup_table()
-                        f = bm_cap.faces.new(verts)
-                        for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
-                            loop[uv_cap].uv = uv
+                        if (a - 1, b) not in h_positions:
+                            verts = [bm_cap.verts.new(v) for v in [(x0, yc + tw, z_off), (x0, yc - tw, z_off), (x0, yc - tw, z_off + seg_h), (x0, yc + tw, z_off + seg_h)]]
+                            bm_cap.verts.ensure_lookup_table()
+                            f = bm_cap.faces.new(verts)
+                            for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
+                                loop[uv_cap].uv = uv
                         # East end-cap
-                        verts = [bm_cap.verts.new(v) for v in [(x1, yc - tw, z_off), (x1, yc + tw, z_off), (x1, yc + tw, z_off + seg_h), (x1, yc - tw, z_off + seg_h)]]
-                        bm_cap.verts.ensure_lookup_table()
-                        f = bm_cap.faces.new(verts)
-                        for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
-                            loop[uv_cap].uv = uv
+                        if (a + 1, b) not in h_positions:
+                            verts = [bm_cap.verts.new(v) for v in [(x1, yc - tw, z_off), (x1, yc + tw, z_off), (x1, yc + tw, z_off + seg_h), (x1, yc - tw, z_off + seg_h)]]
+                            bm_cap.verts.ensure_lookup_table()
+                            f = bm_cap.faces.new(verts)
+                            for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
+                                loop[uv_cap].uv = uv
                     else:
                         xc = a * ts
                         y0, y1 = b * ts, (b + 1) * ts
@@ -518,25 +533,27 @@ def build_maze_objects(props, maze_data, context, collection=None):
                             for loop, uv in zip(f.loops, [(1,0),(0,0),(0,1),(1,1)]):
                                 loop[uv_wall].uv = uv
                         # South end-cap
-                        verts = [bm_cap.verts.new(v) for v in [(xc - tw, y0, z_off), (xc + tw, y0, z_off), (xc + tw, y0, z_off + seg_h), (xc - tw, y0, z_off + seg_h)]]
-                        bm_cap.verts.ensure_lookup_table()
-                        f = bm_cap.faces.new(verts)
-                        for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
-                            loop[uv_cap].uv = uv
+                        if (a, b - 1) not in v_positions:
+                            verts = [bm_cap.verts.new(v) for v in [(xc - tw, y0, z_off), (xc + tw, y0, z_off), (xc + tw, y0, z_off + seg_h), (xc - tw, y0, z_off + seg_h)]]
+                            bm_cap.verts.ensure_lookup_table()
+                            f = bm_cap.faces.new(verts)
+                            for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
+                                loop[uv_cap].uv = uv
                         # North end-cap
-                        verts = [bm_cap.verts.new(v) for v in [(xc + tw, y1, z_off), (xc - tw, y1, z_off), (xc - tw, y1, z_off + seg_h), (xc + tw, y1, z_off + seg_h)]]
-                        bm_cap.verts.ensure_lookup_table()
-                        f = bm_cap.faces.new(verts)
-                        for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
-                            loop[uv_cap].uv = uv
+                        if (a, b + 1) not in v_positions:
+                            verts = [bm_cap.verts.new(v) for v in [(xc + tw, y1, z_off), (xc - tw, y1, z_off), (xc - tw, y1, z_off + seg_h), (xc + tw, y1, z_off + seg_h)]]
+                            bm_cap.verts.ensure_lookup_table()
+                            f = bm_cap.faces.new(verts)
+                            for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
+                                loop[uv_cap].uv = uv
             else:
                 for seg_type, a, b in segments:
                     if seg_type == 'H':
                         _add_horizontal_wall_faces(bm_wall, uv_wall, a, b, ts, seg_h, wt, z_base=z_off)
-                        _add_horizontal_end_cap(bm_cap, uv_cap, a, b, ts, seg_h, wt, z_base=z_off)
+                        _add_horizontal_end_cap(bm_cap, uv_cap, a, b, ts, seg_h, wt, h_positions=h_positions, z_base=z_off)
                     else:
                         _add_vertical_wall_faces(bm_wall, uv_wall, a, b, ts, seg_h, wt, z_base=z_off)
-                        _add_vertical_end_cap(bm_cap, uv_cap, a, b, ts, seg_h, wt, z_base=z_off)
+                        _add_vertical_end_cap(bm_cap, uv_cap, a, b, ts, seg_h, wt, v_positions=v_positions, z_base=z_off)
         _create_object_from_bm(bm_wall, "FireMaze_Walls", col, materials["wall"])
         if bm_cap.verts:
             _create_object_from_bm(bm_cap, "FireMaze_WallEndCaps", col, materials["end_cap"])
@@ -557,11 +574,58 @@ def build_maze_objects(props, maze_data, context, collection=None):
                 mat = Matrix.Translation(Vector((cx, cy, wh)))
                 _add_mesh_at(bm_roof, custom_roof, mat, uv_roof)
         else:
+            filled = set()
             for seg_type, a, b in segments:
                 if seg_type == 'H':
                     _add_horizontal_roof_face(bm_roof, uv_roof, a, b, ts, wh, wt)
                 else:
-                    _add_vertical_roof_face(bm_roof, uv_roof, a, b, ts, wh, wt)
+                    tsouth = (a, b) in h_endpoints
+                    tnorth = (a, b + 1) in h_endpoints
+                    _add_vertical_roof_face(bm_roof, uv_roof, a, b, ts, wh, wt, trim_south=tsouth, trim_north=tnorth)
+                    tw = wt / 2
+                    xc = a * ts
+                    if tsouth:
+                        yc = b * ts
+                        y_lo = yc if (a, b - 1) not in v_positions else yc - tw
+                        y_hi = yc + tw
+                        for gx, gy, side in [(a - 1, b, 'l'), (a, b, 'r')]:
+                            key = (gx, gy, side)
+                            if (gx, gy) not in h_positions and key not in filled:
+                                filled.add(key)
+                                if side == 'l':
+                                    hx0, hx1 = xc - tw, xc
+                                else:
+                                    hx0, hx1 = xc, xc + tw
+                                v0 = bm_roof.verts.new((hx0, y_lo, wh))
+                                v1 = bm_roof.verts.new((hx1, y_lo, wh))
+                                v2 = bm_roof.verts.new((hx1, y_hi, wh))
+                                v3 = bm_roof.verts.new((hx0, y_hi, wh))
+                                bm_roof.verts.ensure_lookup_table()
+                                f = bm_roof.faces.new([v0, v1, v2, v3])
+                                for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
+                                    loop[uv_roof].uv = uv
+                    if tnorth:
+                        yc = (b + 1) * ts
+                        y_lo = yc - tw
+                        y_hi = yc if (a, b + 1) not in v_positions else yc + tw
+                        for gx, gy, side in [(a - 1, b + 1, 'l'), (a, b + 1, 'r')]:
+                            key = (gx, gy, side)
+                            if (gx, gy) not in h_positions and key not in filled:
+                                filled.add(key)
+                                if side == 'l':
+                                    hx0, hx1 = xc - tw, xc
+                                else:
+                                    hx0, hx1 = xc, xc + tw
+                                v0 = bm_roof.verts.new((hx0, y_lo, wh))
+                                v1 = bm_roof.verts.new((hx1, y_lo, wh))
+                                v2 = bm_roof.verts.new((hx1, y_hi, wh))
+                                v3 = bm_roof.verts.new((hx0, y_hi, wh))
+                                bm_roof.verts.ensure_lookup_table()
+                                f = bm_roof.faces.new([v0, v1, v2, v3])
+                                for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
+                                    loop[uv_roof].uv = uv
+        if not custom_roof:
+            bmesh.ops.remove_doubles(bm_roof, verts=bm_roof.verts, dist=0.001)
         _create_object_from_bm(bm_roof, "FireMaze_Roof", col, materials["roof"])
 
     return col
