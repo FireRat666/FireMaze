@@ -30,7 +30,7 @@ The panel appears in the 3D Viewport sidebar under the **FireRat** tab.
 
 1. Open the 3D Viewport sidebar (**N** key) and find the **FireRat** tab
 2. Click **Generate Maze** — a maze is created at the 3D cursor with three objects: `FireMaze_Floor`, `FireMaze_Walls`, `FireMaze_Roof`
-3. Click **Clear Maze** to remove all generated objects and collections
+3. Click **Clear Maze** to delete all objects carrying the `fire_maze` custom property and all collections named `FireMaze*`
 
 ## Settings
 
@@ -80,20 +80,23 @@ When custom wall meshes are set in Thin mode, the generated box faces are replac
 
 ## Objects
 
-Each generated maze produces three mesh objects:
+Each generated maze produces up to four mesh objects:
 
 | Object | Material | Description |
 | --- | --- | --- |
 | `FireMaze_Floor` | FireMaze_Floor (dark gray) | All floor tiles |
 | `FireMaze_Walls` | FireMaze_Walls (mid gray) | All wall faces (exposed sides only, no internal faces) |
-| `FireMaze_Roof` | FireMaze_Roof (light gray) | All roof/ceiling tiles |
+| `FireMaze_Roof` | FireMaze_Roof (medium gray) | All roof/ceiling tiles |
+| `FireMaze_WallEndCaps` | FireMaze_WallEndCaps (reddish) | Thin-mode end-cap faces at wall endpoints |
 
-All faces use full `[0,1]²` UV mapping for seamless texture tiling.
+Roof and end-cap faces use world-proportional UV mapping (each face maps to its actual world-space dimensions in UV). The floor and walls use full `[0,1]²` UV mapping for seamless texture tiling.
 
 ## Collection management
 
 - Consecutive generations create `FireMaze`, `FireMaze.001`, `FireMaze.002`, etc.
-- Clear removes all collections matching `FireMaze*` and their objects.
+- Each generated object carries a `fire_maze` boolean custom property set to `True`.
+- **Clear Maze** scans **all** objects in the scene, deletes every object where `fire_maze` is `True`, then removes all collections whose name starts with `FireMaze`.
+- This means renaming or relocating an object does **not** protect it from Clear Maze — the custom property follows it anywhere. To keep an object, remove the `fire_maze` custom property manually (Properties → Object → Custom Properties).
 
 ## License
 
