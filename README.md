@@ -2,6 +2,8 @@
 
 A Blender 4.2+ extension for generating random tile-based mazes with two wall construction modes, custom mesh support, and full UV mapping.
 
+![main](Mazes.png)
+
 ## Features
 
 - **DFS iterative backtracking** — generates a perfect maze (exactly one path between any two points) every time
