@@ -1,6 +1,5 @@
 import bpy
 
-
 class VIEW3D_PT_fire_maze(bpy.types.Panel):
     bl_label = "FireMaze"
     bl_idname = "VIEW3D_PT_fire_maze"
@@ -29,48 +28,205 @@ class VIEW3D_PT_fire_maze(bpy.types.Panel):
         col.prop(props, "tile_size")
 
         box = layout.box()
-        box.label(text="Mode", icon='PLAY')
+        box.label(text="Generation & Editing", icon='FILE_REFRESH')
         col = box.column(align=True)
+        col.prop(props, "seed")
+        col.separator(factor=0.5)
+        if props.is_editing:
+            col.operator("fire_maze.interactive_edit", text="Exit Edit Mode", icon='CANCEL', depress=True)
+            alert_box = layout.box()
+            alert_box.alert = True
+            alert_box.label(text="Editing Mode Active", icon='ERROR')
+            alert_box.label(text="Left-Click walls to toggle")
+            alert_box.label(text="Press Esc or click Exit to finish")
+        else:
+            col.operator("fire_maze.interactive_edit", text="Interactive Edit", icon='EDITMODE_HLT')
+
+        layout.separator(factor=0.5)
+        row = layout.row(align=True)
+        row.scale_y = 1.8
+        row.operator("fire_maze.generate", text="Generate Maze", icon='MESH_GRID')
+        layout.separator(factor=0.5)
+        layout.operator("fire_maze.clear", text="Clear Maze", icon='TRASH')
+
+
+class VIEW3D_PT_fire_maze_algorithm(bpy.types.Panel):
+    bl_label = "Algorithm & Rooms"
+    bl_idname = "VIEW3D_PT_fire_maze_algorithm"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "FireRat"
+    bl_parent_id = "VIEW3D_PT_fire_maze"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        props = context.scene.fire_maze
+        col = layout.column(align=True)
+        col.prop(props, "algorithm")
+        col.separator(factor=0.5)
+        col.prop(props, "rooms_enable")
+        if props.rooms_enable:
+            col.prop(props, "rooms_count")
+            col.prop(props, "min_room_size")
+            col.prop(props, "max_room_size")
+
+
+class VIEW3D_PT_fire_maze_entrances(bpy.types.Panel):
+    bl_label = "Entrances & Exits"
+    bl_idname = "VIEW3D_PT_fire_maze_entrances"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "FireRat"
+    bl_parent_id = "VIEW3D_PT_fire_maze"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        props = context.scene.fire_maze
+        col = layout.column(align=True)
         col.row().prop(props, "mode", expand=True)
+        col.separator(factor=0.3)
+        col.prop(props, "entrance_side")
+        col.prop(props, "num_entrances")
+        col.separator(factor=0.3)
+        col.prop(props, "exit_side")
+        col.prop(props, "num_exits")
         if props.mode == 'center':
             col.separator(factor=0.3)
             col.prop(props, "emergency_exits")
 
-        box = layout.box()
-        box.label(text="Randomization", icon='FILE_REFRESH')
-        col = box.column(align=True)
-        col.prop(props, "seed")
 
-        box = layout.box()
-        box.label(text="Custom Tiles (optional)", icon='MESH_DATA')
-        col = box.column(align=True)
+class VIEW3D_PT_fire_maze_loops(bpy.types.Panel):
+    bl_label = "Loops & Layout"
+    bl_idname = "VIEW3D_PT_fire_maze_loops"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "FireRat"
+    bl_parent_id = "VIEW3D_PT_fire_maze"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        props = context.scene.fire_maze
+        col = layout.column(align=True)
+        col.prop(props, "loop_probability", slider=True)
+        col.prop(props, "isolated_wall_prob", slider=True)
+
+
+class VIEW3D_PT_fire_maze_guide(bpy.types.Panel):
+    bl_label = "Guide Path"
+    bl_idname = "VIEW3D_PT_fire_maze_guide"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "FireRat"
+    bl_parent_id = "VIEW3D_PT_fire_maze"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        props = context.scene.fire_maze
+        col = layout.column(align=True)
+        col.prop(props, "generate_guide")
+        if props.generate_guide:
+            col.prop(props, "guide_type")
+            col.prop(props, "guide_width")
+            col.prop(props, "guide_height_offset")
+            col.prop(props, "guide_wave_amplitude")
+            col.prop(props, "guide_wave_frequency")
+
+
+class VIEW3D_PT_fire_maze_custom_tiles(bpy.types.Panel):
+    bl_label = "Custom Meshes & Collections"
+    bl_idname = "VIEW3D_PT_fire_maze_custom_tiles"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "FireRat"
+    bl_parent_id = "VIEW3D_PT_fire_maze"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        props = context.scene.fire_maze
+        col = layout.column(align=True)
         col.prop(props, "tiles_centered")
         col.separator(factor=0.3)
-        col.prop(props, "custom_floor_mesh", text="Floor")
+        col.prop(props, "custom_floor_mesh", text="Floor Mesh")
+        col.prop(props, "custom_floor_collection", text="Floor Collection")
+        col.prop(props, "custom_roof_mesh", text="Roof Mesh")
+        col.prop(props, "custom_roof_collection", text="Roof Collection")
+        col.separator(factor=0.3)
         col.prop(props, "custom_wall_north", text="Wall +Y (North)")
         col.prop(props, "custom_wall_south", text="Wall -Y (South)")
         col.prop(props, "custom_wall_east", text="Wall +X (East)")
         col.prop(props, "custom_wall_west", text="Wall -X (West)")
-        col.prop(props, "custom_roof_mesh", text="Roof")
-
-        row = layout.row(align=True)
-        row.scale_y = 1.8
-        row.operator("fire_maze.generate", text="Generate Maze",
-                     icon='MESH_GRID')
-        layout.separator(factor=0.5)
-
-        layout.separator(factor=0.5)
-        layout.operator("fire_maze.clear", text="Clear Maze",
-                        icon='TRASH')
+        col.separator(factor=0.3)
+        col.prop(props, "custom_wall_collection", text="Wall Collection")
+        if props.wall_mode == 'cube':
+            col.prop(props, "cube_mode_pillar", text="Pillar Mode (Cube)")
 
 
-classes = (VIEW3D_PT_fire_maze,)
+class VIEW3D_PT_fire_maze_transforms(bpy.types.Panel):
+    bl_label = "Detailed Transforms"
+    bl_idname = "VIEW3D_PT_fire_maze_transforms"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "FireRat"
+    bl_parent_id = "VIEW3D_PT_fire_maze"
+    bl_options = {'DEFAULT_CLOSED'}
 
+    def draw(self, context):
+        layout = self.layout
+        props = context.scene.fire_maze
+        col = layout.column(align=True)
+        col.label(text="Wall Offsets:")
+        col.prop(props, "wall_translate", text="Translate")
+        col.prop(props, "wall_rotate", text="Rotate")
+        col.prop(props, "wall_scale", text="Scale")
+        col.separator(factor=0.5)
+        col.label(text="Floor Offsets:")
+        col.prop(props, "floor_translate", text="Translate")
+        col.prop(props, "floor_rotate", text="Rotate")
+        col.prop(props, "floor_scale", text="Scale")
+
+
+class VIEW3D_PT_fire_maze_cleanup(bpy.types.Panel):
+    bl_label = "Post-Processing"
+    bl_idname = "VIEW3D_PT_fire_maze_cleanup"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "FireRat"
+    bl_parent_id = "VIEW3D_PT_fire_maze"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        props = context.scene.fire_maze
+        col = layout.column(align=True)
+        col.prop(props, "single_wall_object")
+        col.prop(props, "merge_objects")
+        col.prop(props, "remove_doubles")
+        
+        col.separator()
+        col.prop(props, "generate_colliders")
+        if props.generate_colliders:
+            col.prop(props, "merge_colliders")
+
+
+classes = (
+    VIEW3D_PT_fire_maze,
+    VIEW3D_PT_fire_maze_algorithm,
+    VIEW3D_PT_fire_maze_entrances,
+    VIEW3D_PT_fire_maze_loops,
+    VIEW3D_PT_fire_maze_guide,
+    VIEW3D_PT_fire_maze_custom_tiles,
+    VIEW3D_PT_fire_maze_transforms,
+    VIEW3D_PT_fire_maze_cleanup,
+)
 
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
-
 
 def unregister():
     for cls in reversed(classes):
