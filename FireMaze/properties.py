@@ -358,6 +358,20 @@ class FireMazeProperties(bpy.types.PropertyGroup):
         description="Remove double vertices when finished building maze",
         default=False,
     )
+    generate_lightmap: bpy.props.BoolProperty(
+        name="Generate Lightmap UVs",
+        description="Generate a second UV map named 'Lightmap' and perform an unwrap on all final maze mesh objects",
+        default=False,
+    )
+    lightmap_method: bpy.props.EnumProperty(
+        name="Lightmap Method",
+        description="Method used to unwrap lightmap UVs",
+        default='smart',
+        items=[
+            ('smart', "Smart UV Project", "Group co-planar faces into continuous islands (reduces seams)"),
+            ('pack', "Lightmap Pack", "Project and pack each face individually (zero distortion, maximum packing density)"),
+        ],
+    )
     generate_colliders: bpy.props.BoolProperty(
         name="Generate Colliders",
         description="Generate simple, flat mesh objects for collision (Floor, Walls, and Roof colliders)",

@@ -355,6 +355,79 @@ def _remove_doubles_on_obj(obj):
     bm.to_mesh(obj.data)
     bm.free()
 
+def _generate_lightmap_on_obj(obj, context, method='smart'):
+    if not obj or obj.type != 'MESH':
+        return
+        
+    # Store currently active object, selection, and mode
+    original_active = context.view_layer.objects.active
+    original_selected = list(context.selected_objects)
+    original_mode = context.object.mode if context.object else 'OBJECT'
+    
+    # Make sure we are in object mode before adding UV map
+    if original_mode != 'OBJECT':
+        try:
+            bpy.ops.object.mode_set(mode='OBJECT')
+        except Exception:
+            pass
+            
+    # Add a new UV map named 'Lightmap'
+    uv_map = obj.data.uv_layers.get("Lightmap")
+    if not uv_map:
+        uv_map = obj.data.uv_layers.new(name="Lightmap")
+    
+    # Set the new UV map as active for unwrapping
+    original_active_uv = obj.data.uv_layers.active
+    obj.data.uv_layers.active = uv_map
+    
+    # Select only this object and make it active
+    bpy.ops.object.select_all(action='DESELECT')
+    obj.select_set(True)
+    context.view_layer.objects.active = obj
+    
+    try:
+        # Switch to Edit Mode
+        bpy.ops.object.mode_set(mode='EDIT')
+        # Select all geometry
+        bpy.ops.mesh.select_all(action='SELECT')
+        # Perform unwrap based on selected method
+        if method == 'pack':
+            try:
+                bpy.ops.uv.lightmap_pack(PREF_CONTEXT='SEL_FACES', PREF_PACK_IN_ONE=True, PREF_NEW_UVLAYER=False)
+            except Exception:
+                # Fallback to default arguments if API differs
+                bpy.ops.uv.lightmap_pack()
+        else:
+            # Perform Smart UV Project (angle_limit 66, island_margin 0.02)
+            bpy.ops.uv.smart_project(angle_limit=66.0, island_margin=0.02)
+        # Switch back to Object Mode
+        bpy.ops.object.mode_set(mode='OBJECT')
+    except Exception as e:
+        print(f"Failed to unwrap lightmap for {obj.name}: {e}")
+        try:
+            bpy.ops.object.mode_set(mode='OBJECT')
+        except Exception:
+            pass
+            
+    # Restore original active UV map
+    if original_active_uv:
+        obj.data.uv_layers.active = original_active_uv
+        
+    # Restore original active object and selection
+    bpy.ops.object.select_all(action='DESELECT')
+    for o in original_selected:
+        try:
+            o.select_set(True)
+        except Exception:
+            pass
+    context.view_layer.objects.active = original_active
+    
+    if original_active:
+        try:
+            bpy.ops.object.mode_set(mode=original_mode)
+        except Exception:
+            pass
+
 def _merge_maze_objects(objects, context, name="FireMaze_Merged"):
     objects = [obj for obj in objects if obj is not None]
     if len(objects) == 0:
@@ -533,7 +606,7 @@ def build_maze_objects(props, maze_data, context, collection=None, force_simple=
         created_objects.append(wall_obj)
 
         # Roof
-        if not props.cube_mode_pillar or name_suffix == "_EditHelper":
+        if not props.cube_mode_pillar or name_suffix in {"_EditHelper", "_Collider"}:
             bm_roof = bmesh.new()
             uv_roof = bm_roof.loops.layers.uv.new("UVMap")
             roof_materials = [materials["roof"]]
@@ -906,6 +979,12 @@ def build_maze_objects(props, maze_data, context, collection=None, force_simple=
             merged_obj = _merge_maze_objects(meshes_to_merge, context, name="FireMaze_Merged")
         # Remaining non-mesh objects are kept separate but stay in the collection
     
+    # Lightmap UV generation for visual mesh objects
+    if not name_suffix and props.generate_lightmap:
+        mesh_objs = [obj for obj in col.objects if obj.type == 'MESH']
+        for obj in mesh_objs:
+            _generate_lightmap_on_obj(obj, context, method=props.lightmap_method)
+
     return col
 
 def _ensure_materials():

@@ -206,6 +206,9 @@ class VIEW3D_PT_fire_maze_cleanup(bpy.types.Panel):
         col.prop(props, "single_wall_object")
         col.prop(props, "merge_objects")
         col.prop(props, "remove_doubles")
+        col.prop(props, "generate_lightmap")
+        if props.generate_lightmap:
+            col.prop(props, "lightmap_method", text="Method")
         
         col.separator()
         col.prop(props, "generate_colliders")

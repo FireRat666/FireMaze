@@ -98,7 +98,10 @@ Add variety and organic offsets to standard or custom tiles using local matrix t
 * **Single Wall Object**: Merges all wall and cap faces into a single object (`FireMaze_Walls`) to keep the outliner clean.
 * **Merge Objects**: Combines floors, walls, roofs, and caps into one single merged mesh (`FireMaze_Merged`).
 * **Remove Doubles**: Performs a final vertex weld operation to merge touching corners and stacked tiled wall segments.
-* **Generate Colliders**: Generates simple, flat-faced helper meshes (`FireMaze_Floor_Collider`, `FireMaze_Walls_Collider`, `FireMaze_Roof_Collider`) matching the maze layout for easy game engine integration (hidden in final renders by default).
+* **Generate Lightmap UVs**: Generates a second UV map named "Lightmap" on all final visual mesh objects (such as `FireMaze_Merged` or separate floor/wall/roof meshes) for baking or lightmapping. It offers two unwrapping methods:
+  * **Smart UV Project**: Groups adjacent/co-planar faces into contiguous UV islands (recommended for reducing seam-bleeding in game engines).
+  * **Lightmap Pack**: Project and pack each face individually (guarantees zero distortion and maximum packing efficiency, but splits every face).
+* **Generate Colliders**: Generates simple, flat-faced helper meshes (`FireMaze_Floor_Collider`, `FireMaze_Walls_Collider`, `FireMaze_Roof_Collider`) matching the maze layout for easy game engine integration (hidden in final renders by default). *Note: Roof colliders are generated even when Instanced Pillars (Pillar Mode) is enabled so that they can be used for collision.*
 * **Merge Colliders**: Combines all active collider objects into a single unified `FireMaze_Collider` mesh.
 
 ---
