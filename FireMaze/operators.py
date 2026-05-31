@@ -197,9 +197,29 @@ def rebuild_maze_from_collection(context, col):
             bpy.data.objects.remove(obj, do_unlink=True)
             if data and data.users == 0:
                 if obj_type == 'MESH':
-                    bpy.data.meshes.remove(data)
+                    try:
+                        bpy.data.meshes.remove(data)
+                    except Exception:
+                        pass
                 elif obj_type == 'CURVE':
-                    bpy.data.curves.remove(data)
+                    try:
+                        bpy.data.curves.remove(data)
+                    except Exception:
+                        pass
+
+    # Sweep any orphaned FireMaze meshes/curves left over in the database
+    for m in list(bpy.data.meshes):
+        if m.name.startswith("FireMaze") and m.users == 0:
+            try:
+                bpy.data.meshes.remove(m)
+            except Exception:
+                pass
+    for c in list(bpy.data.curves):
+        if c.name.startswith("FireMaze") and c.users == 0:
+            try:
+                bpy.data.curves.remove(c)
+            except Exception:
+                pass
 
     # Rebuild
     props = context.scene.fire_maze
@@ -340,6 +360,20 @@ class MAZE_OT_clear(bpy.types.Operator):
                 count += 1
 
         _remove_maze_collections()
+
+        # Sweep any orphaned FireMaze meshes/curves left over in the database
+        for m in list(bpy.data.meshes):
+            if m.name.startswith("FireMaze") and m.users == 0:
+                try:
+                    bpy.data.meshes.remove(m)
+                except Exception:
+                    pass
+        for c in list(bpy.data.curves):
+            if c.name.startswith("FireMaze") and c.users == 0:
+                try:
+                    bpy.data.curves.remove(c)
+                except Exception:
+                    pass
 
         self.report({'INFO'}, f"Removed {count} maze object(s)")
         return {'FINISHED'}

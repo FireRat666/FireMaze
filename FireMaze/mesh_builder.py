@@ -5,7 +5,6 @@ import bmesh
 from collections import deque
 from mathutils import Matrix, Vector
 
-_temp_mesh = None
 
 def _get_wall_segments(maze_data):
     segments = set()
@@ -65,6 +64,14 @@ def _add_wall_face_transformed(bm, uv_layer, cx, cy, ts, wh, direction, mat_offs
     for loop, uv in zip(face.loops, uvs):
         loop[uv_layer].uv = uv
 
+def _merge_bmesh_geometries(src_bm, dst_bm):
+    # Use a unique local temporary mesh to copy geometry at C-speed
+    # without sharing state or causing layout mutation crashes.
+    temp_mesh = bpy.data.meshes.new("_FM_Temp_Local")
+    src_bm.to_mesh(temp_mesh)
+    dst_bm.from_mesh(temp_mesh)
+    bpy.data.meshes.remove(temp_mesh)
+
 def _add_mesh_at(bm, src_mesh, matrix, uv_layer, final_materials_list=None, swap_uv=False, temp_mesh=None):
     # Map the source mesh's materials to the final combined materials list
     material_map = []
@@ -98,20 +105,8 @@ def _add_mesh_at(bm, src_mesh, matrix, uv_layer, final_materials_list=None, swap
             else:
                 f.material_index = 0
 
-    global _temp_mesh
-    mesh_obj = temp_mesh if temp_mesh is not None else _temp_mesh
-    created_temp = False
-    if mesh_obj is None:
-        mesh_obj = bpy.data.meshes.new("_FM_Temp_At")
-        created_temp = True
-
-    temp_bm.to_mesh(mesh_obj)
+    _merge_bmesh_geometries(temp_bm, bm)
     temp_bm.free()
-
-    bm.from_mesh(mesh_obj)
-
-    if created_temp:
-        bpy.data.meshes.remove(mesh_obj)
 
 def _add_floor_tile_transformed(bm, uv_layer, x, y, ts, mat_offset):
     cx = x * ts + ts / 2
@@ -1528,20 +1523,8 @@ def _add_mesh_polar_center(bm, src_mesh, mat_offset, uv_layer, final_materials_l
             else:
                 f.material_index = 0
 
-    global _temp_mesh
-    mesh_obj = temp_mesh if temp_mesh is not None else _temp_mesh
-    created_temp = False
-    if mesh_obj is None:
-        mesh_obj = bpy.data.meshes.new("_FM_Temp_Center")
-        created_temp = True
-
-    temp_bm.to_mesh(mesh_obj)
+    _merge_bmesh_geometries(temp_bm, bm)
     temp_bm.free()
-
-    bm.from_mesh(mesh_obj)
-
-    if created_temp:
-        bpy.data.meshes.remove(mesh_obj)
 
 def _add_mesh_polar_bend_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, scale_angular=True, cuts=4, temp_mesh=None):
     material_map = []
@@ -1562,6 +1545,11 @@ def _add_mesh_polar_bend_with_matrix(bm, src_mesh, mat_combined, uv_layer, final
 
     # Subdivide edges of temp_bm to allow smooth bending.
     if cuts > 0:
+        # Cap cuts to prevent vertex explosion on detailed/custom tiles
+        if src_mesh and len(src_mesh.vertices) > 8:
+            cuts = min(2, cuts)
+        else:
+            cuts = min(4, cuts)
         bmesh.ops.subdivide_edges(temp_bm, edges=list(temp_bm.edges), cuts=cuts, use_grid_fill=True)
 
     r_mid = r * ts
@@ -1592,21 +1580,8 @@ def _add_mesh_polar_bend_with_matrix(bm, src_mesh, mat_combined, uv_layer, final
             else:
                 f.material_index = 0
 
-    # 2. Write to temp mesh and copy to main bm
-    global _temp_mesh
-    mesh_obj = temp_mesh if temp_mesh is not None else _temp_mesh
-    created_temp = False
-    if mesh_obj is None:
-        mesh_obj = bpy.data.meshes.new("_FM_Temp_Bend")
-        created_temp = True
-
-    temp_bm.to_mesh(mesh_obj)
+    _merge_bmesh_geometries(temp_bm, bm)
     temp_bm.free()
-
-    bm.from_mesh(mesh_obj)
-
-    if created_temp:
-        bpy.data.meshes.remove(mesh_obj)
 
 
 def _add_mesh_polar_bend(bm, src_mesh, mat_offset, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, centered, cuts=4, temp_mesh=None):
@@ -1696,21 +1671,8 @@ def _add_mesh_polar_trapezoid_with_matrix(bm, src_mesh, mat_combined, uv_layer, 
             else:
                 f.material_index = 0
 
-    # 2. Write to temp mesh and copy to main bm
-    global _temp_mesh
-    mesh_obj = temp_mesh if temp_mesh is not None else _temp_mesh
-    created_temp = False
-    if mesh_obj is None:
-        mesh_obj = bpy.data.meshes.new("_FM_Temp_Trapezoid")
-        created_temp = True
-
-    temp_bm.to_mesh(mesh_obj)
+    _merge_bmesh_geometries(temp_bm, bm)
     temp_bm.free()
-
-    bm.from_mesh(mesh_obj)
-
-    if created_temp:
-        bpy.data.meshes.remove(mesh_obj)
 
 
 def _add_mesh_polar_trapezoid(bm, src_mesh, mat_offset, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, centered, temp_mesh=None):
@@ -1750,17 +1712,6 @@ def _add_wall_polar_trapezoid(bm, src_mesh, mat_wall_offset, uv_layer, final_mat
         _add_mesh_polar_trapezoid_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_lifted, scale_angular=True, temp_mesh=temp_mesh)
 
 def _build_polar_maze_objects(props, maze_data, context, collection=None, force_simple=False, name_suffix=""):
-    global _temp_mesh
-    created_global_temp = False
-    if _temp_mesh is None:
-        for m in list(bpy.data.meshes):
-            if m.name.startswith("_FM_Temp"):
-                try:
-                    bpy.data.meshes.remove(m)
-                except Exception:
-                    pass
-        _temp_mesh = bpy.data.meshes.new("_FM_Temp_Shared")
-        created_global_temp = True
 
     ts = props.tile_size
     tiled = props.wall_height_tiled
@@ -2284,30 +2235,12 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
                 _generate_lightmap_on_obj(obj, context, method=props.lightmap_method)
         _spawn_decorations(props, maze_data, context, col)
 
-    if created_global_temp and _temp_mesh is not None:
-        try:
-            bpy.data.meshes.remove(_temp_mesh)
-        except Exception:
-            pass
-        _temp_mesh = None
-
     return col
 
 def build_maze_objects(props, maze_data, context, collection=None, force_simple=False, name_suffix=""):
     if maze_data.grid_type == 'polar':
         return _build_polar_maze_objects(props, maze_data, context, collection, force_simple, name_suffix)
 
-    global _temp_mesh
-    created_global_temp = False
-    if _temp_mesh is None:
-        for m in list(bpy.data.meshes):
-            if m.name.startswith("_FM_Temp"):
-                try:
-                    bpy.data.meshes.remove(m)
-                except Exception:
-                    pass
-        _temp_mesh = bpy.data.meshes.new("_FM_Temp_Shared")
-        created_global_temp = True
 
     ts = props.tile_size
     tiled = props.wall_height_tiled
@@ -2859,13 +2792,6 @@ def build_maze_objects(props, maze_data, context, collection=None, force_simple=
 
         # 4. Spawn decorations and props
         _spawn_decorations(props, maze_data, context, col)
-
-    if created_global_temp and _temp_mesh is not None:
-        try:
-            bpy.data.meshes.remove(_temp_mesh)
-        except Exception:
-            pass
-        _temp_mesh = None
 
     return col
 
