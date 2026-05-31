@@ -1172,10 +1172,10 @@ def _add_polar_floor_wedge(bm, uv_layer, r, theta, Nr, ts, z_base, is_roof=False
         
         bm.verts.ensure_lookup_table()
         
-        if is_roof:
-            f = bm.faces.new([vi1, vi2, vo2, vo1])
-        else:
-            f = bm.faces.new([vi1, vo1, vo2, vi2])
+        # Both floor and roof use the same +Z winding so normals match custom mesh tiles
+        # (custom meshes have their normals restored to the original after the polar warp reversal,
+        # so both procedural and custom roofs/floors should point upward when viewed from above).
+        f = bm.faces.new([vi1, vo1, vo2, vi2])
             
         uv_map_dict = {
             vi1: (0.0, r_mid * phi_1 / ts),
@@ -1372,13 +1372,15 @@ def _add_radial_wall(bm, uv_layer, phi, r_in, r_out, ts, h, wt, z_base):
     
     bm.verts.ensure_lookup_table()
     
-    f_left = bm.faces.new([v_l_in_bot, v_l_out_bot, v_l_out_top, v_l_in_top])
-    uvs_left = [(0.0, 0.0), (1.0, 0.0), (1.0, h / ts), (0.0, h / ts)]
+    # Left face (at +v side, normal must point in +v direction = toward CCW neighbour)
+    f_left = bm.faces.new([v_l_in_top, v_l_out_top, v_l_out_bot, v_l_in_bot])
+    uvs_left = [(0.0, h / ts), (1.0, h / ts), (1.0, 0.0), (0.0, 0.0)]
     for loop, uv in zip(f_left.loops, uvs_left):
         loop[uv_layer].uv = uv
         
-    f_right = bm.faces.new([v_r_out_bot, v_r_in_bot, v_r_in_top, v_r_out_top])
-    uvs_right = [(0.0, 0.0), (1.0, 0.0), (1.0, h / ts), (0.0, h / ts)]
+    # Right face (at -v side, normal must point in -v direction = toward CW neighbour)
+    f_right = bm.faces.new([v_r_out_top, v_r_in_top, v_r_in_bot, v_r_out_bot])
+    uvs_right = [(0.0, h / ts), (1.0, h / ts), (1.0, 0.0), (0.0, 0.0)]
     for loop, uv in zip(f_right.loops, uvs_right):
         loop[uv_layer].uv = uv
         
@@ -1684,7 +1686,8 @@ def _add_wall_polar_trapezoid(bm, src_mesh, mat_wall_offset, uv_layer, final_mat
             rot_angle = 90 if r == 1 else -90
             mat_place = Matrix.Translation(Vector((0, -ts/2, 0))) @ Matrix.Rotation(math.radians(rot_angle), 4, 'X')
         elif wall_type == 'OUT':
-            mat_place = Matrix.Translation(Vector((0, ts/2, 0))) @ Matrix.Rotation(math.radians(90), 4, 'X')
+            # OUT wall faces inward toward the maze interior, same direction as inner walls (r>1)
+            mat_place = Matrix.Translation(Vector((0, ts/2, 0))) @ Matrix.Rotation(math.radians(-90), 4, 'X')
         else:
             mat_place = Matrix.Identity(4)
         mat_combined = mat_place @ mat_wall_offset @ cent
@@ -1858,6 +1861,9 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
                                 phi_start = theta * alpha_r
                                 phi_end = (theta + 1) * alpha_r
                                 _add_circular_wall_flat(bm_wall, uv_wall, radius, phi_start, phi_end, ts, seg_h, z_off, facing_outward=False)
+                        continue
+                    
+                    if props.cube_mode_pillar and (wall_meshes_list or custom_wall_north or custom_wall_east) and not force_simple:
                         continue
                     
                     if len(maze_data.cells[r][theta]) == 8:

@@ -1629,7 +1629,7 @@ def generate_polar_maze(
     if seed:
         random.seed(seed)
 
-    if wall_mode == 'cube' and rings % 2 == 0:
+    if wall_mode == 'cube' and rings % 2 == 1:
         rings += 1
 
     # Compute sector counts Nr for each ring r
@@ -1845,6 +1845,11 @@ def generate_polar_maze(
             exits = [(0, 0, 'CENTER')]
         else:
             exits = [(rings - 1, ring_sectors[rings - 1] // 2, 'OUT')]
+
+    if wall_mode == 'cube':
+        cells[entrance[0]][entrance[1]][0] = False
+        for ex in exits:
+            cells[ex[0]][ex[1]][0] = False
 
     start = (rings - 1, 1) if wall_mode == 'cube' else (rings - 1, 0)
     target = exits[0][0:2] if exits else (0, 0)
