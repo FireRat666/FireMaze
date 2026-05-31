@@ -1651,7 +1651,7 @@ def generate_polar_maze(
                     is_wall = True
                 else:
                     is_wall = (theta % 2 == 0)
-                row.append([is_wall, False, -1, -1, -1, -1, -1, -1])
+                row.append([is_wall, False, -1, -1, -1, -1, -1, -1, -1])
             cells.append(row)
     else:
         for r in range(rings):
@@ -1912,6 +1912,10 @@ def generate_polar_maze(
                 cells[r][theta][3] = random.randrange(num_wall_meshes)
                 if len(cells[r][theta]) > 6:
                     cells[r][theta][6] = random.randrange(num_wall_meshes)
+                if len(cells[r][theta]) > 7:
+                    cells[r][theta][7] = random.randrange(num_wall_meshes)
+                if len(cells[r][theta]) > 8:
+                    cells[r][theta][8] = random.randrange(num_wall_meshes)
 
     maze_data = MazeData(
         width=rings,

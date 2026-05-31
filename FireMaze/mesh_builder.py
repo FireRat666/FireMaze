@@ -1829,8 +1829,8 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
         for theta in range(Nr):
             if props.wall_mode == 'cube' and maze_data.cells[r][theta][0]:
                 continue
-            if len(maze_data.cells[r][theta]) == 8:
-                floor_idx = maze_data.cells[r][theta][6]
+            if len(maze_data.cells[r][theta]) >= 8:
+                floor_idx = maze_data.cells[r][theta][4]
             else:
                 floor_idx = maze_data.cells[r][theta][4] if len(maze_data.cells[r][theta]) > 4 else -1
 
@@ -1905,7 +1905,7 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
                                     _add_mesh_polar_bend(bm_wall, src_mesh, mat_wall_offset, uv_wall, wall_materials, r, theta, Nr, ts, z_off, centered, cuts=cuts)
                         elif r == rings - 1:
                             src_out_wall = None
-                            if len(maze_data.cells[r][theta]) == 8:
+                            if len(maze_data.cells[r][theta]) >= 8:
                                 out_idx = maze_data.cells[r][theta][6]
                             else:
                                 out_idx = maze_data.cells[r][theta][3] if len(maze_data.cells[r][theta]) > 3 else -1
@@ -1935,11 +1935,11 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
                     if props.cube_mode_pillar and (wall_meshes_list or custom_wall_north or custom_wall_east) and not force_simple:
                         continue
                     
-                    if len(maze_data.cells[r][theta]) == 8:
+                    if len(maze_data.cells[r][theta]) >= 8:
                         cw_idx = maze_data.cells[r][theta][2]
                         ccw_idx = maze_data.cells[r][theta][3]
-                        in_idx = -1
-                        out_idx = maze_data.cells[r][theta][6]
+                        in_idx = maze_data.cells[r][theta][7] if len(maze_data.cells[r][theta]) > 7 else -1
+                        out_idx = maze_data.cells[r][theta][8] if len(maze_data.cells[r][theta]) > 8 else -1
                     else:
                         cw_idx = maze_data.cells[r][theta][2] if len(maze_data.cells[r][theta]) > 2 else -1
                         ccw_idx = cw_idx
@@ -2199,7 +2199,7 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
                 if props.cube_mode_pillar and (wall_meshes_list or custom_wall_north or custom_wall_east):
                     continue
                     
-            if len(maze_data.cells[r][theta]) == 8:
+            if len(maze_data.cells[r][theta]) >= 8:
                 roof_idx = maze_data.cells[r][theta][5]
             else:
                 roof_idx = maze_data.cells[r][theta][5] if len(maze_data.cells[r][theta]) > 5 else -1

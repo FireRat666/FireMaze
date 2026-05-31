@@ -409,14 +409,14 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                                 rebuilt_text = ""
                                 
                                 if face_dir == 'ROOF':
-                                    roof_idx_pos = 7 if len(cells[r_idx][theta]) == 8 else 5
+                                    roof_idx_pos = 5 if len(cells[r_idx][theta]) >= 8 else 5
                                     if num_roof_meshes > 0 and len(cells[r_idx][theta]) > roof_idx_pos:
                                         current_idx = cells[r_idx][theta][roof_idx_pos] if isinstance(cells[r_idx][theta][roof_idx_pos], int) else -1
                                         cells[r_idx][theta][roof_idx_pos] = (current_idx + 1) % num_roof_meshes
                                         modified = True
                                         rebuilt_text = "roof"
                                 elif face_dir == 'FLOOR':
-                                    floor_idx_pos = 6 if len(cells[r_idx][theta]) == 8 else 4
+                                    floor_idx_pos = 4 if len(cells[r_idx][theta]) >= 8 else 4
                                     if num_floor_meshes > 0 and len(cells[r_idx][theta]) > floor_idx_pos:
                                         current_idx = cells[r_idx][theta][floor_idx_pos] if isinstance(cells[r_idx][theta][floor_idx_pos], int) else -1
                                         cells[r_idx][theta][floor_idx_pos] = (current_idx + 1) % num_floor_meshes
@@ -500,15 +500,15 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                                                         # A is IN boundary, B is OUT boundary
                                                         if not cells[A[0]][A[1]][0]: # A is path
                                                             owner_cell = A
-                                                            owner_idx_pos = 4 # IN index
+                                                            owner_idx_pos = 7 # IN index
                                                             boundary_name = "inward angular boundary wall"
                                                         elif not cells[B[0]][B[1]][0]: # B is path
                                                             owner_cell = B
-                                                            owner_idx_pos = 5 # OUT index
+                                                            owner_idx_pos = 8 # OUT index (from inner ring's perspective)
                                                             boundary_name = "outward angular boundary wall"
                                                         else:
                                                             owner_cell = A
-                                                            owner_idx_pos = 4
+                                                            owner_idx_pos = 7
                                                             boundary_name = "inward angular boundary wall (fallback)"
                                                 else: # d_out
                                                     # Outward boundary
@@ -521,20 +521,20 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                                                         # A is OUT boundary, B is IN boundary
                                                         if not cells[A[0]][A[1]][0]: # A is path
                                                             owner_cell = A
-                                                            owner_idx_pos = 5 # OUT index
+                                                            owner_idx_pos = 8 # OUT index
                                                             boundary_name = "outward angular boundary wall"
                                                         elif not cells[B[0]][B[1]][0]: # B is path
                                                             owner_cell = B
-                                                            owner_idx_pos = 4 # IN index
+                                                            owner_idx_pos = 7 # IN index
                                                             boundary_name = "inward angular boundary wall"
                                                         else:
                                                             owner_cell = A
-                                                            owner_idx_pos = 5
+                                                            owner_idx_pos = 8
                                                             boundary_name = "outward angular boundary wall (fallback)"
                                                     else:
                                                         # Outermost boundary: only cell A exists
                                                         owner_cell = (r_idx, theta)
-                                                        owner_idx_pos = 5 # OUT index
+                                                        owner_idx_pos = 6 # Outermost OUT index
                                                         boundary_name = "outermost outward angular boundary wall"
                                                 
                                                 if owner_cell is not None:
@@ -543,8 +543,8 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                                                     if len(cells[r_own][theta_own]) < 8:
                                                         if owner_idx_pos in {2, 3}:
                                                             owner_idx_pos = 2 # CW and CCW map to index 2
-                                                        elif owner_idx_pos in {4, 5}:
-                                                            owner_idx_pos = 3 # IN and OUT map to index 3
+                                                        elif owner_idx_pos in {6, 7, 8}:
+                                                            owner_idx_pos = 3 # IN, OUT, and outermost map to index 3
                                                     
                                                     current_idx = cells[r_own][theta_own][owner_idx_pos] if isinstance(cells[r_own][theta_own][owner_idx_pos], int) else -1
                                                     cells[r_own][theta_own][owner_idx_pos] = (current_idx + 1) % num_wall_meshes
@@ -873,15 +873,16 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                                                     
                                     tr, ttheta = target_cell
                                     cells[tr][ttheta][0] = not cells[tr][ttheta][0]
-                                    roof_pos = 7 if len(cells[tr][ttheta]) == 8 else 5
-                                    floor_pos = 6 if len(cells[tr][ttheta]) == 8 else 4
+                                    roof_pos = 5 if len(cells[tr][ttheta]) >= 8 else 5
+                                    floor_pos = 4 if len(cells[tr][ttheta]) >= 8 else 4
                                     if cells[tr][ttheta][0]:
                                         if num_wall_meshes > 0:
                                             cells[tr][ttheta][2] = random.randrange(num_wall_meshes)
                                             cells[tr][ttheta][3] = random.randrange(num_wall_meshes)
-                                            if len(cells[tr][ttheta]) == 8:
-                                                cells[tr][ttheta][4] = random.randrange(num_wall_meshes)
-                                                cells[tr][ttheta][5] = random.randrange(num_wall_meshes)
+                                            if len(cells[tr][ttheta]) > 7:
+                                                cells[tr][ttheta][7] = random.randrange(num_wall_meshes)
+                                            if len(cells[tr][ttheta]) > 8:
+                                                cells[tr][ttheta][8] = random.randrange(num_wall_meshes)
                                         if num_roof_meshes > 0:
                                             cells[tr][ttheta][roof_pos] = random.randrange(num_roof_meshes)
                                     else:
