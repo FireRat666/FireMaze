@@ -39,14 +39,14 @@ class VIEW3D_PT_fire_maze(bpy.types.Panel):
         col.prop(props, "seed")
         col.separator(factor=0.5)
         if props.is_editing:
-            col.operator("fire_maze.interactive_edit", text="Exit Edit Mode", icon='CANCEL', depress=True)
+            col.operator("fire_maze.interactive_edit", text="Exit Edit Mode", icon="CANCEL", depress=True)
             alert_box = layout.box()
             alert_box.alert = True
-            alert_box.label(text="Editing Mode Active", icon='ERROR')
+            alert_box.label(text="Editing Mode Active", icon="ERROR")
             alert_box.label(text="Left-Click walls to toggle")
             alert_box.label(text="Press Esc or click Exit to finish")
         else:
-            col.operator("fire_maze.interactive_edit", text="Interactive Edit", icon='EDITMODE_HLT')
+            col.operator("fire_maze.interactive_edit", text="Interactive Edit", icon="EDITMODE_HLT")
 
         layout.separator(factor=0.5)
         row = layout.row(align=True)

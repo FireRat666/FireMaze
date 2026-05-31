@@ -1620,16 +1620,16 @@ def generate_polar_maze(
                     is_wall = True
                 else:
                     is_wall = (theta % 2 == 0)
-                row.append([is_wall, False, -1, -1, -1, -1])
+                row.append([is_wall, False, -1, -1, -1, -1, -1, -1])
             cells.append(row)
     else:
         for r in range(rings):
             row = []
             for theta in range(ring_sectors[r]):
                 if r == 0:
-                    row.append([False, False, -1, -1, -1, -1])
+                    row.append([False, False, -1, -1, -1, -1, -1])
                 else:
-                    row.append([True, True, -1, -1, -1, -1])
+                    row.append([True, True, -1, -1, -1, -1, -1])
             cells.append(row)
 
     # Setup adjacency graph
@@ -1874,6 +1874,8 @@ def generate_polar_maze(
             if num_wall_meshes > 0:
                 cells[r][theta][2] = random.randrange(num_wall_meshes)
                 cells[r][theta][3] = random.randrange(num_wall_meshes)
+                if len(cells[r][theta]) > 6:
+                    cells[r][theta][6] = random.randrange(num_wall_meshes)
 
     maze_data = MazeData(
         width=rings,

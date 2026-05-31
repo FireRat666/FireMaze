@@ -1402,6 +1402,77 @@ def _add_radial_wall(bm, uv_layer, phi, r_in, r_out, ts, h, wt, z_base):
     for loop, uv in zip(f_top.loops, uvs_top):
         loop[uv_layer].uv = uv
 
+def _add_mesh_polar_center(bm, src_mesh, mat_offset, uv_layer, final_materials_list, ts, z_off, centered):
+    material_map = []
+    if final_materials_list is not None and src_mesh:
+        for mat in src_mesh.materials:
+            if mat:
+                if mat not in final_materials_list:
+                    final_materials_list.append(mat)
+                material_map.append(final_materials_list.index(mat))
+            else:
+                material_map.append(0)
+
+    temp_bm = bmesh.new()
+    temp_bm.from_mesh(src_mesh)
+    
+    cent = Matrix.Translation(Vector((-ts / 2, -ts / 2, 0))) if not centered else Matrix.Identity(4)
+    mat_combined = mat_offset @ cent
+    bmesh.ops.transform(temp_bm, matrix=mat_combined, verts=temp_bm.verts)
+    
+    # Subdivide edges so the squircle-to-circle mapping has enough vertices
+    # to approximate a smooth circle (otherwise a 4-vertex quad produces a
+    # rounded-square gap at the ring-1 inner boundary).
+    bmesh.ops.subdivide_edges(
+        temp_bm,
+        edges=list(temp_bm.edges),
+        cuts=5,
+        use_grid_fill=True,
+    )
+
+    src_uv = temp_bm.loops.layers.uv.active
+    if not src_uv and temp_bm.loops.layers.uv:
+        src_uv = temp_bm.loops.layers.uv[0]
+
+    half_ts = 0.5 * ts
+    for v in temp_bm.verts:
+        co = v.co
+        nx = co.x / half_ts if half_ts > 0 else 0.0
+        ny = co.y / half_ts if half_ts > 0 else 0.0
+        
+        nx = max(-1.0, min(nx, 1.0))
+        ny = max(-1.0, min(ny, 1.0))
+        
+        nx_new = nx * math.sqrt(1.0 - (ny ** 2) / 2.0)
+        ny_new = ny * math.sqrt(1.0 - (nx ** 2) / 2.0)
+        
+        v.co.x = nx_new * half_ts
+        v.co.y = ny_new * half_ts
+        v.co.z = co.z + z_off
+
+    vert_map = {}
+    for v in temp_bm.verts:
+        new_v = bm.verts.new(v.co)
+        vert_map[v.index] = new_v
+    bm.verts.ensure_lookup_table()
+
+    for f in temp_bm.faces:
+        new_verts = [vert_map[loop.vert.index] for loop in f.loops]
+        new_face = bm.faces.new(new_verts)
+        
+        if final_materials_list is not None and material_map and f.material_index < len(material_map):
+            new_face.material_index = material_map[f.material_index]
+        else:
+            if final_materials_list is not None:
+                new_face.material_index = 0
+
+        if src_uv and uv_layer:
+            for src_loop, new_loop in zip(f.loops, new_face.loops):
+                u, v = src_loop[src_uv].uv
+                new_loop[uv_layer].uv = (u, v)
+
+    temp_bm.free()
+
 def _add_mesh_polar_bend_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, scale_angular=True, cuts=4):
     material_map = []
     if final_materials_list is not None and src_mesh:
@@ -1440,6 +1511,11 @@ def _add_mesh_polar_bend_with_matrix(bm, src_mesh, mat_combined, uv_layer, final
         v.co.x = r_local * math.cos(theta_local)
         v.co.y = r_local * math.sin(theta_local)
         v.co.z = co.z + z_off
+
+    # The Cartesian→polar mapping has Jacobian determinant = -r_local·scale_x/r_mid < 0,
+    # which reverses face winding for every face.  Flip all faces to restore the original
+    # normal direction from the source mesh.
+    bmesh.ops.reverse_faces(temp_bm, faces=list(temp_bm.faces))
 
     src_uv = temp_bm.loops.layers.uv.active
     if not src_uv and temp_bm.loops.layers.uv:
@@ -1485,18 +1561,23 @@ def _add_wall_polar_bend(bm, src_mesh, mat_wall_offset, uv_layer, final_material
     if wall_type in ('CW', 'CCW'):
         phi = theta_mid + (alpha_r / 2) if wall_type == 'CW' else theta_mid - (alpha_r / 2)
         mat_base = Matrix.Translation(Vector((r_mid * math.cos(phi), r_mid * math.sin(phi), z_lifted))) @ Matrix.Rotation(phi, 4, 'Z')
-        # Rotate around Y to stand upright, then rotate around Z by 90 degrees to align radially
+        # Stand tile upright with Rotation(X): original X stays radial (U horizontal ✓), original Y becomes Z height (V vertical ✓).
+        # CW wall at phi=(theta+1)*α: Rotation(+90°, X) → face in -Y → after phi rotation → CW tangential → visible from CW neighbour ✓
+        # CCW wall at phi=theta*α:  Rotation(-90°, X) → face in +Y → after phi rotation → CCW tangential → visible from CCW neighbour ✓
         if wall_type == 'CW':
-            mat_local = Matrix.Rotation(math.radians(90), 4, 'Z') @ Matrix.Rotation(math.radians(90), 4, 'Y')
-        else: # CCW
-            mat_local = Matrix.Rotation(math.radians(90), 4, 'Z') @ Matrix.Rotation(math.radians(-90), 4, 'Y')
+            mat_local = Matrix.Rotation(math.radians(90), 4, 'X')
+        else:  # CCW
+            mat_local = Matrix.Rotation(math.radians(-90), 4, 'X')
         mat_combined = mat_base @ mat_wall_offset @ mat_local @ cent
         _add_mesh_at(bm, src_mesh, mat_combined, uv_layer, final_materials_list)
     else:
+        # IN wall: placed at inner edge (y=-ts/2), face should point outward (+Y/+radial) so viewers in ring r see the front.
+        # OUT wall: placed at outer edge (y=+ts/2), face should point inward (-Y/-radial) so viewers in ring r see the front.
         if wall_type == 'IN':
-            mat_place = Matrix.Translation(Vector((0, -ts/2, 0))) @ Matrix.Rotation(math.radians(90), 4, 'X')
+            rot_angle = 90 if r == 1 else -90
+            mat_place = Matrix.Translation(Vector((0, -ts/2, 0))) @ Matrix.Rotation(math.radians(rot_angle), 4, 'X')
         elif wall_type == 'OUT':
-            mat_place = Matrix.Translation(Vector((0, ts/2, 0))) @ Matrix.Rotation(math.radians(-90), 4, 'X')
+            mat_place = Matrix.Translation(Vector((0, ts/2, 0))) @ Matrix.Rotation(math.radians(90), 4, 'X')
         else:
             mat_place = Matrix.Identity(4)
         mat_combined = mat_place @ mat_wall_offset @ cent
@@ -1537,6 +1618,11 @@ def _add_mesh_polar_trapezoid_with_matrix(bm, src_mesh, mat_combined, uv_layer, 
         v.co.x = (r_mid + y_rel) * cos_t - x_scaled * sin_t
         v.co.y = (r_mid + y_rel) * sin_t + x_scaled * cos_t
         v.co.z = co.z + z_off
+
+    # The Cartesian→polar mapping has Jacobian determinant proportional to -(r_mid+y_rel)·alpha_r/ts < 0,
+    # which reverses face winding for every face.  Flip all faces to restore the original
+    # normal direction from the source mesh.
+    bmesh.ops.reverse_faces(temp_bm, faces=list(temp_bm.faces))
 
     src_uv = temp_bm.loops.layers.uv.active
     if not src_uv and temp_bm.loops.layers.uv:
@@ -1582,18 +1668,23 @@ def _add_wall_polar_trapezoid(bm, src_mesh, mat_wall_offset, uv_layer, final_mat
     if wall_type in ('CW', 'CCW'):
         phi = theta_mid + (alpha_r / 2) if wall_type == 'CW' else theta_mid - (alpha_r / 2)
         mat_base = Matrix.Translation(Vector((r_mid * math.cos(phi), r_mid * math.sin(phi), z_lifted))) @ Matrix.Rotation(phi, 4, 'Z')
-        # Rotate around Y to stand upright, then rotate around Z by 90 degrees to align radially
+        # Stand tile upright with Rotation(X): original X stays radial (U horizontal ✓), original Y becomes Z height (V vertical ✓).
+        # CW wall at phi=(theta+1)*α: Rotation(+90°, X) → face in -Y → after phi rotation → CW tangential → visible from CW neighbour ✓
+        # CCW wall at phi=theta*α:  Rotation(-90°, X) → face in +Y → after phi rotation → CCW tangential → visible from CCW neighbour ✓
         if wall_type == 'CW':
-            mat_local = Matrix.Rotation(math.radians(90), 4, 'Z') @ Matrix.Rotation(math.radians(90), 4, 'Y')
-        else: # CCW
-            mat_local = Matrix.Rotation(math.radians(90), 4, 'Z') @ Matrix.Rotation(math.radians(-90), 4, 'Y')
+            mat_local = Matrix.Rotation(math.radians(90), 4, 'X')
+        else:  # CCW
+            mat_local = Matrix.Rotation(math.radians(-90), 4, 'X')
         mat_combined = mat_base @ mat_wall_offset @ mat_local @ cent
         _add_mesh_at(bm, src_mesh, mat_combined, uv_layer, final_materials_list)
     else:
+        # IN wall: placed at inner edge (y=-ts/2), face should point outward (+Y/+radial) so viewers in ring r see the front.
+        # OUT wall: placed at outer edge (y=+ts/2), face should point inward (-Y/-radial) so viewers in ring r see the front.
         if wall_type == 'IN':
-            mat_place = Matrix.Translation(Vector((0, -ts/2, 0))) @ Matrix.Rotation(math.radians(90), 4, 'X')
+            rot_angle = 90 if r == 1 else -90
+            mat_place = Matrix.Translation(Vector((0, -ts/2, 0))) @ Matrix.Rotation(math.radians(rot_angle), 4, 'X')
         elif wall_type == 'OUT':
-            mat_place = Matrix.Translation(Vector((0, ts/2, 0))) @ Matrix.Rotation(math.radians(-90), 4, 'X')
+            mat_place = Matrix.Translation(Vector((0, ts/2, 0))) @ Matrix.Rotation(math.radians(90), 4, 'X')
         else:
             mat_place = Matrix.Identity(4)
         mat_combined = mat_place @ mat_wall_offset @ cent
@@ -1666,8 +1757,16 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
         for theta in range(Nr):
             if props.wall_mode == 'cube' and maze_data.cells[r][theta][0]:
                 continue
-            floor_idx = maze_data.cells[r][theta][4] if len(maze_data.cells[r][theta]) > 4 else -1
-            
+            if len(maze_data.cells[r][theta]) == 8:
+                floor_idx = maze_data.cells[r][theta][6]
+            else:
+                floor_idx = maze_data.cells[r][theta][4] if len(maze_data.cells[r][theta]) > 4 else -1
+
+            # Default uninitialized index (-1) to 0 when a collection is available so
+            # the custom mesh is used from the very first generation (no shift-click needed).
+            if floor_idx < 0 and floor_meshes_list:
+                floor_idx = 0
+
             src_floor = None
             if floor_meshes_list and isinstance(floor_idx, int) and 0 <= floor_idx < len(floor_meshes_list):
                 src_floor = floor_meshes_list[floor_idx]
@@ -1675,7 +1774,10 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
                 src_floor = custom_floor
 
             if r == 0:
-                _add_polar_center_fan(bm_floor, uv_floor, ts, 0.0, is_roof=False)
+                if src_floor and alignment != 'procedural':
+                    _add_mesh_polar_center(bm_floor, src_floor, mat_floor_offset, uv_floor, floor_materials, ts, 0.0, centered)
+                else:
+                    _add_polar_center_fan(bm_floor, uv_floor, ts, 0.0, is_roof=False)
             elif src_floor and alignment != 'procedural':
                 if alignment == 'trapezoid':
                     _add_mesh_polar_trapezoid(bm_floor, src_floor, mat_floor_offset, uv_floor, floor_materials, r, theta, Nr, ts, 0.0, centered)
@@ -1729,10 +1831,45 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
                                     ratio = N_max // Nr if Nr > 0 else 1
                                     cuts = max(1, ratio * 8 - 1)
                                     _add_mesh_polar_bend(bm_wall, src_mesh, mat_wall_offset, uv_wall, wall_materials, r, theta, Nr, ts, z_off, centered, cuts=cuts)
+                        elif r == rings - 1:
+                            src_out_wall = None
+                            if len(maze_data.cells[r][theta]) == 8:
+                                out_idx = maze_data.cells[r][theta][5]
+                            else:
+                                out_idx = maze_data.cells[r][theta][3] if len(maze_data.cells[r][theta]) > 3 else -1
+                            
+                            if wall_meshes_list and isinstance(out_idx, int) and 0 <= out_idx < len(wall_meshes_list):
+                                src_out_wall = wall_meshes_list[out_idx]
+                            elif custom_wall_north:
+                                src_out_wall = custom_wall_north
+                            elif custom_wall_east:
+                                src_out_wall = custom_wall_east
+                                
+                            if src_out_wall and alignment != 'procedural':
+                                if alignment == 'trapezoid':
+                                    _add_wall_polar_trapezoid(bm_wall, src_out_wall, mat_wall_offset, uv_wall, wall_materials, 'OUT', r, theta, Nr, ts, z_off, centered)
+                                elif alignment == 'bend':
+                                    N_max = ring_sectors[-1]
+                                    ratio = N_max // Nr if Nr > 0 else 1
+                                    cuts = max(1, ratio * 8 - 1)
+                                    _add_wall_polar_bend(bm_wall, src_out_wall, mat_wall_offset, uv_wall, wall_materials, 'OUT', r, theta, Nr, ts, z_off, centered, cuts=cuts)
+                            else:
+                                radius = (r + 0.5) * ts
+                                phi_start = theta * alpha_r
+                                phi_end = (theta + 1) * alpha_r
+                                _add_circular_wall_flat(bm_wall, uv_wall, radius, phi_start, phi_end, ts, seg_h, z_off, facing_outward=False)
                         continue
                     
-                    cw_idx = maze_data.cells[r][theta][2] if len(maze_data.cells[r][theta]) > 2 else -1
-                    in_idx = maze_data.cells[r][theta][3] if len(maze_data.cells[r][theta]) > 3 else -1
+                    if len(maze_data.cells[r][theta]) == 8:
+                        cw_idx = maze_data.cells[r][theta][2]
+                        ccw_idx = maze_data.cells[r][theta][3]
+                        in_idx = maze_data.cells[r][theta][4]
+                        out_idx = maze_data.cells[r][theta][5]
+                    else:
+                        cw_idx = maze_data.cells[r][theta][2] if len(maze_data.cells[r][theta]) > 2 else -1
+                        ccw_idx = cw_idx
+                        in_idx = maze_data.cells[r][theta][3] if len(maze_data.cells[r][theta]) > 3 else -1
+                        out_idx = in_idx
                     
                     src_cw_wall = None
                     if wall_meshes_list and isinstance(cw_idx, int) and 0 <= cw_idx < len(wall_meshes_list):
@@ -1741,6 +1878,14 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
                         src_cw_wall = custom_wall_east
                     elif custom_wall_north:
                         src_cw_wall = custom_wall_north
+
+                    src_ccw_wall = None
+                    if wall_meshes_list and isinstance(ccw_idx, int) and 0 <= ccw_idx < len(wall_meshes_list):
+                        src_ccw_wall = wall_meshes_list[ccw_idx]
+                    elif custom_wall_east:
+                        src_ccw_wall = custom_wall_east
+                    elif custom_wall_north:
+                        src_ccw_wall = custom_wall_north
                         
                     src_in_wall = None
                     if wall_meshes_list and isinstance(in_idx, int) and 0 <= in_idx < len(wall_meshes_list):
@@ -1749,6 +1894,14 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
                         src_in_wall = custom_wall_north
                     elif custom_wall_east:
                         src_in_wall = custom_wall_east
+
+                    src_out_wall = None
+                    if wall_meshes_list and isinstance(out_idx, int) and 0 <= out_idx < len(wall_meshes_list):
+                        src_out_wall = wall_meshes_list[out_idx]
+                    elif custom_wall_north:
+                        src_out_wall = custom_wall_north
+                    elif custom_wall_east:
+                        src_out_wall = custom_wall_east
 
                     # 1. Clockwise boundary
                     cw_neighbor_is_wall = maze_data.cells[r][(theta + 1) % Nr][0]
@@ -1770,14 +1923,14 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
                     # 2. Counter-clockwise boundary
                     ccw_neighbor_is_wall = maze_data.cells[r][(theta - 1) % Nr][0]
                     if ccw_neighbor_is_wall:
-                        if src_cw_wall and alignment != 'procedural':
+                        if src_ccw_wall and alignment != 'procedural':
                             if alignment == 'trapezoid':
-                                _add_wall_polar_trapezoid(bm_wall, src_cw_wall, mat_wall_offset, uv_wall, wall_materials, 'CCW', r, theta, Nr, ts, z_off, centered)
+                                _add_wall_polar_trapezoid(bm_wall, src_ccw_wall, mat_wall_offset, uv_wall, wall_materials, 'CCW', r, theta, Nr, ts, z_off, centered)
                             elif alignment == 'bend':
                                 N_max = ring_sectors[-1]
                                 ratio = N_max // Nr if Nr > 0 else 1
                                 cuts = max(1, ratio * 8 - 1)
-                                _add_wall_polar_bend(bm_wall, src_cw_wall, mat_wall_offset, uv_wall, wall_materials, 'CCW', r, theta, Nr, ts, z_off, centered, cuts=cuts)
+                                _add_wall_polar_bend(bm_wall, src_ccw_wall, mat_wall_offset, uv_wall, wall_materials, 'CCW', r, theta, Nr, ts, z_off, centered, cuts=cuts)
                         else:
                             phi = theta * alpha_r
                             r_in = (r - 0.5) * ts
@@ -1819,14 +1972,16 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
                             if out_neighbor_is_wall:
                                 phi_start_ot = ot * (2 * math.pi / N_out)
                                 phi_end_ot = (ot + 1) * (2 * math.pi / N_out)
-                                if src_in_wall and alignment != 'procedural':
+                                if src_out_wall and alignment != 'procedural':
+                                    w_type = 'IN' if r == 0 else 'OUT'
+                                    r_val = 1 if r == 0 else r
                                     if alignment == 'trapezoid':
-                                        _add_wall_polar_trapezoid(bm_wall, src_in_wall, mat_wall_offset, uv_wall, wall_materials, 'OUT', r, ot, N_out, ts, z_off, centered)
+                                        _add_wall_polar_trapezoid(bm_wall, src_out_wall, mat_wall_offset, uv_wall, wall_materials, w_type, r_val, ot, N_out, ts, z_off, centered)
                                     elif alignment == 'bend':
                                         N_max = ring_sectors[-1]
                                         ratio = N_max // N_out if N_out > 0 else 1
                                         cuts = max(1, ratio * 8 - 1)
-                                        _add_wall_polar_bend(bm_wall, src_in_wall, mat_wall_offset, uv_wall, wall_materials, 'OUT', r, ot, N_out, ts, z_off, centered, cuts=cuts)
+                                        _add_wall_polar_bend(bm_wall, src_out_wall, mat_wall_offset, uv_wall, wall_materials, w_type, r_val, ot, N_out, ts, z_off, centered, cuts=cuts)
                                 else:
                                     radius = (r + 0.5) * ts
                                     _add_circular_wall_flat(bm_wall, uv_wall, radius, phi_start_ot, phi_end_ot, ts, seg_h, z_off, facing_outward=False)
@@ -1840,14 +1995,14 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
                                     break
                                     
                         if not is_entrance and not is_exit:
-                            if src_in_wall and alignment != 'procedural':
+                            if src_out_wall and alignment != 'procedural':
                                 if alignment == 'trapezoid':
-                                    _add_wall_polar_trapezoid(bm_wall, src_in_wall, mat_wall_offset, uv_wall, wall_materials, 'OUT', r, theta, Nr, ts, z_off, centered)
+                                    _add_wall_polar_trapezoid(bm_wall, src_out_wall, mat_wall_offset, uv_wall, wall_materials, 'OUT', r, theta, Nr, ts, z_off, centered)
                                 elif alignment == 'bend':
                                     N_max = ring_sectors[-1]
                                     ratio = N_max // Nr if Nr > 0 else 1
                                     cuts = max(1, ratio * 8 - 1)
-                                    _add_wall_polar_bend(bm_wall, src_in_wall, mat_wall_offset, uv_wall, wall_materials, 'OUT', r, theta, Nr, ts, z_off, centered, cuts=cuts)
+                                    _add_wall_polar_bend(bm_wall, src_out_wall, mat_wall_offset, uv_wall, wall_materials, 'OUT', r, theta, Nr, ts, z_off, centered, cuts=cuts)
                             else:
                                 radius = (r + 0.5) * ts
                                 phi_start = theta * alpha_r
@@ -1868,6 +2023,7 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
                     
                     cw_idx = maze_data.cells[r][theta][2] if len(maze_data.cells[r][theta]) > 2 else -1
                     in_idx = maze_data.cells[r][theta][3] if len(maze_data.cells[r][theta]) > 3 else -1
+                    out_idx = maze_data.cells[r][theta][6] if len(maze_data.cells[r][theta]) > 6 else in_idx
                     
                     src_cw_wall = None
                     if wall_meshes_list and isinstance(cw_idx, int) and 0 <= cw_idx < len(wall_meshes_list):
@@ -1884,6 +2040,14 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
                         src_in_wall = custom_wall_north
                     elif custom_wall_east:
                         src_in_wall = custom_wall_east
+
+                    src_out_wall = None
+                    if wall_meshes_list and isinstance(out_idx, int) and 0 <= out_idx < len(wall_meshes_list):
+                        src_out_wall = wall_meshes_list[out_idx]
+                    elif custom_wall_north:
+                        src_out_wall = custom_wall_north
+                    elif custom_wall_east:
+                        src_out_wall = custom_wall_east
                     
                     if cw_wall and r >= 1:
                         if src_cw_wall and alignment != 'procedural':
@@ -1924,14 +2088,14 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
                                     is_exit = True
                                     break
                         if not is_entrance and not is_exit:
-                            if src_in_wall and alignment != 'procedural':
+                            if src_out_wall and alignment != 'procedural':
                                 if alignment == 'trapezoid':
-                                    _add_wall_polar_trapezoid(bm_wall, src_in_wall, mat_wall_offset, uv_wall, wall_materials, 'OUT', r, theta, Nr, ts, z_off, centered)
+                                    _add_wall_polar_trapezoid(bm_wall, src_out_wall, mat_wall_offset, uv_wall, wall_materials, 'OUT', r, theta, Nr, ts, z_off, centered)
                                 elif alignment == 'bend':
                                     N_max = ring_sectors[-1]
                                     ratio = N_max // Nr if Nr > 0 else 1
                                     cuts = max(1, ratio * 8 - 1)
-                                    _add_wall_polar_bend(bm_wall, src_in_wall, mat_wall_offset, uv_wall, wall_materials, 'OUT', r, theta, Nr, ts, z_off, centered, cuts=cuts)
+                                    _add_wall_polar_bend(bm_wall, src_out_wall, mat_wall_offset, uv_wall, wall_materials, 'OUT', r, theta, Nr, ts, z_off, centered, cuts=cuts)
                             else:
                                 radius = (r + 0.5) * ts
                                 phi_start = theta * alpha_r
@@ -1960,8 +2124,16 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
                 if props.cube_mode_pillar and (wall_meshes_list or custom_wall_north or custom_wall_east):
                     continue
                     
-            roof_idx = maze_data.cells[r][theta][5] if len(maze_data.cells[r][theta]) > 5 else -1
+            if len(maze_data.cells[r][theta]) == 8:
+                roof_idx = maze_data.cells[r][theta][7]
+            else:
+                roof_idx = maze_data.cells[r][theta][5] if len(maze_data.cells[r][theta]) > 5 else -1
             
+            # Default uninitialized index (-1) to 0 when a collection is available so
+            # the custom mesh is used from the very first generation (no shift-click needed).
+            if roof_idx < 0 and roof_meshes_list:
+                roof_idx = 0
+
             src_roof = None
             if roof_meshes_list and isinstance(roof_idx, int) and 0 <= roof_idx < len(roof_meshes_list):
                 src_roof = roof_meshes_list[roof_idx]
@@ -1969,7 +2141,10 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
                 src_roof = custom_roof
 
             if r == 0:
-                _add_polar_center_fan(bm_roof, uv_roof, ts, wh, is_roof=True)
+                if src_roof and alignment != 'procedural':
+                    _add_mesh_polar_center(bm_roof, src_roof, mat_floor_offset, uv_roof, roof_materials, ts, wh, centered)
+                else:
+                    _add_polar_center_fan(bm_roof, uv_roof, ts, wh, is_roof=True)
             elif src_roof and alignment != 'procedural':
                 if alignment == 'trapezoid':
                     _add_mesh_polar_trapezoid(bm_roof, src_roof, mat_floor_offset, uv_roof, roof_materials, r, theta, Nr, ts, wh, centered)

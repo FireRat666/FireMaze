@@ -65,7 +65,9 @@ def rebuild_maze_from_collection(context, col):
     if props.custom_roof_collection:
         num_roof_meshes = len([o for o in props.custom_roof_collection.objects if o.type == 'MESH'])
     
-    grid_type = data_dict.get('grid_type', 'rect')
+    grid_type = data_dict.get('grid_type')
+    if not grid_type:
+        grid_type = 'polar' if 'ring_sectors' in data_dict else 'rect'
     polar_rings = data_dict.get('polar_rings', 0)
     ring_sectors = data_dict.get('ring_sectors', [])
 
@@ -262,6 +264,11 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
     bl_description = "Left-click on walls in the 3D viewport to toggle them on/off"
     bl_options = {'REGISTER', 'UNDO'}
 
+    @classmethod
+    def poll(cls, context):
+        props = context.scene.fire_maze
+        return props.grid_type in {'rect', 'polar'}
+
     def modal(self, context, event):
         if context.area:
             context.area.tag_redraw()
@@ -365,254 +372,633 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                         num_floor_meshes = data_dict.get('num_floor_meshes', 0)
                         num_roof_meshes = data_dict.get('num_roof_meshes', 0)
 
-                        if event.shift:
-                            cx = math.floor(hit_x / ts)
-                            cy = math.floor(hit_y / ts)
-                            if -1 <= cx <= width and -1 <= cy <= depth:
-                                # Determine clicked face direction
-                                face_dir = 'WALL'
-                                if normal:
-                                    nx, ny, nz = abs(normal.x), abs(normal.y), abs(normal.z)
-                                    if nz > nx and nz > ny:
-                                        # Calculate wall height to distinguish floor vs roof
-                                        tiled = props.wall_height_tiled
-                                        tiles_high = props.wall_height_tiles if tiled else 1
-                                        wh = ts * tiles_high if tiled else props.wall_height
-                                        # If the hit point is higher than half the wall height, it is the roof
-                                        face_dir = 'ROOF' if loc.z > (wh * 0.5) else 'FLOOR'
-                                    elif ny > nx and ny > nz:
-                                        face_dir = 'N' if normal.y > 0 else 'S'
-                                    else:
-                                        face_dir = 'E' if normal.x > 0 else 'W'
+                        grid_type = data_dict.get('grid_type', 'rect')
+                        ring_sectors = data_dict.get('ring_sectors')
+                        rings = data_dict.get('polar_rings', 5)
 
-                                cx_clamped = max(0, min(cx, width - 1))
-                                cy_clamped = max(0, min(cy, depth - 1))
-
-                                if wall_mode == 'cube':
-                                    is_wall = cells[cy_clamped][cx_clamped][0]
-                                    modified = False
-                                    rebuilt_text = ""
-                                    
-                                    # If cube_mode_pillar is enabled, treat all wall faces as a single unit
-                                    is_pillar_mode = props.cube_mode_pillar
-                                    
-                                    if face_dir == 'ROOF':
-                                        if is_pillar_mode and is_wall:
-                                            if num_wall_meshes > 0:
-                                                current_idx = cells[cy_clamped][cx_clamped][1] if isinstance(cells[cy_clamped][cx_clamped][1], int) else -1
-                                                next_idx = (current_idx + 1) % num_wall_meshes
-                                                cells[cy_clamped][cx_clamped][1] = next_idx
-                                                cells[cy_clamped][cx_clamped][2] = next_idx
-                                                cells[cy_clamped][cx_clamped][3] = next_idx
-                                                cells[cy_clamped][cx_clamped][4] = next_idx
-                                                modified = True
-                                                rebuilt_text = "pillar"
-                                        else:
-                                            if num_roof_meshes > 0 and len(cells[cy_clamped][cx_clamped]) > 6:
-                                                current_idx = cells[cy_clamped][cx_clamped][6] if isinstance(cells[cy_clamped][cx_clamped][6], int) else -1
-                                                cells[cy_clamped][cx_clamped][6] = (current_idx + 1) % num_roof_meshes
-                                                modified = True
-                                                rebuilt_text = "roof"
-                                    elif face_dir == 'FLOOR':
-                                        if num_floor_meshes > 0 and len(cells[cy_clamped][cx_clamped]) > 5:
-                                            current_idx = cells[cy_clamped][cx_clamped][5] if isinstance(cells[cy_clamped][cx_clamped][5], int) else -1
-                                            cells[cy_clamped][cx_clamped][5] = (current_idx + 1) % num_floor_meshes
-                                            modified = True
-                                            rebuilt_text = "floor"
-                                    else:
-                                        # Clicked a wall face
-                                        if is_wall and num_wall_meshes > 0:
-                                            if is_pillar_mode:
-                                                # Cycle all wall indices to keep them synchronized
-                                                current_idx = cells[cy_clamped][cx_clamped][1] if isinstance(cells[cy_clamped][cx_clamped][1], int) else -1
-                                                next_idx = (current_idx + 1) % num_wall_meshes
-                                                cells[cy_clamped][cx_clamped][1] = next_idx
-                                                cells[cy_clamped][cx_clamped][2] = next_idx
-                                                cells[cy_clamped][cx_clamped][3] = next_idx
-                                                cells[cy_clamped][cx_clamped][4] = next_idx
-                                                modified = True
-                                                rebuilt_text = "pillar"
-                                            else:
-                                                # Cycle face independently
-                                                idx_map = {'N': 1, 'S': 2, 'E': 3, 'W': 4}
-                                                face_idx = idx_map.get(face_dir, 1)
-                                                current_idx = cells[cy_clamped][cx_clamped][face_idx] if isinstance(cells[cy_clamped][cx_clamped][face_idx], int) else -1
-                                                cells[cy_clamped][cx_clamped][face_idx] = (current_idx + 1) % num_wall_meshes
-                                                modified = True
-                                                rebuilt_text = f"wall ({face_dir} face)"
-                                                
-                                    if modified:
-                                        data_dict['cells'] = cells
-                                        col["fire_maze_data"] = json.dumps(data_dict)
-                                        rebuild_maze_from_collection(context, col)
-                                        self.report({'INFO'}, f"Swapped {rebuilt_text} mesh at ({cx_clamped}, {cy_clamped})")
-                                    else:
-                                        if not is_wall:
-                                            if num_floor_meshes > 0:
-                                                current_idx = cells[cy_clamped][cx_clamped][5] if isinstance(cells[cy_clamped][cx_clamped][5], int) else -1
-                                                cells[cy_clamped][cx_clamped][5] = (current_idx + 1) % num_floor_meshes
-                                                data_dict['cells'] = cells
-                                                col["fire_maze_data"] = json.dumps(data_dict)
-                                                rebuild_maze_from_collection(context, col)
-                                                self.report({'INFO'}, f"Swapped floor mesh at ({cx_clamped}, {cy_clamped})")
+                        face_dir = 'WALL'
+                        if normal:
+                            nx, ny, nz = abs(normal.x), abs(normal.y), abs(normal.z)
+                            if nz > nx and nz > ny:
+                                tiled = props.wall_height_tiled
+                                tiles_high = props.wall_height_tiles if tiled else 1
+                                wh = ts * tiles_high if tiled else props.wall_height
+                                face_dir = 'ROOF' if loc.z > (wh * 0.5) else 'FLOOR'
+                            elif grid_type == 'rect':
+                                if ny > nx and ny > nz:
+                                    face_dir = 'N' if normal.y > 0 else 'S'
                                 else:
-                                    # Thin wall mode
-                                    modified = False
-                                    rebuilt_text = ""
-                                    if face_dir == 'ROOF':
-                                        if num_roof_meshes > 0:
-                                            if len(cells[cy_clamped][cx_clamped]) > 8:
-                                                idx_pos = 9
-                                            elif len(cells[cy_clamped][cx_clamped]) > 7:
-                                                idx_pos = 7
-                                            else:
-                                                idx_pos = None
-                                            
-                                            if idx_pos is not None:
-                                                current_idx = cells[cy_clamped][cx_clamped][idx_pos] if isinstance(cells[cy_clamped][cx_clamped][idx_pos], int) else -1
-                                                cells[cy_clamped][cx_clamped][idx_pos] = (current_idx + 1) % num_roof_meshes
+                                    face_dir = 'E' if normal.x > 0 else 'W'
+
+                        if event.shift:
+                            if grid_type == 'polar':
+                                r_hit = math.sqrt(hit_x**2 + hit_y**2)
+                                phi_hit = math.atan2(hit_y, hit_x)
+                                if phi_hit < 0:
+                                    phi_hit += 2 * math.pi
+                                    
+                                r_idx = math.floor(r_hit / ts + 0.5)
+                                r_idx = max(0, min(r_idx, rings - 1))
+                                
+                                Nr = ring_sectors[r_idx]
+                                alpha_r = 2 * math.pi / Nr
+                                theta = math.floor(phi_hit / alpha_r)
+                                theta = max(0, min(theta, Nr - 1))
+                                
+                                modified = False
+                                rebuilt_text = ""
+                                
+                                if face_dir == 'ROOF':
+                                    roof_idx_pos = 7 if len(cells[r_idx][theta]) == 8 else 5
+                                    if num_roof_meshes > 0 and len(cells[r_idx][theta]) > roof_idx_pos:
+                                        current_idx = cells[r_idx][theta][roof_idx_pos] if isinstance(cells[r_idx][theta][roof_idx_pos], int) else -1
+                                        cells[r_idx][theta][roof_idx_pos] = (current_idx + 1) % num_roof_meshes
+                                        modified = True
+                                        rebuilt_text = "roof"
+                                elif face_dir == 'FLOOR':
+                                    floor_idx_pos = 6 if len(cells[r_idx][theta]) == 8 else 4
+                                    if num_floor_meshes > 0 and len(cells[r_idx][theta]) > floor_idx_pos:
+                                        current_idx = cells[r_idx][theta][floor_idx_pos] if isinstance(cells[r_idx][theta][floor_idx_pos], int) else -1
+                                        cells[r_idx][theta][floor_idx_pos] = (current_idx + 1) % num_floor_meshes
+                                        modified = True
+                                        rebuilt_text = "floor"
+                                else:
+                                    # Clicked a wall face
+                                    if wall_mode == 'cube':
+                                        if num_wall_meshes > 0:
+                                            if props.cube_mode_pillar:
+                                                current_idx = cells[r_idx][theta][2] if isinstance(cells[r_idx][theta][2], int) else -1
+                                                cells[r_idx][theta][2] = (current_idx + 1) % num_wall_meshes
                                                 modified = True
-                                                rebuilt_text = "roof"
-                                    elif face_dir == 'FLOOR':
-                                        if num_floor_meshes > 0:
-                                            if len(cells[cy_clamped][cx_clamped]) > 8:
-                                                idx_pos = 8
-                                            elif len(cells[cy_clamped][cx_clamped]) > 6:
-                                                idx_pos = 6
+                                                rebuilt_text = "pillar"
                                             else:
-                                                idx_pos = None
+                                                d_in = abs(r_hit - (r_idx - 0.5) * ts)
+                                                d_out = abs(r_hit - (r_idx + 0.5) * ts)
                                                 
-                                            if idx_pos is not None:
-                                                current_idx = cells[cy_clamped][cx_clamped][idx_pos] if isinstance(cells[cy_clamped][cx_clamped][idx_pos], int) else -1
-                                                cells[cy_clamped][cx_clamped][idx_pos] = (current_idx + 1) % num_floor_meshes
-                                                modified = True
-                                                rebuilt_text = "floor"
-                                    else:
-                                        # Clicked a thin wall
-                                        if num_wall_meshes > 0:
-                                            # Use robust distance-to-edge calculation to locate the clicked wall segment
-                                            d_N = abs(hit_y - (cy_clamped + 1) * ts)
-                                            d_S = abs(hit_y - cy_clamped * ts)
-                                            d_E = abs(hit_x - (cx_clamped + 1) * ts)
-                                            d_W = abs(hit_x - cx_clamped * ts)
-                                            
-                                            min_d = min(d_N, d_S, d_E, d_W)
-                                            
-                                            if len(cells[cy_clamped][cx_clamped]) > 8:
-                                                # 10-item format
-                                                if min_d == d_N:
-                                                     current_idx = cells[cy_clamped][cx_clamped][4] if isinstance(cells[cy_clamped][cx_clamped][4], int) else -1
-                                                     next_idx = (current_idx + 1) % num_wall_meshes
-                                                     cells[cy_clamped][cx_clamped][4] = next_idx
-                                                     if cy_clamped + 1 < depth:
-                                                         cells[cy_clamped + 1][cx_clamped][5] = next_idx
-                                                     modified = True
-                                                     rebuilt_text = "horizontal wall (North)"
-                                                elif min_d == d_S:
-                                                     current_idx = cells[cy_clamped][cx_clamped][5] if isinstance(cells[cy_clamped][cx_clamped][5], int) else -1
-                                                     next_idx = (current_idx + 1) % num_wall_meshes
-                                                     cells[cy_clamped][cx_clamped][5] = next_idx
-                                                     if cy_clamped - 1 >= 0:
-                                                         cells[cy_clamped - 1][cx_clamped][4] = next_idx
-                                                     modified = True
-                                                     rebuilt_text = "horizontal wall (South)"
-                                                elif min_d == d_E:
-                                                     current_idx = cells[cy_clamped][cx_clamped][6] if isinstance(cells[cy_clamped][cx_clamped][6], int) else -1
-                                                     next_idx = (current_idx + 1) % num_wall_meshes
-                                                     cells[cy_clamped][cx_clamped][6] = next_idx
-                                                     if cx_clamped + 1 < width:
-                                                         cells[cy_clamped][cx_clamped + 1][7] = next_idx
-                                                     modified = True
-                                                     rebuilt_text = "vertical wall (East)"
-                                                else:  # min_d == d_W
-                                                     current_idx = cells[cy_clamped][cx_clamped][7] if isinstance(cells[cy_clamped][cx_clamped][7], int) else -1
-                                                     next_idx = (current_idx + 1) % num_wall_meshes
-                                                     cells[cy_clamped][cx_clamped][7] = next_idx
-                                                     if cx_clamped - 1 >= 0:
-                                                         cells[cy_clamped][cx_clamped - 1][6] = next_idx
-                                                     modified = True
-                                                     rebuilt_text = "vertical wall (West)"
-                                            else:
-                                                # Old 8-item format
-                                                if min_d == d_N or min_d == d_S:
-                                                    target_y = cy_clamped + 1 if min_d == d_N else cy_clamped
-                                                    target_y = min(target_y, depth - 1)
-                                                    current_idx = cells[target_y][cx_clamped][4] if isinstance(cells[target_y][cx_clamped][4], int) else -1
-                                                    cells[target_y][cx_clamped][4] = (current_idx + 1) % num_wall_meshes
-                                                    modified = True
-                                                    rebuilt_text = "horizontal wall"
+                                                def angle_diff(a, b):
+                                                    diff = (a - b) % (2 * math.pi)
+                                                    if diff > math.pi:
+                                                        diff -= 2 * math.pi
+                                                    return abs(diff)
+                                                    
+                                                d_cw = r_hit * angle_diff(phi_hit, (theta + 1) * alpha_r)
+                                                d_ccw = r_hit * angle_diff(phi_hit, theta * alpha_r)
+                                                
+                                                if r_idx == 0:
+                                                    min_d = d_out
                                                 else:
-                                                    target_x = cx_clamped + 1 if min_d == d_E else cx_clamped
-                                                    target_x = min(target_x, width - 1)
-                                                    current_idx = cells[cy_clamped][target_x][5] if isinstance(cells[cy_clamped][target_x][5], int) else -1
-                                                    cells[cy_clamped][target_x][5] = (current_idx + 1) % num_wall_meshes
+                                                    min_d = min(d_in, d_out, d_cw, d_ccw)
+                                                    
+                                                # Cube mode: find the owner path cell (is_wall == False) of the clicked boundary
+                                                # Cells on each side of the boundary: A = (r_idx, theta)
+                                                # We determine B (the neighbor cell) and the boundary type
+                                                owner_cell = None
+                                                owner_idx_pos = -1
+                                                boundary_name = ""
+                                                
+                                                if min_d == d_cw:
+                                                    # Clockwise boundary
+                                                    A = (r_idx, theta)
+                                                    B = (r_idx, (theta + 1) % Nr)
+                                                    # A is CW boundary, B is CCW boundary
+                                                    if not cells[A[0]][A[1]][0]: # A is path
+                                                        owner_cell = A
+                                                        owner_idx_pos = 2 # CW index
+                                                        boundary_name = "clockwise radial boundary wall"
+                                                    elif not cells[B[0]][B[1]][0]: # B is path
+                                                        owner_cell = B
+                                                        owner_idx_pos = 3 # CCW index
+                                                        boundary_name = "counter-clockwise radial boundary wall"
+                                                    else:
+                                                        owner_cell = A
+                                                        owner_idx_pos = 2
+                                                        boundary_name = "clockwise radial boundary wall (fallback)"
+                                                elif min_d == d_ccw:
+                                                    # Counter-clockwise boundary
+                                                    A = (r_idx, theta)
+                                                    B = (r_idx, (theta - 1) % Nr)
+                                                    # A is CCW boundary, B is CW boundary
+                                                    if not cells[A[0]][A[1]][0]: # A is path
+                                                        owner_cell = A
+                                                        owner_idx_pos = 3 # CCW index
+                                                        boundary_name = "counter-clockwise radial boundary wall"
+                                                    elif not cells[B[0]][B[1]][0]: # B is path
+                                                        owner_cell = B
+                                                        owner_idx_pos = 2 # CW index
+                                                        boundary_name = "clockwise radial boundary wall"
+                                                    else:
+                                                        owner_cell = A
+                                                        owner_idx_pos = 3
+                                                        boundary_name = "counter-clockwise radial boundary wall (fallback)"
+                                                elif min_d == d_in:
+                                                    # Inward boundary
+                                                    if r_idx > 0:
+                                                        N_in = ring_sectors[r_idx - 1]
+                                                        theta_in = 0 if N_in == 1 else (theta if N_in == Nr else theta // 2)
+                                                        A = (r_idx, theta)
+                                                        B = (r_idx - 1, theta_in)
+                                                        # A is IN boundary, B is OUT boundary
+                                                        if not cells[A[0]][A[1]][0]: # A is path
+                                                            owner_cell = A
+                                                            owner_idx_pos = 4 # IN index
+                                                            boundary_name = "inward angular boundary wall"
+                                                        elif not cells[B[0]][B[1]][0]: # B is path
+                                                            owner_cell = B
+                                                            owner_idx_pos = 5 # OUT index
+                                                            boundary_name = "outward angular boundary wall"
+                                                        else:
+                                                            owner_cell = A
+                                                            owner_idx_pos = 4
+                                                            boundary_name = "inward angular boundary wall (fallback)"
+                                                else: # d_out
+                                                    # Outward boundary
+                                                    if r_idx < rings - 1:
+                                                        N_out = ring_sectors[r_idx + 1]
+                                                        theta_out = math.floor(phi_hit / (2 * math.pi / N_out))
+                                                        theta_out = max(0, min(theta_out, N_out - 1))
+                                                        A = (r_idx, theta)
+                                                        B = (r_idx + 1, theta_out)
+                                                        # A is OUT boundary, B is IN boundary
+                                                        if not cells[A[0]][A[1]][0]: # A is path
+                                                            owner_cell = A
+                                                            owner_idx_pos = 5 # OUT index
+                                                            boundary_name = "outward angular boundary wall"
+                                                        elif not cells[B[0]][B[1]][0]: # B is path
+                                                            owner_cell = B
+                                                            owner_idx_pos = 4 # IN index
+                                                            boundary_name = "inward angular boundary wall"
+                                                        else:
+                                                            owner_cell = A
+                                                            owner_idx_pos = 5
+                                                            boundary_name = "outward angular boundary wall (fallback)"
+                                                    else:
+                                                        # Outermost boundary: only cell A exists
+                                                        owner_cell = (r_idx, theta)
+                                                        owner_idx_pos = 5 # OUT index
+                                                        boundary_name = "outermost outward angular boundary wall"
+                                                
+                                                if owner_cell is not None:
+                                                    r_own, theta_own = owner_cell
+                                                    # Map indices for backward compatibility (cells of length < 8)
+                                                    if len(cells[r_own][theta_own]) < 8:
+                                                        if owner_idx_pos in {2, 3}:
+                                                            owner_idx_pos = 2 # CW and CCW map to index 2
+                                                        elif owner_idx_pos in {4, 5}:
+                                                            owner_idx_pos = 3 # IN and OUT map to index 3
+                                                    
+                                                    current_idx = cells[r_own][theta_own][owner_idx_pos] if isinstance(cells[r_own][theta_own][owner_idx_pos], int) else -1
+                                                    cells[r_own][theta_own][owner_idx_pos] = (current_idx + 1) % num_wall_meshes
                                                     modified = True
-                                                    rebuilt_text = "vertical wall"
-                                            
-                                    if modified:
-                                        data_dict['cells'] = cells
-                                        col["fire_maze_data"] = json.dumps(data_dict)
-                                        rebuild_maze_from_collection(context, col)
-                                        self.report({'INFO'}, f"Swapped {rebuilt_text} mesh at ({cx_clamped}, {cy_clamped})")
-                        else:
-                            if wall_mode == 'cube':
-                                cx = math.floor(hit_x / ts)
-                                cy = math.floor(hit_y / ts)
-                                cx_clamped = max(0, min(cx, width - 1))
-                                cy_clamped = max(0, min(cy, depth - 1))
-                                if 0 <= cx < width and 0 <= cy < depth:
-                                    cells[cy_clamped][cx_clamped][0] = not cells[cy_clamped][cx_clamped][0]
-                                    if cells[cy_clamped][cx_clamped][0]:
-                                        if num_wall_meshes > 0:
-                                            cells[cy_clamped][cx_clamped][1] = random.randrange(num_wall_meshes)
-                                            cells[cy_clamped][cx_clamped][2] = random.randrange(num_wall_meshes)
-                                            cells[cy_clamped][cx_clamped][3] = random.randrange(num_wall_meshes)
-                                            cells[cy_clamped][cx_clamped][4] = random.randrange(num_wall_meshes)
-                                        if num_roof_meshes > 0:
-                                            cells[cy_clamped][cx_clamped][6] = random.randrange(num_roof_meshes)
+                                                    rebuilt_text = boundary_name
+                                                    # Set coordinates for correct console logging
+                                                    r_idx, theta = r_own, theta_own
                                     else:
-                                        if num_floor_meshes > 0:
-                                            cells[cy_clamped][cx_clamped][5] = random.randrange(num_floor_meshes)
+                                        # Thin wall mode
+                                        d_in = abs(r_hit - (r_idx - 0.5) * ts)
+                                        d_out = abs(r_hit - (r_idx + 0.5) * ts)
+                                        
+                                        def angle_diff(a, b):
+                                            diff = (a - b) % (2 * math.pi)
+                                            if diff > math.pi:
+                                                diff -= 2 * math.pi
+                                            return abs(diff)
+                                            
+                                        d_cw = r_hit * angle_diff(phi_hit, (theta + 1) * alpha_r)
+                                        d_ccw = r_hit * angle_diff(phi_hit, theta * alpha_r)
+                                        
+                                        if r_idx == 0:
+                                            min_d = d_out
+                                        else:
+                                            min_d = min(d_in, d_out, d_cw, d_ccw)
+                                            
+                                        if min_d == d_cw:
+                                            if num_wall_meshes > 0:
+                                                current_idx = cells[r_idx][theta][2] if isinstance(cells[r_idx][theta][2], int) else -1
+                                                cells[r_idx][theta][2] = (current_idx + 1) % num_wall_meshes
+                                                modified = True
+                                                rebuilt_text = "clockwise wall"
+                                        elif min_d == d_ccw:
+                                            if num_wall_meshes > 0:
+                                                prev_theta = (theta - 1) % Nr
+                                                current_idx = cells[r_idx][prev_theta][2] if isinstance(cells[r_idx][prev_theta][2], int) else -1
+                                                cells[r_idx][prev_theta][2] = (current_idx + 1) % num_wall_meshes
+                                                modified = True
+                                                rebuilt_text = "counter-clockwise wall"
+                                        elif min_d == d_in:
+                                            if num_wall_meshes > 0:
+                                                current_idx = cells[r_idx][theta][3] if isinstance(cells[r_idx][theta][3], int) else -1
+                                                cells[r_idx][theta][3] = (current_idx + 1) % num_wall_meshes
+                                                modified = True
+                                                rebuilt_text = "inward wall"
+                                        elif min_d == d_out:
+                                            if num_wall_meshes > 0:
+                                                if r_idx + 1 < rings:
+                                                    N_out = ring_sectors[r_idx + 1]
+                                                    theta_out = math.floor(phi_hit / (2 * math.pi / N_out))
+                                                    theta_out = max(0, min(theta_out, N_out - 1))
+                                                    current_idx = cells[r_idx + 1][theta_out][3] if isinstance(cells[r_idx + 1][theta_out][3], int) else -1
+                                                    cells[r_idx + 1][theta_out][3] = (current_idx + 1) % num_wall_meshes
+                                                    modified = True
+                                                    rebuilt_text = "outward wall"
+                                                else:
+                                                    # Outermost boundary wall is stored in the cell itself at index 6
+                                                    current_idx = cells[r_idx][theta][6] if len(cells[r_idx][theta]) > 6 else (cells[r_idx][theta][3] if isinstance(cells[r_idx][theta][3], int) else -1)
+                                                    if len(cells[r_idx][theta]) > 6:
+                                                        cells[r_idx][theta][6] = (current_idx + 1) % num_wall_meshes
+                                                    else:
+                                                        cells[r_idx][theta][3] = (current_idx + 1) % num_wall_meshes
+                                                    modified = True
+                                                    rebuilt_text = "outermost outward wall"
+                                            
+                                if modified:
                                     data_dict['cells'] = cells
                                     col["fire_maze_data"] = json.dumps(data_dict)
                                     rebuild_maze_from_collection(context, col)
-                                    self.report({'INFO'}, f"Toggled wall tile at ({cx_clamped}, {cy_clamped})")
+                                    self.report({'INFO'}, f"Swapped {rebuilt_text} mesh at cell ({r_idx}, {theta})")
                             else:
-                                # Thin wall mode
+                                # Rectangular grid mesh swapping
                                 cx = math.floor(hit_x / ts)
                                 cy = math.floor(hit_y / ts)
                                 if -1 <= cx <= width and -1 <= cy <= depth:
+                                    # Determine clicked face direction
+                                    face_dir = 'WALL'
+                                    if normal:
+                                        nx, ny, nz = abs(normal.x), abs(normal.y), abs(normal.z)
+                                        if nz > nx and nz > ny:
+                                            tiled = props.wall_height_tiled
+                                            tiles_high = props.wall_height_tiles if tiled else 1
+                                            wh = ts * tiles_high if tiled else props.wall_height
+                                            face_dir = 'ROOF' if loc.z > (wh * 0.5) else 'FLOOR'
+                                        elif ny > nx and ny > nz:
+                                            face_dir = 'N' if normal.y > 0 else 'S'
+                                        else:
+                                            face_dir = 'E' if normal.x > 0 else 'W'
+    
                                     cx_clamped = max(0, min(cx, width - 1))
                                     cy_clamped = max(0, min(cy, depth - 1))
-                                    
-                                    d_N = abs(hit_y - (cy_clamped + 1) * ts)
-                                    d_S = abs(hit_y - cy_clamped * ts)
-                                    d_E = abs(hit_x - (cx_clamped + 1) * ts)
-                                    d_W = abs(hit_x - cx_clamped * ts)
-                                    
-                                    min_d = min(d_N, d_S, d_E, d_W)
-                                    
-                                    if min_d == d_N:
-                                        cells[cy_clamped][cx_clamped][0] = not cells[cy_clamped][cx_clamped][0]
-                                        if cy_clamped + 1 < depth:
-                                            cells[cy_clamped + 1][cx_clamped][1] = cells[cy_clamped][cx_clamped][0]
-                                    elif min_d == d_S:
-                                        cells[cy_clamped][cx_clamped][1] = not cells[cy_clamped][cx_clamped][1]
-                                        if cy_clamped - 1 >= 0:
-                                            cells[cy_clamped - 1][cx_clamped][0] = cells[cy_clamped][cx_clamped][1]
-                                    elif min_d == d_E:
-                                        cells[cy_clamped][cx_clamped][2] = not cells[cy_clamped][cx_clamped][2]
-                                        if cx_clamped + 1 < width:
-                                            cells[cy_clamped][cx_clamped + 1][3] = cells[cy_clamped][cx_clamped][2]
+    
+                                    if wall_mode == 'cube':
+                                        is_wall = cells[cy_clamped][cx_clamped][0]
+                                        modified = False
+                                        rebuilt_text = ""
+                                        
+                                        is_pillar_mode = props.cube_mode_pillar
+                                        
+                                        if face_dir == 'ROOF':
+                                            if is_pillar_mode and is_wall:
+                                                if num_wall_meshes > 0:
+                                                    current_idx = cells[cy_clamped][cx_clamped][1] if isinstance(cells[cy_clamped][cx_clamped][1], int) else -1
+                                                    next_idx = (current_idx + 1) % num_wall_meshes
+                                                    cells[cy_clamped][cx_clamped][1] = next_idx
+                                                    cells[cy_clamped][cx_clamped][2] = next_idx
+                                                    cells[cy_clamped][cx_clamped][3] = next_idx
+                                                    cells[cy_clamped][cx_clamped][4] = next_idx
+                                                    modified = True
+                                                    rebuilt_text = "pillar"
+                                            else:
+                                                if num_roof_meshes > 0 and len(cells[cy_clamped][cx_clamped]) > 6:
+                                                    current_idx = cells[cy_clamped][cx_clamped][6] if isinstance(cells[cy_clamped][cx_clamped][6], int) else -1
+                                                    cells[cy_clamped][cx_clamped][6] = (current_idx + 1) % num_roof_meshes
+                                                    modified = True
+                                                    rebuilt_text = "roof"
+                                        elif face_dir == 'FLOOR':
+                                            if num_floor_meshes > 0 and len(cells[cy_clamped][cx_clamped]) > 5:
+                                                current_idx = cells[cy_clamped][cx_clamped][5] if isinstance(cells[cy_clamped][cx_clamped][5], int) else -1
+                                                cells[cy_clamped][cx_clamped][5] = (current_idx + 1) % num_floor_meshes
+                                                modified = True
+                                                rebuilt_text = "floor"
+                                        else:
+                                            # Clicked a wall face
+                                            if is_wall and num_wall_meshes > 0:
+                                                if is_pillar_mode:
+                                                    current_idx = cells[cy_clamped][cx_clamped][1] if isinstance(cells[cy_clamped][cx_clamped][1], int) else -1
+                                                    next_idx = (current_idx + 1) % num_wall_meshes
+                                                    cells[cy_clamped][cx_clamped][1] = next_idx
+                                                    cells[cy_clamped][cx_clamped][2] = next_idx
+                                                    cells[cy_clamped][cx_clamped][3] = next_idx
+                                                    cells[cy_clamped][cx_clamped][4] = next_idx
+                                                    modified = True
+                                                    rebuilt_text = "pillar"
+                                                else:
+                                                    idx_map = {'N': 1, 'S': 2, 'E': 3, 'W': 4}
+                                                    face_idx = idx_map.get(face_dir, 1)
+                                                    current_idx = cells[cy_clamped][cx_clamped][face_idx] if isinstance(cells[cy_clamped][cx_clamped][face_idx], int) else -1
+                                                    cells[cy_clamped][cx_clamped][face_idx] = (current_idx + 1) % num_wall_meshes
+                                                    modified = True
+                                                    rebuilt_text = f"wall ({face_dir} face)"
+                                                    
+                                        if modified:
+                                            data_dict['cells'] = cells
+                                            col["fire_maze_data"] = json.dumps(data_dict)
+                                            rebuild_maze_from_collection(context, col)
+                                            self.report({'INFO'}, f"Swapped {rebuilt_text} mesh at ({cx_clamped}, {cy_clamped})")
+                                        else:
+                                            if not is_wall:
+                                                if num_floor_meshes > 0:
+                                                    current_idx = cells[cy_clamped][cx_clamped][5] if isinstance(cells[cy_clamped][cx_clamped][5], int) else -1
+                                                    cells[cy_clamped][cx_clamped][5] = (current_idx + 1) % num_floor_meshes
+                                                    data_dict['cells'] = cells
+                                                    col["fire_maze_data"] = json.dumps(data_dict)
+                                                    rebuild_maze_from_collection(context, col)
+                                                    self.report({'INFO'}, f"Swapped floor mesh at ({cx_clamped}, {cy_clamped})")
                                     else:
-                                        cells[cy_clamped][cx_clamped][3] = not cells[cy_clamped][cx_clamped][3]
-                                        if cx_clamped - 1 >= 0:
-                                            cells[cy_clamped][cx_clamped - 1][2] = cells[cy_clamped][cx_clamped][3]
+                                        # Thin wall mode
+                                        modified = False
+                                        rebuilt_text = ""
+                                        if face_dir == 'ROOF':
+                                            if num_roof_meshes > 0:
+                                                if len(cells[cy_clamped][cx_clamped]) > 8:
+                                                    idx_pos = 9
+                                                elif len(cells[cy_clamped][cx_clamped]) > 7:
+                                                    idx_pos = 7
+                                                else:
+                                                    idx_pos = None
+                                                
+                                                if idx_pos is not None:
+                                                    current_idx = cells[cy_clamped][cx_clamped][idx_pos] if isinstance(cells[cy_clamped][cx_clamped][idx_pos], int) else -1
+                                                    cells[cy_clamped][cx_clamped][idx_pos] = (current_idx + 1) % num_roof_meshes
+                                                    modified = True
+                                                    rebuilt_text = "roof"
+                                        elif face_dir == 'FLOOR':
+                                            if num_floor_meshes > 0:
+                                                if len(cells[cy_clamped][cx_clamped]) > 8:
+                                                    idx_pos = 8
+                                                elif len(cells[cy_clamped][cx_clamped]) > 6:
+                                                    idx_pos = 6
+                                                else:
+                                                    idx_pos = None
+                                                    
+                                                if idx_pos is not None:
+                                                    current_idx = cells[cy_clamped][cx_clamped][idx_pos] if isinstance(cells[cy_clamped][cx_clamped][idx_pos], int) else -1
+                                                    cells[cy_clamped][cx_clamped][idx_pos] = (current_idx + 1) % num_floor_meshes
+                                                    modified = True
+                                                    rebuilt_text = "floor"
+                                        else:
+                                            if num_wall_meshes > 0:
+                                                d_N = abs(hit_y - (cy_clamped + 1) * ts)
+                                                d_S = abs(hit_y - cy_clamped * ts)
+                                                d_E = abs(hit_x - (cx_clamped + 1) * ts)
+                                                d_W = abs(hit_x - cx_clamped * ts)
+                                                
+                                                min_d = min(d_N, d_S, d_E, d_W)
+                                                
+                                                if len(cells[cy_clamped][cx_clamped]) > 8:
+                                                    if min_d == d_N:
+                                                         current_idx = cells[cy_clamped][cx_clamped][4] if isinstance(cells[cy_clamped][cx_clamped][4], int) else -1
+                                                         next_idx = (current_idx + 1) % num_wall_meshes
+                                                         cells[cy_clamped][cx_clamped][4] = next_idx
+                                                         if cy_clamped + 1 < depth:
+                                                             cells[cy_clamped + 1][cx_clamped][5] = next_idx
+                                                         modified = True
+                                                         rebuilt_text = "horizontal wall (North)"
+                                                    elif min_d == d_S:
+                                                         current_idx = cells[cy_clamped][cx_clamped][5] if isinstance(cells[cy_clamped][cx_clamped][5], int) else -1
+                                                         next_idx = (current_idx + 1) % num_wall_meshes
+                                                         cells[cy_clamped][cx_clamped][5] = next_idx
+                                                         if cy_clamped - 1 >= 0:
+                                                             cells[cy_clamped - 1][cx_clamped][4] = next_idx
+                                                         modified = True
+                                                         rebuilt_text = "horizontal wall (South)"
+                                                    elif min_d == d_E:
+                                                         current_idx = cells[cy_clamped][cx_clamped][6] if isinstance(cells[cy_clamped][cx_clamped][6], int) else -1
+                                                         next_idx = (current_idx + 1) % num_wall_meshes
+                                                         cells[cy_clamped][cx_clamped][6] = next_idx
+                                                         if cx_clamped + 1 < width:
+                                                             cells[cy_clamped][cx_clamped + 1][7] = next_idx
+                                                         modified = True
+                                                         rebuilt_text = "vertical wall (East)"
+                                                    else:
+                                                         current_idx = cells[cy_clamped][cx_clamped][7] if isinstance(cells[cy_clamped][cx_clamped][7], int) else -1
+                                                         next_idx = (current_idx + 1) % num_wall_meshes
+                                                         cells[cy_clamped][cx_clamped][7] = next_idx
+                                                         if cx_clamped - 1 >= 0:
+                                                             cells[cy_clamped][cx_clamped - 1][6] = next_idx
+                                                         modified = True
+                                                         rebuilt_text = "vertical wall (West)"
+                                                else:
+                                                    if min_d == d_N or min_d == d_S:
+                                                        target_y = cy_clamped + 1 if min_d == d_N else cy_clamped
+                                                        target_y = min(target_y, depth - 1)
+                                                        current_idx = cells[target_y][cx_clamped][4] if isinstance(cells[target_y][cx_clamped][4], int) else -1
+                                                        cells[target_y][cx_clamped][4] = (current_idx + 1) % num_wall_meshes
+                                                        modified = True
+                                                        rebuilt_text = "horizontal wall"
+                                                    else:
+                                                        target_x = cx_clamped + 1 if min_d == d_E else cx_clamped
+                                                        target_x = min(target_x, width - 1)
+                                                        current_idx = cells[cy_clamped][target_x][5] if isinstance(cells[cy_clamped][target_x][5], int) else -1
+                                                        cells[cy_clamped][target_x][5] = (current_idx + 1) % num_wall_meshes
+                                                        modified = True
+                                                        rebuilt_text = "vertical wall"
+                                                
+                                        if modified:
+                                            data_dict['cells'] = cells
+                                            col["fire_maze_data"] = json.dumps(data_dict)
+                                            rebuild_maze_from_collection(context, col)
+                                            self.report({'INFO'}, f"Swapped {rebuilt_text} mesh at ({cx_clamped}, {cy_clamped})")
+                        else:
+                            if grid_type == 'polar':
+                                r_hit = math.sqrt(hit_x**2 + hit_y**2)
+                                phi_hit = math.atan2(hit_y, hit_x)
+                                if phi_hit < 0:
+                                    phi_hit += 2 * math.pi
+                                    
+                                rings = len(ring_sectors)
+                                r_idx = math.floor(r_hit / ts + 0.5)
+                                r_idx = max(0, min(r_idx, rings - 1))
+                                
+                                Nr = ring_sectors[r_idx]
+                                alpha_r = 2 * math.pi / Nr
+                                theta = math.floor(phi_hit / alpha_r)
+                                theta = max(0, min(theta, Nr - 1))
+                                
+                                modified = False
+                                rebuilt_text = ""
+                                
+                                d_in = abs(r_hit - (r_idx - 0.5) * ts)
+                                d_out = abs(r_hit - (r_idx + 0.5) * ts)
+                                
+                                def angle_diff(a, b):
+                                    diff = (a - b) % (2 * math.pi)
+                                    if diff > math.pi:
+                                        diff -= 2 * math.pi
+                                    return abs(diff)
+                                    
+                                d_cw = r_hit * angle_diff(phi_hit, (theta + 1) * alpha_r)
+                                d_ccw = r_hit * angle_diff(phi_hit, theta * alpha_r)
+                                
+                                if r_idx == 0:
+                                    min_d = d_out
+                                else:
+                                    min_d = min(d_in, d_out, d_cw, d_ccw)
+                                
+                                if wall_mode == 'cube':
+                                    target_cell = (r_idx, theta)
+                                    if face_dir == 'WALL':
+                                        if min_d == d_cw:
+                                            A = (r_idx, theta)
+                                            B = (r_idx, (theta + 1) % Nr)
+                                            if cells[A[0]][A[1]][0]:
+                                                target_cell = A
+                                            elif cells[B[0]][B[1]][0]:
+                                                target_cell = B
+                                        elif min_d == d_ccw:
+                                            A = (r_idx, theta)
+                                            B = (r_idx, (theta - 1) % Nr)
+                                            if cells[A[0]][A[1]][0]:
+                                                target_cell = A
+                                            elif cells[B[0]][B[1]][0]:
+                                                target_cell = B
+                                        elif min_d == d_in:
+                                            if r_idx > 0:
+                                                N_in = ring_sectors[r_idx - 1]
+                                                theta_in = 0 if N_in == 1 else (theta if N_in == Nr else theta // 2)
+                                                A = (r_idx, theta)
+                                                B = (r_idx - 1, theta_in)
+                                                if cells[A[0]][A[1]][0]:
+                                                    target_cell = A
+                                                elif cells[B[0]][B[1]][0]:
+                                                    target_cell = B
+                                        elif min_d == d_out:
+                                            if r_idx < rings - 1:
+                                                N_out = ring_sectors[r_idx + 1]
+                                                theta_out = math.floor(phi_hit / (2 * math.pi / N_out))
+                                                theta_out = max(0, min(theta_out, N_out - 1))
+                                                A = (r_idx, theta)
+                                                B = (r_idx + 1, theta_out)
+                                                if cells[A[0]][A[1]][0]:
+                                                    target_cell = A
+                                                elif cells[B[0]][B[1]][0]:
+                                                    target_cell = B
+                                                    
+                                    tr, ttheta = target_cell
+                                    cells[tr][ttheta][0] = not cells[tr][ttheta][0]
+                                    roof_pos = 7 if len(cells[tr][ttheta]) == 8 else 5
+                                    floor_pos = 6 if len(cells[tr][ttheta]) == 8 else 4
+                                    if cells[tr][ttheta][0]:
+                                        if num_wall_meshes > 0:
+                                            cells[tr][ttheta][2] = random.randrange(num_wall_meshes)
+                                            cells[tr][ttheta][3] = random.randrange(num_wall_meshes)
+                                            if len(cells[tr][ttheta]) == 8:
+                                                cells[tr][ttheta][4] = random.randrange(num_wall_meshes)
+                                                cells[tr][ttheta][5] = random.randrange(num_wall_meshes)
+                                        if num_roof_meshes > 0:
+                                            cells[tr][ttheta][roof_pos] = random.randrange(num_roof_meshes)
+                                    else:
+                                        if num_floor_meshes > 0:
+                                            cells[tr][ttheta][floor_pos] = random.randrange(num_floor_meshes)
+                                    modified = True
+                                    rebuilt_text = "wall tile"
+                                    r_idx, theta = tr, ttheta
+                                else:
+                                    # Thin wall mode
+                                    if min_d == d_cw:
+                                        cells[r_idx][theta][0] = not cells[r_idx][theta][0]
+                                        modified = True
+                                        rebuilt_text = "clockwise wall"
+                                    elif min_d == d_ccw:
+                                        prev_theta = (theta - 1) % Nr
+                                        cells[r_idx][prev_theta][0] = not cells[r_idx][prev_theta][0]
+                                        modified = True
+                                        rebuilt_text = "counter-clockwise wall"
+                                    elif min_d == d_in:
+                                        cells[r_idx][theta][1] = not cells[r_idx][theta][1]
+                                        modified = True
+                                        rebuilt_text = "inward wall"
+                                    elif min_d == d_out:
+                                        if r_idx + 1 < rings:
+                                            N_out = ring_sectors[r_idx + 1]
+                                            theta_out = math.floor(phi_hit / (2 * math.pi / N_out))
+                                            theta_out = max(0, min(theta_out, N_out - 1))
+                                            cells[r_idx + 1][theta_out][1] = not cells[r_idx + 1][theta_out][1]
+                                            modified = True
+                                            rebuilt_text = "outward wall"
                                             
+                                if modified:
                                     data_dict['cells'] = cells
                                     col["fire_maze_data"] = json.dumps(data_dict)
                                     rebuild_maze_from_collection(context, col)
-                                    self.report({'INFO'}, f"Toggled wall at cell ({cx_clamped}, {cy_clamped})")
+                                    self.report({'INFO'}, f"Toggled {rebuilt_text} at cell ({r_idx}, {theta})")
+                            else:
+                                # Rectangular grid toggle logic
+                                if wall_mode == 'cube':
+                                    cx = math.floor(hit_x / ts)
+                                    cy = math.floor(hit_y / ts)
+                                    cx_clamped = max(0, min(cx, width - 1))
+                                    cy_clamped = max(0, min(cy, depth - 1))
+                                    
+                                    target_cell = (cx_clamped, cy_clamped)
+                                    if face_dir in {'N', 'S', 'E', 'W'}:
+                                        A = (cx_clamped, cy_clamped)
+                                        if face_dir == 'N':
+                                            B = (cx_clamped, cy_clamped + 1)
+                                        elif face_dir == 'S':
+                                            B = (cx_clamped, cy_clamped - 1)
+                                        elif face_dir == 'E':
+                                            B = (cx_clamped + 1, cy_clamped)
+                                        else:
+                                            B = (cx_clamped - 1, cy_clamped)
+                                            
+                                        if 0 <= B[0] < width and 0 <= B[1] < depth:
+                                            if cells[A[1]][A[0]][0]:
+                                                target_cell = A
+                                            elif cells[B[1]][B[0]][0]:
+                                                target_cell = B
+                                                
+                                    tx, ty = target_cell
+                                    if 0 <= tx < width and 0 <= ty < depth:
+                                        cells[ty][tx][0] = not cells[ty][tx][0]
+                                        if cells[ty][tx][0]:
+                                            if num_wall_meshes > 0:
+                                                cells[ty][tx][1] = random.randrange(num_wall_meshes)
+                                                cells[ty][tx][2] = random.randrange(num_wall_meshes)
+                                                cells[ty][tx][3] = random.randrange(num_wall_meshes)
+                                                cells[ty][tx][4] = random.randrange(num_wall_meshes)
+                                            if num_roof_meshes > 0:
+                                                cells[ty][tx][6] = random.randrange(num_roof_meshes)
+                                        else:
+                                            if num_floor_meshes > 0:
+                                                cells[ty][tx][5] = random.randrange(num_floor_meshes)
+                                        data_dict['cells'] = cells
+                                        col["fire_maze_data"] = json.dumps(data_dict)
+                                        rebuild_maze_from_collection(context, col)
+                                        self.report({'INFO'}, f"Toggled wall tile at ({tx}, {ty})")
+                                else:
+                                    # Thin wall mode
+                                    cx = math.floor(hit_x / ts)
+                                    cy = math.floor(hit_y / ts)
+                                    if -1 <= cx <= width and -1 <= cy <= depth:
+                                        cx_clamped = max(0, min(cx, width - 1))
+                                        cy_clamped = max(0, min(cy, depth - 1))
+                                        
+                                        d_N = abs(hit_y - (cy_clamped + 1) * ts)
+                                        d_S = abs(hit_y - cy_clamped * ts)
+                                        d_E = abs(hit_x - (cx_clamped + 1) * ts)
+                                        d_W = abs(hit_x - cx_clamped * ts)
+                                        
+                                        min_d = min(d_N, d_S, d_E, d_W)
+                                        
+                                        if min_d == d_N:
+                                            cells[cy_clamped][cx_clamped][0] = not cells[cy_clamped][cx_clamped][0]
+                                            if cy_clamped + 1 < depth:
+                                                cells[cy_clamped + 1][cx_clamped][1] = cells[cy_clamped][cx_clamped][0]
+                                        elif min_d == d_S:
+                                            cells[cy_clamped][cx_clamped][1] = not cells[cy_clamped][cx_clamped][1]
+                                            if cy_clamped - 1 >= 0:
+                                                cells[cy_clamped - 1][cx_clamped][0] = cells[cy_clamped][cx_clamped][1]
+                                        elif min_d == d_E:
+                                            cells[cy_clamped][cx_clamped][2] = not cells[cy_clamped][cx_clamped][2]
+                                            if cx_clamped + 1 < width:
+                                                cells[cy_clamped][cx_clamped + 1][3] = cells[cy_clamped][cx_clamped][2]
+                                        else:
+                                            cells[cy_clamped][cx_clamped][3] = not cells[cy_clamped][cx_clamped][3]
+                                            if cx_clamped - 1 >= 0:
+                                                cells[cy_clamped - 1][cx_clamped][2] = cells[cy_clamped][cx_clamped][3]
+                                                
+                                        data_dict['cells'] = cells
+                                        col["fire_maze_data"] = json.dumps(data_dict)
+                                        rebuild_maze_from_collection(context, col)
+                                        self.report({'INFO'}, f"Toggled wall at cell ({cx_clamped}, {cy_clamped})")
             return {'RUNNING_MODAL'}
 
 
