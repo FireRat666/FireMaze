@@ -1188,7 +1188,7 @@ def _add_polar_floor_wedge(bm, uv_layer, r, theta, Nr, ts, z_base, is_roof=False
         for loop in f.loops:
             loop[uv_layer].uv = uv_map_dict[loop.vert]
 
-def _add_circular_wall(bm, uv_layer, radius, phi_start, phi_end, ts, h, wt, z_base):
+def _add_circular_wall(bm, uv_layer, radius, phi_start, phi_end, ts, h, wt, z_base, flip=False):
     subdivs = 8
     alpha_total = phi_end - phi_start
     
@@ -1214,79 +1214,141 @@ def _add_circular_wall(bm, uv_layer, radius, phi_start, phi_end, ts, h, wt, z_ba
     
     # 1. Inner curved face panels
     for i in range(subdivs):
-        f = bm.faces.new([
-            verts_a_bot[i + 1],
-            verts_a_bot[i],
-            verts_a_top[i],
-            verts_a_top[i + 1]
-        ])
+        if flip:
+            f = bm.faces.new([
+                verts_a_bot[i],
+                verts_a_bot[i + 1],
+                verts_a_top[i + 1],
+                verts_a_top[i]
+            ])
+        else:
+            f = bm.faces.new([
+                verts_a_bot[i + 1],
+                verts_a_bot[i],
+                verts_a_top[i],
+                verts_a_top[i + 1]
+            ])
         u0 = R_a * (phi_start + (i / subdivs) * alpha_total) / ts
         u1 = R_a * (phi_start + ((i + 1) / subdivs) * alpha_total) / ts
-        uvs = [(u1, 0.0), (u0, 0.0), (u0, h / ts), (u1, h / ts)]
+        if flip:
+            uvs = [(u0, 0.0), (u1, 0.0), (u1, h / ts), (u0, h / ts)]
+        else:
+            uvs = [(u1, 0.0), (u0, 0.0), (u0, h / ts), (u1, h / ts)]
         for loop, uv in zip(f.loops, uvs):
             loop[uv_layer].uv = uv
             
     # 2. Outer curved face panels
     for i in range(subdivs):
-        f = bm.faces.new([
-            verts_b_bot[i],
-            verts_b_bot[i + 1],
-            verts_b_top[i + 1],
-            verts_b_top[i]
-        ])
+        if flip:
+            f = bm.faces.new([
+                verts_b_bot[i + 1],
+                verts_b_bot[i],
+                verts_b_top[i],
+                verts_b_top[i + 1]
+            ])
+        else:
+            f = bm.faces.new([
+                verts_b_bot[i],
+                verts_b_bot[i + 1],
+                verts_b_top[i + 1],
+                verts_b_top[i]
+            ])
         u0 = R_b * (phi_start + (i / subdivs) * alpha_total) / ts
         u1 = R_b * (phi_start + ((i + 1) / subdivs) * alpha_total) / ts
-        uvs = [(u0, 0.0), (u1, 0.0), (u1, h / ts), (u0, h / ts)]
+        if flip:
+            uvs = [(u1, 0.0), (u0, 0.0), (u0, h / ts), (u1, h / ts)]
+        else:
+            uvs = [(u0, 0.0), (u1, 0.0), (u1, h / ts), (u0, h / ts)]
         for loop, uv in zip(f.loops, uvs):
             loop[uv_layer].uv = uv
             
     # 3. Bottom cap panels (normal -Z, visible from below)
     for i in range(subdivs):
-        f = bm.faces.new([
-            verts_a_bot[i + 1],
-            verts_b_bot[i + 1],
-            verts_b_bot[i],
-            verts_a_bot[i]
-        ])
+        if flip:
+            f = bm.faces.new([
+                verts_a_bot[i],
+                verts_b_bot[i],
+                verts_b_bot[i + 1],
+                verts_a_bot[i + 1]
+            ])
+        else:
+            f = bm.faces.new([
+                verts_a_bot[i + 1],
+                verts_b_bot[i + 1],
+                verts_b_bot[i],
+                verts_a_bot[i]
+            ])
         u0 = R_a * (phi_start + (i / subdivs) * alpha_total) / ts
         u1 = R_a * (phi_start + ((i + 1) / subdivs) * alpha_total) / ts
-        uvs = [(0.0, u1), (wt / ts, u1), (wt / ts, u0), (0.0, u0)]
+        if flip:
+            uvs = [(0.0, u0), (wt / ts, u0), (wt / ts, u1), (0.0, u1)]
+        else:
+            uvs = [(0.0, u1), (wt / ts, u1), (wt / ts, u0), (0.0, u0)]
         for loop, uv in zip(f.loops, uvs):
             loop[uv_layer].uv = uv
             
     # 4. Top cap panels (normal +Z, visible from above)
     for i in range(subdivs):
-        f = bm.faces.new([
-            verts_a_top[i],
-            verts_b_top[i],
-            verts_b_top[i + 1],
-            verts_a_top[i + 1]
-        ])
+        if flip:
+            f = bm.faces.new([
+                verts_a_top[i],
+                verts_a_top[i + 1],
+                verts_b_top[i + 1],
+                verts_b_top[i]
+            ])
+        else:
+            f = bm.faces.new([
+                verts_a_top[i],
+                verts_b_top[i],
+                verts_b_top[i + 1],
+                verts_a_top[i + 1]
+            ])
         u0 = R_a * (phi_start + (i / subdivs) * alpha_total) / ts
         u1 = R_a * (phi_start + ((i + 1) / subdivs) * alpha_total) / ts
-        uvs = [(0.0, u0), (wt / ts, u0), (wt / ts, u1), (0.0, u1)]
+        if flip:
+            uvs = [(0.0, u0), (0.0, u1), (wt / ts, u1), (wt / ts, u0)]
+        else:
+            uvs = [(0.0, u0), (wt / ts, u0), (wt / ts, u1), (0.0, u1)]
         for loop, uv in zip(f.loops, uvs):
             loop[uv_layer].uv = uv
             
-    # 5. Start end-cap (normal points away from arc start)
-    f_start = bm.faces.new([
-        verts_a_bot[0],
-        verts_b_bot[0],
-        verts_b_top[0],
-        verts_a_top[0]
-    ])
-    uvs_start = [(0.0, 0.0), (wt / ts, 0.0), (wt / ts, h / ts), (0.0, h / ts)]
+    # 5. Start end-cap
+    if flip:
+        f_start = bm.faces.new([
+            verts_a_bot[0],
+            verts_a_top[0],
+            verts_b_top[0],
+            verts_b_bot[0]
+        ])
+        uvs_start = [(0.0, 0.0), (0.0, h / ts), (wt / ts, h / ts), (wt / ts, 0.0)]
+    else:
+        f_start = bm.faces.new([
+            verts_a_bot[0],
+            verts_b_bot[0],
+            verts_b_top[0],
+            verts_a_top[0]
+        ])
+        uvs_start = [(0.0, 0.0), (wt / ts, 0.0), (wt / ts, h / ts), (0.0, h / ts)]
     for loop, uv in zip(f_start.loops, uvs_start):
         loop[uv_layer].uv = uv
         
-    # 6. End end-cap (normal points away from arc end)
-    f_end = bm.faces.new([
-        verts_b_bot[subdivs],
-        verts_a_bot[subdivs],
-        verts_a_top[subdivs],
-        verts_b_top[subdivs]
-    ])
-    uvs_end = [(0.0, 0.0), (wt / ts, 0.0), (wt / ts, h / ts), (0.0, h / ts)]
+    # 6. End end-cap
+    if flip:
+        f_end = bm.faces.new([
+            verts_b_bot[subdivs],
+            verts_b_top[subdivs],
+            verts_a_top[subdivs],
+            verts_a_bot[subdivs]
+        ])
+        uvs_end = [(0.0, 0.0), (0.0, h / ts), (wt / ts, h / ts), (wt / ts, 0.0)]
+    else:
+        f_end = bm.faces.new([
+            verts_b_bot[subdivs],
+            verts_a_bot[subdivs],
+            verts_a_top[subdivs],
+            verts_b_top[subdivs]
+        ])
+        uvs_end = [(0.0, 0.0), (wt / ts, 0.0), (wt / ts, h / ts), (0.0, h / ts)]
     for loop, uv in zip(f_end.loops, uvs_end):
         loop[uv_layer].uv = uv
 
@@ -1585,7 +1647,7 @@ def _add_wall_polar_bend(bm, src_mesh, mat_wall_offset, uv_layer, final_material
             rot_angle = 90 if r == 1 else -90
             mat_place = Matrix.Translation(Vector((0, -ts/2, 0))) @ Matrix.Rotation(math.radians(rot_angle), 4, 'X')
         elif wall_type == 'OUT':
-            mat_place = Matrix.Translation(Vector((0, ts/2, 0))) @ Matrix.Rotation(math.radians(90), 4, 'X')
+            mat_place = Matrix.Translation(Vector((0, ts/2, 0))) @ Matrix.Rotation(math.radians(-90), 4, 'X')
         else:
             mat_place = Matrix.Identity(4)
         mat_combined = mat_place @ mat_wall_offset @ cent
@@ -1692,8 +1754,7 @@ def _add_wall_polar_trapezoid(bm, src_mesh, mat_wall_offset, uv_layer, final_mat
             rot_angle = 90 if r == 1 else -90
             mat_place = Matrix.Translation(Vector((0, -ts/2, 0))) @ Matrix.Rotation(math.radians(rot_angle), 4, 'X')
         elif wall_type == 'OUT':
-            # OUT wall faces inward toward the maze interior
-            mat_place = Matrix.Translation(Vector((0, ts/2, 0))) @ Matrix.Rotation(math.radians(90), 4, 'X')
+            mat_place = Matrix.Translation(Vector((0, ts/2, 0))) @ Matrix.Rotation(math.radians(-90), 4, 'X')
         else:
             mat_place = Matrix.Identity(4)
         mat_combined = mat_place @ mat_wall_offset @ cent
@@ -1866,7 +1927,7 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
                                 radius = (r + 0.5) * ts
                                 phi_start = theta * alpha_r
                                 phi_end = (theta + 1) * alpha_r
-                                _add_circular_wall_flat(bm_wall, uv_wall, radius, phi_start, phi_end, ts, seg_h, z_off, facing_outward=False)
+                                _add_circular_wall_flat(bm_wall, uv_wall, radius, phi_start, phi_end, ts, seg_h, z_off, facing_outward=True)
                         continue
                     
                     if props.cube_mode_pillar and (wall_meshes_list or custom_wall_north or custom_wall_east) and not force_simple:
@@ -2019,7 +2080,7 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
                                 radius = (r + 0.5) * ts
                                 phi_start = theta * alpha_r
                                 phi_end = (theta + 1) * alpha_r
-                                _add_circular_wall_flat(bm_wall, uv_wall, radius, phi_start, phi_end, ts, seg_h, z_off, facing_outward=False)
+                                _add_circular_wall_flat(bm_wall, uv_wall, radius, phi_start, phi_end, ts, seg_h, z_off, facing_outward=True)
 
     else:
         for level in range(tiles_high):
