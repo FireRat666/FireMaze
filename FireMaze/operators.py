@@ -50,6 +50,7 @@ def rebuild_maze_from_collection(context, col):
     data_dict = json.loads(col["fire_maze_data"])
     wall_mode = data_dict.get('wall_mode', context.scene.fire_maze.wall_mode)
     props = context.scene.fire_maze
+    props.wall_mode = wall_mode
 
     # Determine number of meshes in collections
     num_wall_meshes = 0
@@ -64,6 +65,10 @@ def rebuild_maze_from_collection(context, col):
     if props.custom_roof_collection:
         num_roof_meshes = len([o for o in props.custom_roof_collection.objects if o.type == 'MESH'])
     
+    grid_type = data_dict.get('grid_type', 'rect')
+    polar_rings = data_dict.get('polar_rings', 0)
+    ring_sectors = data_dict.get('ring_sectors', [])
+
     maze_data = MazeData(
         width=data_dict['width'],
         depth=data_dict['depth'],
@@ -71,7 +76,10 @@ def rebuild_maze_from_collection(context, col):
         entrance=tuple(data_dict['entrance']) if data_dict['entrance'] else None,
         exits=[tuple(e) for e in data_dict['exits']],
         center=tuple(data_dict['center']),
-        guide_path=[tuple(gp) for gp in data_dict.get('guide_path', [])]
+        guide_path=[tuple(gp) for gp in data_dict.get('guide_path', [])],
+        grid_type=grid_type,
+        polar_rings=polar_rings,
+        ring_sectors=ring_sectors
     )
 
     # Recompute guide path
@@ -90,6 +98,9 @@ def rebuild_maze_from_collection(context, col):
         'num_wall_meshes': num_wall_meshes,
         'num_floor_meshes': num_floor_meshes,
         'num_roof_meshes': num_roof_meshes,
+        'grid_type': grid_type,
+        'polar_rings': polar_rings,
+        'ring_sectors': ring_sectors,
     })
 
     # Clear old maze objects from this collection
@@ -141,9 +152,14 @@ class MAZE_OT_generate(bpy.types.Operator):
     def execute(self, context):
         props = context.scene.fire_maze
 
-        if props.width < 3 or props.depth < 3:
-            self.report({'ERROR'}, "Width and Depth must be at least 3")
-            return {'CANCELLED'}
+        if props.grid_type == 'rect':
+            if props.width < 3 or props.depth < 3:
+                self.report({'ERROR'}, "Width and Depth must be at least 3")
+                return {'CANCELLED'}
+        else:
+            if props.polar_rings < 2:
+                self.report({'ERROR'}, "Rings must be at least 2")
+                return {'CANCELLED'}
 
         # Determine number of meshes in collections
         num_wall_meshes = 0
@@ -175,10 +191,14 @@ class MAZE_OT_generate(bpy.types.Operator):
             exit_side=props.exit_side,
             num_entrances=props.num_entrances,
             num_exits=props.num_exits,
-            wall_mode=props.wall_mode,
             num_wall_meshes=num_wall_meshes,
             num_floor_meshes=num_floor_meshes,
             num_roof_meshes=num_roof_meshes,
+            wall_mode=props.wall_mode,
+            mask_image=props.mask_image,
+            mask_invert=props.mask_invert,
+            grid_type=props.grid_type,
+            polar_rings=props.polar_rings,
         )
 
         col = _find_or_create_maze_collection("FireMaze")
@@ -196,13 +216,19 @@ class MAZE_OT_generate(bpy.types.Operator):
             'num_wall_meshes': num_wall_meshes,
             'num_floor_meshes': num_floor_meshes,
             'num_roof_meshes': num_roof_meshes,
+            'grid_type': maze_data.grid_type,
+            'polar_rings': maze_data.polar_rings,
+            'ring_sectors': maze_data.ring_sectors,
         })
 
         build_maze_objects(props, maze_data, context, collection=col)
         if props.generate_colliders:
             build_maze_objects(props, maze_data, context, collection=col, force_simple=True, name_suffix="_Collider")
 
-        self.report({'INFO'}, f"Maze generated ({props.width}x{props.depth})")
+        if props.grid_type == 'rect':
+            self.report({'INFO'}, f"Maze generated ({props.width}x{props.depth})")
+        else:
+            self.report({'INFO'}, f"Polar maze generated ({props.polar_rings} rings)")
         return {'FINISHED'}
 
 class MAZE_OT_clear(bpy.types.Operator):
@@ -619,7 +645,104 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
 
-classes = (MAZE_OT_generate, MAZE_OT_clear, MAZE_OT_interactive_edit)
+
+class MAZE_OT_save_as_image(bpy.types.Operator):
+    bl_idname = "fire_maze.save_as_image"
+    bl_label = "Save Maze as Image"
+    bl_description = "Export the current maze layout as a black-and-white image in the Blender database"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        col = bpy.data.collections.get("FireMaze")
+        if not col or "fire_maze_data" not in col:
+            self.report({'ERROR'}, "No active maze layout found. Please generate a maze first.")
+            return {'CANCELLED'}
+
+        import json
+        try:
+            data = json.loads(col["fire_maze_data"])
+            if data.get('grid_type', 'rect') == 'polar':
+                self.report({'ERROR'}, "Save Maze as Image is currently only supported for Rectangular mazes.")
+                return {'CANCELLED'}
+            width = data["width"]
+            depth = data["depth"]
+            cells = data["cells"]
+            wall_mode = data.get("wall_mode", "thin")
+        except Exception as e:
+            self.report({'ERROR'}, f"Failed to read maze data: {e}")
+            return {'CANCELLED'}
+
+        img_name = "FireMaze_Layout"
+        # Remove existing image if it exists to refresh
+        old_img = bpy.data.images.get(img_name)
+        if old_img:
+            bpy.data.images.remove(old_img)
+
+        # Create new image block
+        if wall_mode == 'cube':
+            img_w, img_h = width, depth
+        else: # thin mode, upscale 3x
+            img_w, img_h = width * 3, depth * 3
+
+        img = bpy.data.images.new(name=img_name, width=img_w, height=img_h, alpha=False, float_buffer=False)
+
+        # Buffer size is img_w * img_h * 4 (RGBA channels)
+        pixels = [0.0] * (img_w * img_h * 4)
+
+        if wall_mode == 'cube':
+            for y in range(depth):
+                for x in range(width):
+                    is_wall = cells[y][x][0]
+                    val = 0.0 if is_wall else 1.0
+                    idx = (y * img_w + x) * 4
+                    pixels[idx] = val
+                    pixels[idx + 1] = val
+                    pixels[idx + 2] = val
+                    pixels[idx + 3] = 1.0
+        else: # thin mode
+            for y in range(depth):
+                for x in range(width):
+                    c = cells[y][x]
+                    bx, by = x * 3, y * 3
+                    
+                    # Center is walkable
+                    c_idx = ((by + 1) * img_w + (bx + 1)) * 4
+                    pixels[c_idx] = pixels[c_idx+1] = pixels[c_idx+2] = 1.0
+                    pixels[c_idx+3] = 1.0
+                    
+                    # North (no North wall)
+                    if not c[0]:
+                        n_idx = ((by + 2) * img_w + (bx + 1)) * 4
+                        pixels[n_idx] = pixels[n_idx+1] = pixels[n_idx+2] = 1.0
+                        pixels[n_idx+3] = 1.0
+                        
+                    # South (no South wall)
+                    if not c[1]:
+                        s_idx = (by * img_w + (bx + 1)) * 4
+                        pixels[s_idx] = pixels[s_idx+1] = pixels[s_idx+2] = 1.0
+                        pixels[s_idx+3] = 1.0
+                        
+                    # East (no East wall)
+                    if not c[2]:
+                        e_idx = ((by + 1) * img_w + (bx + 2)) * 4
+                        pixels[e_idx] = pixels[e_idx+1] = pixels[e_idx+2] = 1.0
+                        pixels[e_idx+3] = 1.0
+                        
+                    # West (no West wall)
+                    if not c[3]:
+                        w_idx = ((by + 1) * img_w + bx) * 4
+                        pixels[w_idx] = pixels[w_idx+1] = pixels[w_idx+2] = 1.0
+                        pixels[w_idx+3] = 1.0
+
+        # Set pixel data
+        img.pixels = pixels
+        img.update()
+        
+        self.report({'INFO'}, f"Saved maze layout as image '{img_name}' (Size: {img_w}x{img_h})")
+        return {'FINISHED'}
+
+
+classes = (MAZE_OT_generate, MAZE_OT_clear, MAZE_OT_interactive_edit, MAZE_OT_save_as_image)
 
 def register():
     for cls in classes:

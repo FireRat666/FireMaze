@@ -14,8 +14,14 @@ class VIEW3D_PT_fire_maze(bpy.types.Panel):
         box = layout.box()
         box.label(text="Maze Settings", icon='GRID')
         col = box.column(align=True)
-        col.prop(props, "width")
-        col.prop(props, "depth")
+        col.prop(props, "grid_type", text="Grid Type")
+        col.separator(factor=0.5)
+        if props.grid_type == 'rect':
+            col.prop(props, "width")
+            col.prop(props, "depth")
+        else:
+            col.prop(props, "polar_rings", text="Rings")
+            col.prop(props, "polar_custom_alignment", text="Custom Tile Alignment")
         col.separator(factor=0.5)
         col.prop(props, "wall_height_tiled")
         if props.wall_height_tiled:
@@ -64,12 +70,22 @@ class VIEW3D_PT_fire_maze_algorithm(bpy.types.Panel):
         props = context.scene.fire_maze
         col = layout.column(align=True)
         col.prop(props, "algorithm")
-        col.separator(factor=0.5)
-        col.prop(props, "rooms_enable")
-        if props.rooms_enable:
-            col.prop(props, "rooms_count")
-            col.prop(props, "min_room_size")
-            col.prop(props, "max_room_size")
+        
+        if props.grid_type == 'rect':
+            col.separator(factor=0.5)
+            col.prop(props, "rooms_enable")
+            if props.rooms_enable:
+                col.prop(props, "rooms_count")
+                col.prop(props, "min_room_size")
+                col.prop(props, "max_room_size")
+                
+            col.separator()
+            col.label(text="Image Masking:", icon='IMAGE_DATA')
+            col.prop(props, "mask_image", text="Mask Image")
+            if props.mask_image:
+                col.prop(props, "mask_invert", text="Invert Mask")
+            col.separator()
+            col.operator("fire_maze.save_as_image", text="Save Maze as Image", icon='IMAGE_ZDEPTH')
 
 
 class VIEW3D_PT_fire_maze_entrances(bpy.types.Panel):
@@ -209,11 +225,48 @@ class VIEW3D_PT_fire_maze_cleanup(bpy.types.Panel):
         col.prop(props, "generate_lightmap")
         if props.generate_lightmap:
             col.prop(props, "lightmap_method", text="Method")
+        col.prop(props, "optimize_coplanar")
+        if props.optimize_coplanar:
+            warn_box = layout.box()
+            warn_box.alert = True
+            warn_box.label(text="Warning: Planar dissolve simplifies geometry", icon='WARNING')
+            warn_box.label(text="but can stretch/break seamless tiled textures.")
         
+        col.separator()
+        col.prop(props, "vertex_paint_enable")
+        if props.vertex_paint_enable:
+            col.prop(props, "vertex_paint_mode", text="Mode")
+            col.prop(props, "vertex_paint_intensity", text="Intensity", slider=True)
+
         col.separator()
         col.prop(props, "generate_colliders")
         if props.generate_colliders:
             col.prop(props, "merge_colliders")
+
+
+
+class VIEW3D_PT_fire_maze_props(bpy.types.Panel):
+    bl_label = "Prop & Decor Spawner"
+    bl_idname = "VIEW3D_PT_fire_maze_props"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "FireRat"
+    bl_parent_id = "VIEW3D_PT_fire_maze"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        props = context.scene.fire_maze
+        col = layout.column(align=True)
+        col.prop(props, "prop_torch_mesh", text="Torch Object")
+        if props.prop_torch_mesh:
+            col.prop(props, "prop_torch_density", text="Torch Density", slider=True)
+        col.separator()
+        col.prop(props, "prop_chest_mesh", text="Chest Object")
+        if props.prop_chest_mesh:
+            col.prop(props, "prop_chest_density", text="Chest Density", slider=True)
+        col.separator()
+        col.prop(props, "prop_door_mesh", text="Door Object")
 
 
 classes = (
@@ -225,6 +278,7 @@ classes = (
     VIEW3D_PT_fire_maze_custom_tiles,
     VIEW3D_PT_fire_maze_transforms,
     VIEW3D_PT_fire_maze_cleanup,
+    VIEW3D_PT_fire_maze_props,
 )
 
 def register():
