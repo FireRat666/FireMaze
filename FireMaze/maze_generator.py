@@ -1506,6 +1506,32 @@ def find_shortest_path(maze_data: MazeData, wall_mode: str) -> List[Tuple[int, i
         bfs_visited = {start}
         rings = maze_data.polar_rings
         ring_sectors = maze_data.ring_sectors
+
+        def get_neighbors(r, theta):
+            neighbors = []
+            Nr = ring_sectors[r]
+            if r >= 1:
+                neighbors.append((r, (theta + 1) % Nr))
+                neighbors.append((r, (theta - 1) % Nr))
+            if r > 0:
+                N_in = ring_sectors[r - 1]
+                if N_in == Nr:
+                    neighbors.append((r - 1, theta))
+                elif N_in == 1:
+                    neighbors.append((r - 1, 0))
+                else:
+                    neighbors.append((r - 1, theta // 2))
+            if r < rings - 1:
+                N_out = ring_sectors[r + 1]
+                if N_out == Nr:
+                    neighbors.append((r + 1, theta))
+                elif Nr == 1:
+                    for t in range(N_out):
+                        neighbors.append((r + 1, t))
+                else:
+                    neighbors.append((r + 1, 2 * theta))
+                    neighbors.append((r + 1, 2 * theta + 1))
+            return neighbors
         
         while queue:
             path = queue.popleft()
@@ -1515,32 +1541,37 @@ def find_shortest_path(maze_data: MazeData, wall_mode: str) -> List[Tuple[int, i
             r, theta = node
             Nr = ring_sectors[r]
             accessible = []
-            if r >= 1 and not maze_data.cells[r][theta][0]:
-                accessible.append((r, (theta + 1) % Nr))
-            if r >= 1 and not maze_data.cells[r][(theta - 1) % Nr][0]:
-                accessible.append((r, (theta - 1) % Nr))
-            if r > 0 and not maze_data.cells[r][theta][1]:
-                N_in = ring_sectors[r - 1]
-                if N_in == Nr:
-                    accessible.append((r - 1, theta))
-                elif N_in == 1:
-                    accessible.append((r - 1, 0))
-                else:
-                    accessible.append((r - 1, theta // 2))
-            if r < rings - 1:
-                N_out = ring_sectors[r + 1]
-                if N_out == Nr:
-                    if not maze_data.cells[r + 1][theta][1]:
-                        accessible.append((r + 1, theta))
-                elif Nr == 1:
-                    for t in range(N_out):
-                        if not maze_data.cells[r + 1][t][1]:
-                            accessible.append((r + 1, t))
-                else:
-                    if not maze_data.cells[r + 1][2 * theta][1]:
-                        accessible.append((r + 1, 2 * theta))
-                    if not maze_data.cells[r + 1][2 * theta + 1][1]:
-                        accessible.append((r + 1, 2 * theta + 1))
+            if wall_mode == 'cube':
+                for nr, ntheta in get_neighbors(r, theta):
+                    if not maze_data.cells[nr][ntheta][0]:
+                        accessible.append((nr, ntheta))
+            else:
+                if r >= 1 and not maze_data.cells[r][theta][0]:
+                    accessible.append((r, (theta + 1) % Nr))
+                if r >= 1 and not maze_data.cells[r][(theta - 1) % Nr][0]:
+                    accessible.append((r, (theta - 1) % Nr))
+                if r > 0 and not maze_data.cells[r][theta][1]:
+                    N_in = ring_sectors[r - 1]
+                    if N_in == Nr:
+                        accessible.append((r - 1, theta))
+                    elif N_in == 1:
+                        accessible.append((r - 1, 0))
+                    else:
+                        accessible.append((r - 1, theta // 2))
+                if r < rings - 1:
+                    N_out = ring_sectors[r + 1]
+                    if N_out == Nr:
+                        if not maze_data.cells[r + 1][theta][1]:
+                            accessible.append((r + 1, theta))
+                    elif Nr == 1:
+                        for t in range(N_out):
+                            if not maze_data.cells[r + 1][t][1]:
+                                accessible.append((r + 1, t))
+                    else:
+                        if not maze_data.cells[r + 1][2 * theta][1]:
+                            accessible.append((r + 1, 2 * theta))
+                        if not maze_data.cells[r + 1][2 * theta + 1][1]:
+                            accessible.append((r + 1, 2 * theta + 1))
             for neighbor in accessible:
                 if neighbor not in bfs_visited:
                     bfs_visited.add(neighbor)
