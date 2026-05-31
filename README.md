@@ -1,6 +1,6 @@
 # FireMaze
 
-A powerful, feature-rich Blender 4.2+ extension for generating, editing, and customizing tile-based mazes. Supports two construction modes (Thin and Cube), multiple generation algorithms, procedural rooms, loop/pillar settings, custom collection randomization, interactive viewport editing, real-time pathfinding guides, and detailed local transformations.
+A powerful, feature-rich Blender 4.2+ extension (v2.0.1) for generating, editing, and customizing tile-based mazes. Supports two grid types (Rectangular and Polar/Circular), two construction modes (Thin and Cube), 10 generation algorithms, procedural rooms, loop/pillar settings, image masking, custom collection randomization, interactive viewport editing, real-time pathfinding guides, vertex painting, prop/decor spawning, and detailed local transformations.
 
 ![main](Mazes.png)
 
@@ -12,8 +12,19 @@ A powerful, feature-rich Blender 4.2+ extension for generating, editing, and cus
 
 * **Thin Wall Mode**: Walls are rendered as thin box segments aligned along grid lines with customizable thickness. Ideal for classic dungeon layouts.
 * **Cube Mode**: Walls are full, tile-sized cubes centered on grid cells. The generated maze respects the exact layout dimensions, and path cell centers are placed perfectly within the grid.
+* **Tiled Height**: Optionally stack walls in tile-height increments for consistent UV mapping across segmented wall stacks (set number of tiles high).
 
-### 2. Advanced Generation Algorithms
+### 2. Grid Types
+
+Rectangular and Polar (Circular) grids are supported, each with its own maze generation and mesh construction logic.
+
+* **Rectangular Grid**: Standard width x depth cell layout. All algorithms, rooms, loops, and entrances/exits work as documented.
+* **Polar (Circular) Grid**: Maze generated in concentric rings with radially-divided sectors. Each ring's sector count increases outward for a natural circular look. Custom tile alignment modes are available for polar mazes:
+  * **Procedural Only**: Uses procedurally generated curved meshes (wedges, circular arcs, radial walls). Custom tiles are ignored.
+  * **Trapezoidal Scaling**: Stretches custom tiles to fit the wedge-shaped cells (straight walls, segmented appearance).
+  * **Polar Bending (Warp)**: Dynamically bends/warps custom tile vertices along circular arcs for a smooth organic look.
+
+### 3. Advanced Generation Algorithms
 
 FireMaze supports multiple algorithms to generate distinct maze layout architectures:
 
@@ -28,7 +39,7 @@ FireMaze supports multiple algorithms to generate distinct maze layout architect
 * **Recursive Division**: Recursively subdivides grid fields using vertical and horizontal walls with single doors carved in them. Generates nested rectangular chambers.
 * **Growing Tree**: A hybrid generalized frontier algorithm. Uses a mixed selection strategy (50% DFS, 50% Prim's) to create interesting corridor and cluster flows.
 
-### 3. Procedural Rooms
+### 4. Procedural Rooms
 
 Pre-carve open room areas within the maze.
 
@@ -37,20 +48,21 @@ Pre-carve open room areas within the maze.
 * **Min / Max Room Size**: Bounds for the randomized width and depth of rooms (measured in cells).
 * Rooms automatically connect to the corridor network and are guaranteed to contain no stray pillars or internal walls in both Thin and Cube modes.
 
-### 4. Loops & Isolated Obstacles
+### 5. Loops & Isolated Obstacles
 
 * **Loop Probability**: Set between `0.0` (perfect maze) and `1.0` (maximum loops). Randomly removes additional walls to create alternative paths, loops, and circular corridors.
 * **Isolated Wall Prob**: Set between `0.0` and `1.0`. Places standalone, single-wall columns or pillars in floor regions to act as obstacles.
 
-### 5. Entrances & Exits
+### 6. Entrances & Exits
 
 * **Completion Goals**:
   * `Find Center`: Edge entrance leading to a goal in the center.
   * `Find Exit`: Entrance on one side, exit on the opposite side.
 * **Placement Side**: Place entrances or exits along specific borders (`North`, `South`, `East`, `West`, or `Random/Any`).
 * **Counts**: Support for multiple entrances and exits (from 1 to 10). The generator ensures they always connect properly to path corridors, avoiding isolated entrances in Cube Mode.
+* **Emergency Exits** (Center Mode only): Adds extra random openings on outer edges that lead out of the maze, providing multiple escape points.
 
-### 6. Interactive Viewport Editor
+### 7. Interactive Viewport Editor
 
 You can paint, modify, and customize the maze layout in real time directly from the 3D viewport:
 
@@ -61,15 +73,16 @@ You can paint, modify, and customize the maze layout in real time directly from 
 *Note: Clicks on the Sidebar (N-panel) are ignored by the editor modal so you can modify materials, view settings, or click buttons without leaving edit mode.*
 *Precision Click Target: The editor modal temporarily generates an invisible flat-faced helper mesh (`_FireMaze_Edit_Helper`) and raycasts against it. This makes face classification and grid coordination 100% mathematically exact, preventing clicks on complex/curved custom meshes from misrouting. In **Instanced Pillars (Pillar) Mode**, clicking the top/roof area of a pillar is fully supported for toggling or swapping, even though the roof mesh itself is not generated.*
 
-### 7. Real-Time Guide Paths
+### 8. Real-Time Guide Paths
 
 Generate and display the shortest route through your maze:
 
 * **Style**: Render the guide as a simple 3D `Curve`, a solid `Tube` mesh, or a flat `Ribbon`.
+* **Width & Height Offset**: Control the guide tube/ribbon thickness with `Guide Width` and adjust its vertical position with `Height Offset`.
 * **Sine-Wave Animation**: Apply a floating wave animation using customizable `Wave Amplitude` and `Wave Frequency` values.
 * **Emission Shader**: The guide path automatically loads a bright neon-green glowing emissive material (`FireMaze_Guide`) to visually stand out in Eevee or Cycles.
 
-### 8. Custom Tiles, Collections, & Independent Face Swapping
+### 9. Custom Tiles, Collections, & Independent Face Swapping
 
 Replace standard meshes with randomized objects from collections and customize individual faces:
 
@@ -86,14 +99,43 @@ Replace standard meshes with randomized objects from collections and customize i
   * **Roofs**: Roof meshes should be centered horizontally (local X=0, Y=0) with their top surface aligned vertically at local Z=0.
 * **Tiles Centered**: Toggles whether your custom assets have their origin at their center (like Blender primitives) or at the bottom-left corner.
 
-### 9. Detailed Transform Offsets
+### 10. Detailed Transform Offsets
 
 Add variety and organic offsets to standard or custom tiles using local matrix transforms:
 
 * **Wall & Floor Transforms**: Control `Translate`, `Rotate`, and `Scale` vectors independently.
 * Transforms are applied relative to each individual tile segment's local center, making it easy to create crumbled walls, tilted floors, and varied block scales.
 
-### 10. Post-Processing, Cleanups & Colliders
+### 11. Image Masking
+
+Use a black-and-white image to define the walkable shape of the maze:
+
+* **Mask Image**: Select an Image datablock in Blender. White pixels are walkable (path), black pixels are blocked (wall).
+* **Invert Mask**: Swap the interpretation (black = walkable, white = blocked).
+* The mask image is sampled at each cell's position, making it easy to create mazes shaped like logos, text, or custom silhouettes.
+
+### 12. Vertex Painting
+
+Procedurally paint vertex colors on maze meshes for shading, texturing, or game engine blending:
+
+* **Enable Vertex Painting**: Toggle the vertex color pass on/off.
+* **Paint Intensity**: Controls the opacity/strength of the effect (0.0–1.0).
+* **Paint Modes**:
+  * **Ambient Occlusion**: Procedural darkening in corners, seams, and near floor/roof boundaries for a natural shadowed look.
+  * **Texture Blend Weights**: RGBA channels encode material blends (R=Moss near floor, G=Cracks in corners, B=Wetness on flat floors, A=Soot in dead-ends).
+  * **Path Highlight**: Greens the floor tiles along the shortest path to the exit/center.
+  * **Distance Gradient**: Black-to-white gradient mapped by BFS distance from the entrance.
+
+### 13. Prop & Decor Spawner
+
+Automatically place decorative objects on wall faces, dead-ends, and entrances/exits:
+
+* **Torch Object**: Assign a mesh object (torch, lantern, etc.) to randomly spawn on valid wall faces. Controlled by `Torch Density`.
+* **Chest Object**: Assign a mesh to spawn in dead-end cells. Controlled by `Chest Density`. Chests orient toward the only open direction.
+* **Door Object**: Assign a mesh to spawn at entrance and exit openings.
+* Spawned props are grouped under a `FireMaze_Props` sub-collection and tagged with `fire_maze` for automatic cleanup.
+
+### 14. Post-Processing, Cleanups & Colliders
 
 * **Single Wall Object**: Merges all wall and cap faces into a single object (`FireMaze_Walls`) to keep the outliner clean.
 * **Merge Objects**: Combines floors, walls, roofs, and caps into one single merged mesh (`FireMaze_Merged`).
@@ -101,6 +143,7 @@ Add variety and organic offsets to standard or custom tiles using local matrix t
 * **Generate Lightmap UVs**: Generates a second UV map named "Lightmap" on all final visual mesh objects (such as `FireMaze_Merged` or separate floor/wall/roof meshes) for baking or lightmapping. It offers two unwrapping methods:
   * **Smart UV Project**: Groups adjacent/co-planar faces into contiguous UV islands (recommended for reducing seam-bleeding in game engines).
   * **Lightmap Pack**: Project and pack each face individually (guarantees zero distortion and maximum packing efficiency, but splits every face).
+* **Optimize Geometry (Dissolve Planar)**: Simplifies mesh geometry by dissolving coplanar faces. Reduces poly count but may stretch seamless tiled textures.
 * **Generate Colliders**: Generates simple, flat-faced helper meshes (`FireMaze_Floor_Collider`, `FireMaze_Walls_Collider`, `FireMaze_Roof_Collider`) matching the maze layout for easy game engine integration (hidden in final renders by default). *Note: Roof colliders are generated even when Instanced Pillars (Pillar Mode) is enabled so that they can be used for collision.*
 * **Merge Colliders**: Combines all active collider objects into a single unified `FireMaze_Collider` mesh.
 
@@ -138,6 +181,8 @@ When generated, the addon creates separate objects based on your merge configura
 * The collection stores a serialized JSON custom property named `fire_maze_data`. This property contains the grid dimensions, cell states, entrance/exit coordinates, and wall mode.
 * Interactive editing and rebuild operators read this serialized data directly, ensuring that the viewport editor works seamlessly across different files and sessions.
 * Clicking **Clear Maze** scans the scene for any object carrying the `fire_maze` tag, unlinks them, and purges empty `FireMaze*` collections.
+* **Save Maze as Image**: Exports the current maze layout as a black-and-white Blender Image datablock (`FireMaze_Layout`), rendering wall cells as black and walkable cells as white. Useful as a reference minimap or for external editing.
+* **Autosave & Restore Last Session**: The addon automatically saves current settings and maze data to a temporary JSON file. Click **Restore Last Session** in the sidebar to recover settings and rebuild the maze from the last generation or edit, surviving Blender restarts.
 
 ---
 

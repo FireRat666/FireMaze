@@ -5,6 +5,8 @@ import bmesh
 from collections import deque
 from mathutils import Matrix, Vector
 
+_temp_mesh = None
+
 def _get_wall_segments(maze_data):
     segments = set()
     for y in range(maze_data.depth):
@@ -63,7 +65,7 @@ def _add_wall_face_transformed(bm, uv_layer, cx, cy, ts, wh, direction, mat_offs
     for loop, uv in zip(face.loops, uvs):
         loop[uv_layer].uv = uv
 
-def _add_mesh_at(bm, src_mesh, matrix, uv_layer, final_materials_list=None, swap_uv=False):
+def _add_mesh_at(bm, src_mesh, matrix, uv_layer, final_materials_list=None, swap_uv=False, temp_mesh=None):
     # Map the source mesh's materials to the final combined materials list
     material_map = []
     if final_materials_list is not None and src_mesh:
@@ -78,35 +80,38 @@ def _add_mesh_at(bm, src_mesh, matrix, uv_layer, final_materials_list=None, swap
     temp_bm = bmesh.new()
     temp_bm.from_mesh(src_mesh)
     bmesh.ops.transform(temp_bm, matrix=matrix, verts=temp_bm.verts)
-    src_uv = temp_bm.loops.layers.uv.active
-    if not src_uv and temp_bm.loops.layers.uv:
-        src_uv = temp_bm.loops.layers.uv[0]
+    
+    if swap_uv:
+        src_uv = temp_bm.loops.layers.uv.active
+        if not src_uv and temp_bm.loops.layers.uv:
+            src_uv = temp_bm.loops.layers.uv[0]
+        if src_uv:
+            for f in temp_bm.faces:
+                for loop in f.loops:
+                    u, v = loop[src_uv].uv
+                    loop[src_uv].uv = (v, u)
 
-    vert_map = {}
-    for v in temp_bm.verts:
-        new_v = bm.verts.new(v.co)
-        vert_map[v.index] = new_v
-    bm.verts.ensure_lookup_table()
+    if final_materials_list is not None and material_map:
+        for f in temp_bm.faces:
+            if f.material_index < len(material_map):
+                f.material_index = material_map[f.material_index]
+            else:
+                f.material_index = 0
 
-    for f in temp_bm.faces:
-        new_verts = [vert_map[loop.vert.index] for loop in f.loops]
-        new_face = bm.faces.new(new_verts)
-        
-        # Copy material index, mapped to the final combined list
-        if final_materials_list is not None and material_map and f.material_index < len(material_map):
-            new_face.material_index = material_map[f.material_index]
-        else:
-            if final_materials_list is not None:
-                new_face.material_index = 0
+    global _temp_mesh
+    mesh_obj = temp_mesh if temp_mesh is not None else _temp_mesh
+    created_temp = False
+    if mesh_obj is None:
+        mesh_obj = bpy.data.meshes.new("_FM_Temp_At")
+        created_temp = True
 
-        if src_uv and uv_layer:
-            for src_loop, new_loop in zip(f.loops, new_face.loops):
-                u, v = src_loop[src_uv].uv
-                if swap_uv:
-                    u, v = v, u
-                new_loop[uv_layer].uv = (u, v)
-
+    temp_bm.to_mesh(mesh_obj)
     temp_bm.free()
+
+    bm.from_mesh(mesh_obj)
+
+    if created_temp:
+        bpy.data.meshes.remove(mesh_obj)
 
 def _add_floor_tile_transformed(bm, uv_layer, x, y, ts, mat_offset):
     cx = x * ts + ts / 2
@@ -1472,7 +1477,7 @@ def _add_radial_wall(bm, uv_layer, phi, r_in, r_out, ts, h, wt, z_base):
     for loop, uv in zip(f_top.loops, uvs_top):
         loop[uv_layer].uv = uv
 
-def _add_mesh_polar_center(bm, src_mesh, mat_offset, uv_layer, final_materials_list, ts, z_off, centered):
+def _add_mesh_polar_center(bm, src_mesh, mat_offset, uv_layer, final_materials_list, ts, z_off, centered, temp_mesh=None):
     material_map = []
     if final_materials_list is not None and src_mesh:
         for mat in src_mesh.materials:
@@ -1500,10 +1505,6 @@ def _add_mesh_polar_center(bm, src_mesh, mat_offset, uv_layer, final_materials_l
         use_grid_fill=True,
     )
 
-    src_uv = temp_bm.loops.layers.uv.active
-    if not src_uv and temp_bm.loops.layers.uv:
-        src_uv = temp_bm.loops.layers.uv[0]
-
     half_ts = 0.5 * ts
     for v in temp_bm.verts:
         co = v.co
@@ -1520,30 +1521,29 @@ def _add_mesh_polar_center(bm, src_mesh, mat_offset, uv_layer, final_materials_l
         v.co.y = ny_new * half_ts
         v.co.z = co.z + z_off
 
-    vert_map = {}
-    for v in temp_bm.verts:
-        new_v = bm.verts.new(v.co)
-        vert_map[v.index] = new_v
-    bm.verts.ensure_lookup_table()
+    if final_materials_list is not None and material_map:
+        for f in temp_bm.faces:
+            if f.material_index < len(material_map):
+                f.material_index = material_map[f.material_index]
+            else:
+                f.material_index = 0
 
-    for f in temp_bm.faces:
-        new_verts = [vert_map[loop.vert.index] for loop in f.loops]
-        new_face = bm.faces.new(new_verts)
-        
-        if final_materials_list is not None and material_map and f.material_index < len(material_map):
-            new_face.material_index = material_map[f.material_index]
-        else:
-            if final_materials_list is not None:
-                new_face.material_index = 0
+    global _temp_mesh
+    mesh_obj = temp_mesh if temp_mesh is not None else _temp_mesh
+    created_temp = False
+    if mesh_obj is None:
+        mesh_obj = bpy.data.meshes.new("_FM_Temp_Center")
+        created_temp = True
 
-        if src_uv and uv_layer:
-            for src_loop, new_loop in zip(f.loops, new_face.loops):
-                u, v = src_loop[src_uv].uv
-                new_loop[uv_layer].uv = (u, v)
-
+    temp_bm.to_mesh(mesh_obj)
     temp_bm.free()
 
-def _add_mesh_polar_bend_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, scale_angular=True, cuts=4):
+    bm.from_mesh(mesh_obj)
+
+    if created_temp:
+        bpy.data.meshes.remove(mesh_obj)
+
+def _add_mesh_polar_bend_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, scale_angular=True, cuts=4, temp_mesh=None):
     material_map = []
     if final_materials_list is not None and src_mesh:
         for mat in src_mesh.materials:
@@ -1554,22 +1554,22 @@ def _add_mesh_polar_bend_with_matrix(bm, src_mesh, mat_combined, uv_layer, final
             else:
                 material_map.append(0)
 
+    # 1. Create temp BMesh, load, transform, subdivide, warp, flip normals, map materials
     temp_bm = bmesh.new()
     temp_bm.from_mesh(src_mesh)
-    
+
     bmesh.ops.transform(temp_bm, matrix=mat_combined, verts=temp_bm.verts)
-    
+
     # Subdivide edges of temp_bm to allow smooth bending.
-    # This splits the custom tile mesh into multiple smaller quads,
-    # ensuring that the bent geometry follows a smooth curve.
-    bmesh.ops.subdivide_edges(temp_bm, edges=temp_bm.edges, cuts=cuts, use_grid_fill=True)
-    
+    if cuts > 0:
+        bmesh.ops.subdivide_edges(temp_bm, edges=list(temp_bm.edges), cuts=cuts, use_grid_fill=True)
+
     r_mid = r * ts
     alpha_r = 2 * math.pi / Nr
     theta_mid = (theta + 0.5) * alpha_r
-    
+
     scale_x = (r_mid * alpha_r) / ts if (r_mid > 0 and scale_angular) else 1.0
-    
+
     for v in temp_bm.verts:
         co = v.co
         x_rel = co.x
@@ -1582,44 +1582,40 @@ def _add_mesh_polar_bend_with_matrix(bm, src_mesh, mat_combined, uv_layer, final
         v.co.y = r_local * math.sin(theta_local)
         v.co.z = co.z + z_off
 
-    # The Cartesian→polar mapping has Jacobian determinant = -r_local·scale_x/r_mid < 0,
-    # which reverses face winding for every face.  Flip all faces to restore the original
-    # normal direction from the source mesh.
+    # Flip faces to restore the original winding order
     bmesh.ops.reverse_faces(temp_bm, faces=list(temp_bm.faces))
 
-    src_uv = temp_bm.loops.layers.uv.active
-    if not src_uv and temp_bm.loops.layers.uv:
-        src_uv = temp_bm.loops.layers.uv[0]
+    if final_materials_list is not None and material_map:
+        for f in temp_bm.faces:
+            if f.material_index < len(material_map):
+                f.material_index = material_map[f.material_index]
+            else:
+                f.material_index = 0
 
-    vert_map = {}
-    for v in temp_bm.verts:
-        new_v = bm.verts.new(v.co)
-        vert_map[v.index] = new_v
-    bm.verts.ensure_lookup_table()
+    # 2. Write to temp mesh and copy to main bm
+    global _temp_mesh
+    mesh_obj = temp_mesh if temp_mesh is not None else _temp_mesh
+    created_temp = False
+    if mesh_obj is None:
+        mesh_obj = bpy.data.meshes.new("_FM_Temp_Bend")
+        created_temp = True
 
-    for f in temp_bm.faces:
-        new_verts = [vert_map[loop.vert.index] for loop in f.loops]
-        new_face = bm.faces.new(new_verts)
-        
-        if final_materials_list is not None and material_map and f.material_index < len(material_map):
-            new_face.material_index = material_map[f.material_index]
-        else:
-            if final_materials_list is not None:
-                new_face.material_index = 0
-
-        if src_uv and uv_layer:
-            for src_loop, new_loop in zip(f.loops, new_face.loops):
-                u, v = src_loop[src_uv].uv
-                new_loop[uv_layer].uv = (u, v)
-
+    temp_bm.to_mesh(mesh_obj)
     temp_bm.free()
 
-def _add_mesh_polar_bend(bm, src_mesh, mat_offset, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, centered, cuts=4):
+    bm.from_mesh(mesh_obj)
+
+    if created_temp:
+        bpy.data.meshes.remove(mesh_obj)
+
+
+def _add_mesh_polar_bend(bm, src_mesh, mat_offset, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, centered, cuts=4, temp_mesh=None):
     cent = Matrix.Translation(Vector((-ts / 2, -ts / 2, 0))) if not centered else Matrix.Identity(4)
     mat_combined = mat_offset @ cent
-    _add_mesh_polar_bend_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, scale_angular=True, cuts=cuts)
+    _add_mesh_polar_bend_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, scale_angular=True, cuts=cuts, temp_mesh=temp_mesh)
 
-def _add_wall_polar_bend(bm, src_mesh, mat_wall_offset, uv_layer, final_materials_list, wall_type, r, theta, Nr, ts, z_off, centered, cuts=4, flip_out=False):
+
+def _add_wall_polar_bend(bm, src_mesh, mat_wall_offset, uv_layer, final_materials_list, wall_type, r, theta, Nr, ts, z_off, centered, cuts=4, flip_out=False, temp_mesh=None):
     cent = Matrix.Translation(Vector((-ts / 2, -ts / 2, 0))) if not centered else Matrix.Identity(4)
     alpha_r = 2 * math.pi / Nr
     theta_mid = (theta + 0.5) * alpha_r
@@ -1631,18 +1627,16 @@ def _add_wall_polar_bend(bm, src_mesh, mat_wall_offset, uv_layer, final_material
     if wall_type in ('CW', 'CCW'):
         phi = theta_mid + (alpha_r / 2) if wall_type == 'CW' else theta_mid - (alpha_r / 2)
         mat_base = Matrix.Translation(Vector((r_mid * math.cos(phi), r_mid * math.sin(phi), z_lifted))) @ Matrix.Rotation(phi, 4, 'Z')
-        # Stand tile upright with Rotation(X): original X stays radial (U horizontal ✓), original Y becomes Z height (V vertical ✓).
-        # CW wall at phi=(theta+1)*α: Rotation(+90°, X) → face in -Y → after phi rotation → CW tangential → visible from CW neighbour ✓
-        # CCW wall at phi=theta*α:  Rotation(-90°, X) → face in +Y → after phi rotation → CCW tangential → visible from CCW neighbour ✓
+        # Stand tile upright with Rotation(X): original X stays radial, original Y becomes Z height.
         if wall_type == 'CW':
             mat_local = Matrix.Rotation(math.radians(90), 4, 'X')
         else:  # CCW
             mat_local = Matrix.Rotation(math.radians(-90), 4, 'X')
         mat_combined = mat_base @ mat_wall_offset @ mat_local @ cent
-        _add_mesh_at(bm, src_mesh, mat_combined, uv_layer, final_materials_list)
+        _add_mesh_at(bm, src_mesh, mat_combined, uv_layer, final_materials_list, temp_mesh=temp_mesh)
     else:
-        # IN wall: placed at inner edge (y=-ts/2), face should point outward (+Y/+radial) so viewers in ring r see the front.
-        # OUT wall: placed at outer edge (y=+ts/2), face should point inward (-Y/-radial) so viewers in ring r see the front.
+        # IN wall: placed at inner edge (y=-ts/2), face should point outward (+Y/+radial)
+        # OUT wall: placed at outer edge (y=+ts/2), face should point inward (-Y/-radial)
         if wall_type == 'IN':
             rot_angle = 90 if r == 1 else -90
             mat_place = Matrix.Translation(Vector((0, -ts/2, 0))) @ Matrix.Rotation(math.radians(rot_angle), 4, 'X')
@@ -1652,9 +1646,10 @@ def _add_wall_polar_bend(bm, src_mesh, mat_wall_offset, uv_layer, final_material
         else:
             mat_place = Matrix.Identity(4)
         mat_combined = mat_place @ mat_wall_offset @ cent
-        _add_mesh_polar_bend_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_lifted, scale_angular=True, cuts=cuts)
+        _add_mesh_polar_bend_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_lifted, scale_angular=True, cuts=cuts, temp_mesh=temp_mesh)
 
-def _add_mesh_polar_trapezoid_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, scale_angular=True):
+
+def _add_mesh_polar_trapezoid_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, scale_angular=True, temp_mesh=None):
     material_map = []
     if final_materials_list is not None and src_mesh:
         for mat in src_mesh.materials:
@@ -1665,15 +1660,16 @@ def _add_mesh_polar_trapezoid_with_matrix(bm, src_mesh, mat_combined, uv_layer, 
             else:
                 material_map.append(0)
 
+    # 1. Create temp BMesh, load, transform, warp, flip normals, map materials
     temp_bm = bmesh.new()
     temp_bm.from_mesh(src_mesh)
-    
+
     bmesh.ops.transform(temp_bm, matrix=mat_combined, verts=temp_bm.verts)
-    
+
     r_mid = r * ts
     alpha_r = 2 * math.pi / Nr
     theta_mid = (theta + 0.5) * alpha_r
-    
+
     for v in temp_bm.verts:
         co = v.co
         x_rel = co.x
@@ -1683,51 +1679,47 @@ def _add_mesh_polar_trapezoid_with_matrix(bm, src_mesh, mat_combined, uv_layer, 
         scale_x = ((r_mid + y_rel) * alpha_r) / ts if (r_mid > 0 and scale_angular) else 1.0
         x_scaled = x_rel * scale_x
         
-        # Rotate and translate in 3D space (keeping straight lines straight):
+        # Rotate and translate in 3D space:
         cos_t = math.cos(theta_mid)
         sin_t = math.sin(theta_mid)
         v.co.x = (r_mid + y_rel) * cos_t - x_scaled * sin_t
         v.co.y = (r_mid + y_rel) * sin_t + x_scaled * cos_t
         v.co.z = co.z + z_off
 
-    # The Cartesian→polar mapping has Jacobian determinant proportional to -(r_mid+y_rel)·alpha_r/ts < 0,
-    # which reverses face winding for every face.  Flip all faces to restore the original
-    # normal direction from the source mesh.
+    # Flip faces to restore the original winding order
     bmesh.ops.reverse_faces(temp_bm, faces=list(temp_bm.faces))
 
-    src_uv = temp_bm.loops.layers.uv.active
-    if not src_uv and temp_bm.loops.layers.uv:
-        src_uv = temp_bm.loops.layers.uv[0]
+    if final_materials_list is not None and material_map:
+        for f in temp_bm.faces:
+            if f.material_index < len(material_map):
+                f.material_index = material_map[f.material_index]
+            else:
+                f.material_index = 0
 
-    vert_map = {}
-    for v in temp_bm.verts:
-        new_v = bm.verts.new(v.co)
-        vert_map[v.index] = new_v
-    bm.verts.ensure_lookup_table()
+    # 2. Write to temp mesh and copy to main bm
+    global _temp_mesh
+    mesh_obj = temp_mesh if temp_mesh is not None else _temp_mesh
+    created_temp = False
+    if mesh_obj is None:
+        mesh_obj = bpy.data.meshes.new("_FM_Temp_Trapezoid")
+        created_temp = True
 
-    for f in temp_bm.faces:
-        new_verts = [vert_map[loop.vert.index] for loop in f.loops]
-        new_face = bm.faces.new(new_verts)
-        
-        if final_materials_list is not None and material_map and f.material_index < len(material_map):
-            new_face.material_index = material_map[f.material_index]
-        else:
-            if final_materials_list is not None:
-                new_face.material_index = 0
-
-        if src_uv and uv_layer:
-            for src_loop, new_loop in zip(f.loops, new_face.loops):
-                u, v_val = src_loop[src_uv].uv
-                new_loop[uv_layer].uv = (u, v_val)
-
+    temp_bm.to_mesh(mesh_obj)
     temp_bm.free()
 
-def _add_mesh_polar_trapezoid(bm, src_mesh, mat_offset, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, centered):
+    bm.from_mesh(mesh_obj)
+
+    if created_temp:
+        bpy.data.meshes.remove(mesh_obj)
+
+
+def _add_mesh_polar_trapezoid(bm, src_mesh, mat_offset, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, centered, temp_mesh=None):
     cent = Matrix.Translation(Vector((-ts / 2, -ts / 2, 0))) if not centered else Matrix.Identity(4)
     mat_combined = mat_offset @ cent
-    _add_mesh_polar_trapezoid_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, scale_angular=True)
+    _add_mesh_polar_trapezoid_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, scale_angular=True, temp_mesh=temp_mesh)
 
-def _add_wall_polar_trapezoid(bm, src_mesh, mat_wall_offset, uv_layer, final_materials_list, wall_type, r, theta, Nr, ts, z_off, centered, flip_out=False):
+
+def _add_wall_polar_trapezoid(bm, src_mesh, mat_wall_offset, uv_layer, final_materials_list, wall_type, r, theta, Nr, ts, z_off, centered, flip_out=False, temp_mesh=None):
     cent = Matrix.Translation(Vector((-ts / 2, -ts / 2, 0))) if not centered else Matrix.Identity(4)
     alpha_r = 2 * math.pi / Nr
     theta_mid = (theta + 0.5) * alpha_r
@@ -1739,18 +1731,13 @@ def _add_wall_polar_trapezoid(bm, src_mesh, mat_wall_offset, uv_layer, final_mat
     if wall_type in ('CW', 'CCW'):
         phi = theta_mid + (alpha_r / 2) if wall_type == 'CW' else theta_mid - (alpha_r / 2)
         mat_base = Matrix.Translation(Vector((r_mid * math.cos(phi), r_mid * math.sin(phi), z_lifted))) @ Matrix.Rotation(phi, 4, 'Z')
-        # Stand tile upright with Rotation(X): original X stays radial (U horizontal ✓), original Y becomes Z height (V vertical ✓).
-        # CW wall at phi=(theta+1)*α: Rotation(+90°, X) → face in -Y → after phi rotation → CW tangential → visible from CW neighbour ✓
-        # CCW wall at phi=theta*α:  Rotation(-90°, X) → face in +Y → after phi rotation → CCW tangential → visible from CCW neighbour ✓
         if wall_type == 'CW':
             mat_local = Matrix.Rotation(math.radians(90), 4, 'X')
         else:  # CCW
             mat_local = Matrix.Rotation(math.radians(-90), 4, 'X')
         mat_combined = mat_base @ mat_wall_offset @ mat_local @ cent
-        _add_mesh_at(bm, src_mesh, mat_combined, uv_layer, final_materials_list)
+        _add_mesh_at(bm, src_mesh, mat_combined, uv_layer, final_materials_list, temp_mesh=temp_mesh)
     else:
-        # IN wall: placed at inner edge (y=-ts/2), face should point outward (+Y/+radial) so viewers in ring r see the front.
-        # OUT wall: placed at outer edge (y=+ts/2), face should point inward (-Y/-radial) so viewers in ring r see the front.
         if wall_type == 'IN':
             rot_angle = 90 if r == 1 else -90
             mat_place = Matrix.Translation(Vector((0, -ts/2, 0))) @ Matrix.Rotation(math.radians(rot_angle), 4, 'X')
@@ -1760,9 +1747,21 @@ def _add_wall_polar_trapezoid(bm, src_mesh, mat_wall_offset, uv_layer, final_mat
         else:
             mat_place = Matrix.Identity(4)
         mat_combined = mat_place @ mat_wall_offset @ cent
-        _add_mesh_polar_trapezoid_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_lifted, scale_angular=True)
+        _add_mesh_polar_trapezoid_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_lifted, scale_angular=True, temp_mesh=temp_mesh)
 
 def _build_polar_maze_objects(props, maze_data, context, collection=None, force_simple=False, name_suffix=""):
+    global _temp_mesh
+    created_global_temp = False
+    if _temp_mesh is None:
+        for m in list(bpy.data.meshes):
+            if m.name.startswith("_FM_Temp"):
+                try:
+                    bpy.data.meshes.remove(m)
+                except Exception:
+                    pass
+        _temp_mesh = bpy.data.meshes.new("_FM_Temp_Shared")
+        created_global_temp = True
+
     ts = props.tile_size
     tiled = props.wall_height_tiled
     tiles_high = props.wall_height_tiles if tiled else 1
@@ -2272,7 +2271,7 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
             _merge_maze_objects(meshes_to_merge, context, name="FireMaze_Merged")
 
     # Post-process
-    if not name_suffix:
+    if not name_suffix and not props.is_editing:
         visual_meshes = [obj for obj in col.objects if obj.type == 'MESH']
         if props.optimize_coplanar:
             for obj in visual_meshes:
@@ -2285,11 +2284,30 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
                 _generate_lightmap_on_obj(obj, context, method=props.lightmap_method)
         _spawn_decorations(props, maze_data, context, col)
 
+    if created_global_temp and _temp_mesh is not None:
+        try:
+            bpy.data.meshes.remove(_temp_mesh)
+        except Exception:
+            pass
+        _temp_mesh = None
+
     return col
 
 def build_maze_objects(props, maze_data, context, collection=None, force_simple=False, name_suffix=""):
     if maze_data.grid_type == 'polar':
         return _build_polar_maze_objects(props, maze_data, context, collection, force_simple, name_suffix)
+
+    global _temp_mesh
+    created_global_temp = False
+    if _temp_mesh is None:
+        for m in list(bpy.data.meshes):
+            if m.name.startswith("_FM_Temp"):
+                try:
+                    bpy.data.meshes.remove(m)
+                except Exception:
+                    pass
+        _temp_mesh = bpy.data.meshes.new("_FM_Temp_Shared")
+        created_global_temp = True
 
     ts = props.tile_size
     tiled = props.wall_height_tiled
@@ -2821,7 +2839,7 @@ def build_maze_objects(props, maze_data, context, collection=None, force_simple=
             merged_obj = _merge_maze_objects(meshes_to_merge, context, name="FireMaze_Merged")
         # Remaining non-mesh objects are kept separate but stay in the collection
     # Post-process visual mesh objects (optimize coplanar, vertex paint, lightmap)
-    if not name_suffix:
+    if not name_suffix and not props.is_editing:
         visual_meshes = [obj for obj in col.objects if obj.type == 'MESH']
         
         # 1. Optimize coplanar faces
@@ -2841,6 +2859,13 @@ def build_maze_objects(props, maze_data, context, collection=None, force_simple=
 
         # 4. Spawn decorations and props
         _spawn_decorations(props, maze_data, context, col)
+
+    if created_global_temp and _temp_mesh is not None:
+        try:
+            bpy.data.meshes.remove(_temp_mesh)
+        except Exception:
+            pass
+        _temp_mesh = None
 
     return col
 

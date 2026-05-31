@@ -1741,7 +1741,7 @@ def generate_polar_maze(
         # 2. Carve Spanning Tree on the Passage Graph
         if algorithm == 'dfs':
             visited = {cell: False for cell in passage_cells}
-            start_cell = (rings - 1, 1) if rings > 1 else (0, 0)
+            start_cell = (rings - 2, 1) if rings > 2 else (0, 0)
             visited[start_cell] = True
             stack = [start_cell]
             while stack:

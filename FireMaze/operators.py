@@ -43,6 +43,88 @@ def delete_edit_helper():
         if data and data.users == 0:
             bpy.data.meshes.remove(data)
 
+def save_autosave(context):
+    import os
+    import tempfile
+    import json
+    import threading
+    try:
+        props = context.scene.fire_maze
+        props_data = {}
+        prop_names = [
+            "width", "depth", "wall_height", "wall_height_tiled", "wall_height_tiles",
+            "wall_thickness", "tile_size", "wall_mode", "grid_type", "polar_rings",
+            "polar_custom_alignment", "mode", "emergency_exits", "seed", "tiles_centered",
+            "algorithm", "rooms_enable", "rooms_count", "min_room_size", "max_room_size",
+            "loop_probability", "isolated_wall_prob", "entrance_side", "exit_side",
+            "num_entrances", "num_exits", "cube_mode_pillar", "generate_guide",
+            "guide_type", "guide_width", "guide_height_offset", "guide_wave_amplitude",
+            "guide_wave_frequency", "wall_translate", "wall_rotate", "wall_scale",
+            "floor_translate", "floor_rotate", "floor_scale", "single_wall_object",
+            "merge_objects", "remove_doubles", "generate_lightmap", "lightmap_method",
+            "generate_colliders", "merge_colliders", "optimize_coplanar", "vertex_paint_enable",
+            "vertex_paint_mode", "vertex_paint_intensity", "prop_torch_density", "prop_chest_density"
+        ]
+        for name in prop_names:
+            val = getattr(props, name, None)
+            if val is not None:
+                if isinstance(val, (int, float, str, bool)):
+                    props_data[name] = val
+                elif hasattr(val, "copy") or isinstance(val, (list, tuple)):
+                    props_data[name] = list(val)
+        
+        pointer_props = [
+            "custom_floor_mesh", "custom_wall_north", "custom_wall_south",
+            "custom_wall_east", "custom_wall_west", "custom_roof_mesh",
+            "custom_wall_collection", "custom_floor_collection", "custom_roof_collection",
+            "prop_torch_mesh", "prop_chest_mesh", "prop_door_mesh", "mask_image"
+        ]
+        for name in pointer_props:
+            ref = getattr(props, name, None)
+            if ref:
+                props_data[name] = ref.name
+                
+        maze_json = None
+        col = bpy.data.collections.get("FireMaze")
+        if col and "fire_maze_data" in col:
+            maze_json = col["fire_maze_data"]
+            
+        autosave_path = os.path.join(tempfile.gettempdir(), "firemaze_autosave.json")
+        payload = {
+            "properties": props_data,
+            "maze_data": maze_json
+        }
+        payload_str = json.dumps(payload, indent=2)
+        
+        def write_worker(path, data_str):
+            import uuid
+            temp_path = path + "." + uuid.uuid4().hex + ".tmp"
+            try:
+                with open(temp_path, 'w') as f:
+                    f.write(data_str)
+                try:
+                    os.replace(temp_path, path)
+                except PermissionError:
+                    # File is currently locked or read by another thread, ignore as next write will overwrite it anyway
+                    pass
+                except Exception as ex:
+                    # Clean up temp file on other replace errors
+                    try:
+                        os.remove(temp_path)
+                    except Exception:
+                        pass
+            except Exception as e:
+                print("FireMaze: Background autosave write failed:", e)
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
+                
+        threading.Thread(target=write_worker, args=(autosave_path, payload_str), daemon=True).start()
+            
+    except Exception as e:
+        print("FireMaze: Failed to initiate autosave:", e)
+
 def rebuild_maze_from_collection(context, col):
     if "fire_maze_data" not in col:
         return
@@ -105,6 +187,8 @@ def rebuild_maze_from_collection(context, col):
         'ring_sectors': ring_sectors,
     })
 
+    save_autosave(context)
+
     # Clear old maze objects from this collection
     for obj in list(col.objects):
         if obj.get("fire_maze"):
@@ -122,7 +206,7 @@ def rebuild_maze_from_collection(context, col):
     build_maze_objects(props, maze_data, context, collection=col)
     
     # If colliders are enabled, rebuild them too
-    if props.generate_colliders:
+    if props.generate_colliders and not props.is_editing:
         build_maze_objects(props, maze_data, context, collection=col, force_simple=True, name_suffix="_Collider")
 
     # If is_editing is True, rebuild the edit helper!
@@ -227,6 +311,8 @@ class MAZE_OT_generate(bpy.types.Operator):
         if props.generate_colliders:
             build_maze_objects(props, maze_data, context, collection=col, force_simple=True, name_suffix="_Collider")
 
+        save_autosave(context)
+
         if props.grid_type == 'rect':
             self.report({'INFO'}, f"Maze generated ({props.width}x{props.depth})")
         else:
@@ -307,6 +393,13 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
             context.workspace.status_text_set(None)
             props.is_editing = False
             delete_edit_helper()
+            col = None
+            for c in bpy.data.collections:
+                if "fire_maze_data" in c:
+                    col = c
+                    break
+            if col:
+                rebuild_maze_from_collection(context, col)
             self.report({'INFO'}, "Interactive Edit finished")
             return {'FINISHED'}
 
@@ -1013,6 +1106,13 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
             props.is_editing = False
             context.workspace.status_text_set(None)
             delete_edit_helper()
+            col = None
+            for c in bpy.data.collections:
+                if "fire_maze_data" in c:
+                    col = c
+                    break
+            if col:
+                rebuild_maze_from_collection(context, col)
             self.report({'INFO'}, "Interactive Edit finished")
             return {'FINISHED'}
 
@@ -1129,7 +1229,100 @@ class MAZE_OT_save_as_image(bpy.types.Operator):
         return {'FINISHED'}
 
 
-classes = (MAZE_OT_generate, MAZE_OT_clear, MAZE_OT_interactive_edit, MAZE_OT_save_as_image)
+class MAZE_OT_restore_autosave(bpy.types.Operator):
+    bl_idname = "fire_maze.restore_autosave"
+    bl_label = "Restore Last Session"
+    bl_description = "Restore maze settings and layout from the last session's autosave"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        import os
+        import tempfile
+        import json
+        
+        autosave_path = os.path.join(tempfile.gettempdir(), "firemaze_autosave.json")
+        if not os.path.exists(autosave_path):
+            self.report({'ERROR'}, "No autosave file found")
+            return {'CANCELLED'}
+            
+        try:
+            with open(autosave_path, 'r') as f:
+                data = json.load(f)
+                
+            props = context.scene.fire_maze
+            properties = data.get("properties", {})
+            maze_json = data.get("maze_data")
+            
+            # Restore standard properties
+            prop_names = [
+                "width", "depth", "wall_height", "wall_height_tiled", "wall_height_tiles",
+                "wall_thickness", "tile_size", "wall_mode", "grid_type", "polar_rings",
+                "polar_custom_alignment", "mode", "emergency_exits", "seed", "tiles_centered",
+                "algorithm", "rooms_enable", "rooms_count", "min_room_size", "max_room_size",
+                "loop_probability", "isolated_wall_prob", "entrance_side", "exit_side",
+                "num_entrances", "num_exits", "cube_mode_pillar", "generate_guide",
+                "guide_type", "guide_width", "guide_height_offset", "guide_wave_amplitude",
+                "guide_wave_frequency", "wall_translate", "wall_rotate", "wall_scale",
+                "floor_translate", "floor_rotate", "floor_scale", "single_wall_object",
+                "merge_objects", "remove_doubles", "generate_lightmap", "lightmap_method",
+                "generate_colliders", "merge_colliders", "optimize_coplanar", "vertex_paint_enable",
+                "vertex_paint_mode", "vertex_paint_intensity", "prop_torch_density", "prop_chest_density"
+            ]
+            for name in prop_names:
+                if name in properties:
+                    val = properties[name]
+                    if isinstance(val, list):
+                        val = tuple(val)
+                    try:
+                        setattr(props, name, val)
+                    except Exception as ex:
+                        print(f"Failed to set property {name}: {ex}")
+                        
+            # Resolve pointer properties
+            pointer_props = [
+                "custom_floor_mesh", "custom_wall_north", "custom_wall_south",
+                "custom_wall_east", "custom_wall_west", "custom_roof_mesh",
+                "custom_wall_collection", "custom_floor_collection", "custom_roof_collection",
+                "prop_torch_mesh", "prop_chest_mesh", "prop_door_mesh", "mask_image"
+            ]
+            for name in pointer_props:
+                if name in properties:
+                    val = properties[name]
+                    ref = None
+                    if name == "mask_image":
+                        ref = bpy.data.images.get(val)
+                    elif name in {"custom_wall_collection", "custom_floor_collection", "custom_roof_collection"}:
+                        ref = bpy.data.collections.get(val)
+                    elif name in {"custom_floor_mesh", "custom_wall_north", "custom_wall_south", "custom_wall_east", "custom_wall_west", "custom_roof_mesh"}:
+                        ref = bpy.data.meshes.get(val)
+                    else:
+                        ref = bpy.data.objects.get(val)
+                    if ref:
+                        setattr(props, name, ref)
+            
+            # Restore maze data
+            if maze_json:
+                col = bpy.data.collections.get("FireMaze")
+                if not col:
+                    col = bpy.data.collections.new("FireMaze")
+                    context.scene.collection.children.link(col)
+                col["fire_maze_data"] = maze_json
+                
+                rebuild_maze_from_collection(context, col)
+                self.report({'INFO'}, "Successfully restored maze session from autosave")
+            else:
+                self.report({'INFO'}, "Restored settings from autosave (no maze layout was saved)")
+                
+            return {'FINISHED'}
+            
+        except Exception as e:
+            self.report({'ERROR'}, f"Failed to restore autosave: {e}")
+            import traceback
+            traceback.print_exc()
+            return {'CANCELLED'}
+
+
+classes = (MAZE_OT_generate, MAZE_OT_clear, MAZE_OT_interactive_edit, MAZE_OT_save_as_image, MAZE_OT_restore_autosave)
 
 def register():
     for cls in classes:

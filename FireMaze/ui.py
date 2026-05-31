@@ -49,6 +49,13 @@ class VIEW3D_PT_fire_maze(bpy.types.Panel):
             col.operator("fire_maze.interactive_edit", text="Interactive Edit", icon="EDITMODE_HLT")
 
         layout.separator(factor=0.5)
+        import os
+        import tempfile
+        autosave_path = os.path.join(tempfile.gettempdir(), "firemaze_autosave.json")
+        if os.path.exists(autosave_path):
+            layout.operator("fire_maze.restore_autosave", text="Restore Last Session", icon='RECOVER_LAST')
+            layout.separator(factor=0.5)
+
         row = layout.row(align=True)
         row.scale_y = 1.8
         row.operator("fire_maze.generate", text="Generate Maze", icon='MESH_GRID')
