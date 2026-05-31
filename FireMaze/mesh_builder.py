@@ -1147,7 +1147,7 @@ def _add_polar_center_fan(bm, uv_layer, ts, z_base, is_roof=False):
             v = (co.y / ts) + 0.5
             loop[uv_layer].uv = (u, v)
 
-def _add_polar_floor_wedge(bm, uv_layer, r, theta, Nr, ts, z_base, is_roof=False):
+def _add_polar_floor_wedge(bm, uv_layer, r, theta, Nr, ts, z_base, is_roof=False, flip_normal=False):
     R_in = (r - 0.5) * ts
     R_out = (r + 0.5) * ts
     alpha_r = 2 * math.pi / Nr
@@ -1172,10 +1172,12 @@ def _add_polar_floor_wedge(bm, uv_layer, r, theta, Nr, ts, z_base, is_roof=False
         
         bm.verts.ensure_lookup_table()
         
-        # Both floor and roof use the same +Z winding so normals match custom mesh tiles
-        # (custom meshes have their normals restored to the original after the polar warp reversal,
-        # so both procedural and custom roofs/floors should point upward when viewed from above).
-        f = bm.faces.new([vi1, vo1, vo2, vi2])
+        # Floor default: +Z normal (up). Roof default: +Z normal (up, caps walls in cube mode).
+        # In thin-wall mode the roof acts as a ceiling, so flip to -Z (down).
+        if flip_normal:
+            f = bm.faces.new([vi1, vi2, vo2, vo1])
+        else:
+            f = bm.faces.new([vi1, vo1, vo2, vi2])
             
         uv_map_dict = {
             vi1: (0.0, r_mid * phi_1 / ts),
@@ -1238,13 +1240,27 @@ def _add_circular_wall(bm, uv_layer, radius, phi_start, phi_end, ts, h, wt, z_ba
         for loop, uv in zip(f.loops, uvs):
             loop[uv_layer].uv = uv
             
-    # 3. Bottom cap panels
+    # 3. Bottom cap panels (normal -Z, visible from below)
     for i in range(subdivs):
         f = bm.faces.new([
-            verts_a_bot[i],
-            verts_b_bot[i],
+            verts_a_bot[i + 1],
             verts_b_bot[i + 1],
-            verts_a_bot[i + 1]
+            verts_b_bot[i],
+            verts_a_bot[i]
+        ])
+        u0 = R_a * (phi_start + (i / subdivs) * alpha_total) / ts
+        u1 = R_a * (phi_start + ((i + 1) / subdivs) * alpha_total) / ts
+        uvs = [(0.0, u1), (wt / ts, u1), (wt / ts, u0), (0.0, u0)]
+        for loop, uv in zip(f.loops, uvs):
+            loop[uv_layer].uv = uv
+            
+    # 4. Top cap panels (normal +Z, visible from above)
+    for i in range(subdivs):
+        f = bm.faces.new([
+            verts_a_top[i],
+            verts_b_top[i],
+            verts_b_top[i + 1],
+            verts_a_top[i + 1]
         ])
         u0 = R_a * (phi_start + (i / subdivs) * alpha_total) / ts
         u1 = R_a * (phi_start + ((i + 1) / subdivs) * alpha_total) / ts
@@ -1252,39 +1268,25 @@ def _add_circular_wall(bm, uv_layer, radius, phi_start, phi_end, ts, h, wt, z_ba
         for loop, uv in zip(f.loops, uvs):
             loop[uv_layer].uv = uv
             
-    # 4. Top cap panels
-    for i in range(subdivs):
-        f = bm.faces.new([
-            verts_a_top[i],
-            verts_a_top[i + 1],
-            verts_b_top[i + 1],
-            verts_b_top[i]
-        ])
-        u0 = R_a * (phi_start + (i / subdivs) * alpha_total) / ts
-        u1 = R_a * (phi_start + ((i + 1) / subdivs) * alpha_total) / ts
-        uvs = [(0.0, u0), (0.0, u1), (wt / ts, u1), (wt / ts, u0)]
-        for loop, uv in zip(f.loops, uvs):
-            loop[uv_layer].uv = uv
-            
-    # 5. Start end-cap
+    # 5. Start end-cap (normal points away from arc start)
     f_start = bm.faces.new([
         verts_a_bot[0],
-        verts_a_top[0],
+        verts_b_bot[0],
         verts_b_top[0],
-        verts_b_bot[0]
+        verts_a_top[0]
     ])
-    uvs_start = [(0.0, 0.0), (0.0, h / ts), (wt / ts, h / ts), (wt / ts, 0.0)]
+    uvs_start = [(0.0, 0.0), (wt / ts, 0.0), (wt / ts, h / ts), (0.0, h / ts)]
     for loop, uv in zip(f_start.loops, uvs_start):
         loop[uv_layer].uv = uv
         
-    # 6. End end-cap
+    # 6. End end-cap (normal points away from arc end)
     f_end = bm.faces.new([
         verts_b_bot[subdivs],
-        verts_b_top[subdivs],
+        verts_a_bot[subdivs],
         verts_a_top[subdivs],
-        verts_a_bot[subdivs]
+        verts_b_top[subdivs]
     ])
-    uvs_end = [(0.0, 0.0), (0.0, h / ts), (wt / ts, h / ts), (wt / ts, 0.0)]
+    uvs_end = [(0.0, 0.0), (wt / ts, 0.0), (wt / ts, h / ts), (0.0, h / ts)]
     for loop, uv in zip(f_end.loops, uvs_end):
         loop[uv_layer].uv = uv
 
@@ -1343,11 +1345,11 @@ def _add_radial_wall_flat(bm, uv_layer, phi, r_in, r_out, ts, h, z_base, facing_
     
     L = r_out - r_in
     if facing_clockwise:
-        face = bm.faces.new([v_in_bot, v_in_top, v_out_top, v_out_bot])
-        uvs = [(0.0, 0.0), (0.0, h / ts), (L / ts, h / ts), (L / ts, 0.0)]
-    else:
         face = bm.faces.new([v_in_bot, v_out_bot, v_out_top, v_in_top])
         uvs = [(0.0, 0.0), (L / ts, 0.0), (L / ts, h / ts), (0.0, h / ts)]
+    else:
+        face = bm.faces.new([v_in_bot, v_in_top, v_out_top, v_out_bot])
+        uvs = [(0.0, 0.0), (0.0, h / ts), (L / ts, h / ts), (L / ts, 0.0)]
         
     for loop, uv in zip(face.loops, uvs):
         loop[uv_layer].uv = uv
@@ -1384,23 +1386,27 @@ def _add_radial_wall(bm, uv_layer, phi, r_in, r_out, ts, h, wt, z_base):
     for loop, uv in zip(f_right.loops, uvs_right):
         loop[uv_layer].uv = uv
         
-    f_inner = bm.faces.new([v_r_in_bot, v_l_in_bot, v_l_in_top, v_r_in_top])
-    uvs_inner = [(0.0, 0.0), (wt / ts, 0.0), (wt / ts, h / ts), (0.0, h / ts)]
+    # Inner face (at r_in, normal must point inward = toward center)
+    f_inner = bm.faces.new([v_r_in_top, v_l_in_top, v_l_in_bot, v_r_in_bot])
+    uvs_inner = [(0.0, h / ts), (wt / ts, h / ts), (wt / ts, 0.0), (0.0, 0.0)]
     for loop, uv in zip(f_inner.loops, uvs_inner):
         loop[uv_layer].uv = uv
         
-    f_outer = bm.faces.new([v_l_out_bot, v_r_out_bot, v_r_out_top, v_l_out_top])
-    uvs_outer = [(0.0, 0.0), (wt / ts, 0.0), (wt / ts, h / ts), (0.0, h / ts)]
+    # Outer face (at r_out, normal must point outward = away from center)
+    f_outer = bm.faces.new([v_l_out_top, v_r_out_top, v_r_out_bot, v_l_out_bot])
+    uvs_outer = [(0.0, h / ts), (wt / ts, h / ts), (wt / ts, 0.0), (0.0, 0.0)]
     for loop, uv in zip(f_outer.loops, uvs_outer):
         loop[uv_layer].uv = uv
         
-    f_bot = bm.faces.new([v_l_in_bot, v_r_in_bot, v_r_out_bot, v_l_out_bot])
-    uvs_bot = [(0.0, 0.0), (wt / ts, 0.0), (wt / ts, 1.0), (0.0, 1.0)]
+    # Bottom face (normal must point downward)
+    f_bot = bm.faces.new([v_l_out_bot, v_r_out_bot, v_r_in_bot, v_l_in_bot])
+    uvs_bot = [(0.0, 1.0), (wt / ts, 1.0), (wt / ts, 0.0), (0.0, 0.0)]
     for loop, uv in zip(f_bot.loops, uvs_bot):
         loop[uv_layer].uv = uv
         
-    f_top = bm.faces.new([v_l_in_top, v_l_out_top, v_r_out_top, v_r_in_top])
-    uvs_top = [(0.0, 0.0), (0.0, 1.0), (wt / ts, 1.0), (wt / ts, 0.0)]
+    # Top face (normal must point upward)
+    f_top = bm.faces.new([v_l_in_top, v_r_in_top, v_r_out_top, v_l_out_top])
+    uvs_top = [(0.0, 0.0), (wt / ts, 0.0), (wt / ts, 1.0), (0.0, 1.0)]
     for loop, uv in zip(f_top.loops, uvs_top):
         loop[uv_layer].uv = uv
 
@@ -1686,8 +1692,8 @@ def _add_wall_polar_trapezoid(bm, src_mesh, mat_wall_offset, uv_layer, final_mat
             rot_angle = 90 if r == 1 else -90
             mat_place = Matrix.Translation(Vector((0, -ts/2, 0))) @ Matrix.Rotation(math.radians(rot_angle), 4, 'X')
         elif wall_type == 'OUT':
-            # OUT wall faces inward toward the maze interior, same direction as inner walls (r>1)
-            mat_place = Matrix.Translation(Vector((0, ts/2, 0))) @ Matrix.Rotation(math.radians(-90), 4, 'X')
+            # OUT wall faces inward toward the maze interior
+            mat_place = Matrix.Translation(Vector((0, ts/2, 0))) @ Matrix.Rotation(math.radians(90), 4, 'X')
         else:
             mat_place = Matrix.Identity(4)
         mat_combined = mat_place @ mat_wall_offset @ cent
@@ -2160,7 +2166,8 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
                     cuts = max(1, ratio * 8 - 1)
                     _add_mesh_polar_bend(bm_roof, src_roof, mat_floor_offset, uv_roof, roof_materials, r, theta, Nr, ts, wh, centered, cuts=cuts)
             else:
-                _add_polar_floor_wedge(bm_roof, uv_roof, r, theta, Nr, ts, wh, is_roof=True)
+                flip = props.wall_mode == 'thin'
+                _add_polar_floor_wedge(bm_roof, uv_roof, r, theta, Nr, ts, wh, is_roof=True, flip_normal=flip)
 
     bmesh.ops.remove_doubles(bm_roof, verts=bm_roof.verts, dist=0.001)
     roof_obj = _create_object_from_bm(bm_roof, f"FireMaze_Roof{name_suffix}", col, None)
