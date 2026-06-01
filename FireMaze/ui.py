@@ -49,12 +49,6 @@ class VIEW3D_PT_fire_maze(bpy.types.Panel):
             col.operator("fire_maze.interactive_edit", text="Interactive Edit", icon="EDITMODE_HLT")
 
         layout.separator(factor=0.5)
-        import os
-        import tempfile
-        autosave_path = os.path.join(tempfile.gettempdir(), "firemaze_autosave.json")
-        if os.path.exists(autosave_path):
-            layout.operator("fire_maze.restore_autosave", text="Restore Last Session", icon='RECOVER_LAST')
-            layout.separator(factor=0.5)
 
         row = layout.row(align=True)
         row.scale_y = 1.8
@@ -86,13 +80,59 @@ class VIEW3D_PT_fire_maze_algorithm(bpy.types.Panel):
                 col.prop(props, "min_room_size")
                 col.prop(props, "max_room_size")
                 
-            col.separator()
-            col.label(text="Image Masking:", icon='IMAGE_DATA')
-            col.prop(props, "mask_image", text="Mask Image")
+
+
+class VIEW3D_PT_fire_maze_session(bpy.types.Panel):
+    bl_label = "Session & Image Management"
+    bl_idname = "VIEW3D_PT_fire_maze_session"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "FireRat"
+    bl_parent_id = "VIEW3D_PT_fire_maze"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        props = context.scene.fire_maze
+
+        # 1. Session Files Box
+        box = layout.box()
+        box.label(text="Session Management", icon='FILE_BLEND')
+        col = box.column(align=True)
+        row = col.row(align=True)
+        row.operator("fire_maze.save_session", text="Save Session...", icon='EXPORT')
+        row.operator("fire_maze.load_session", text="Load Session...", icon='IMPORT')
+        
+        import os
+        import tempfile
+        autosave_path = os.path.join(tempfile.gettempdir(), "firemaze_autosave.json")
+        from . import operators
+        if os.path.exists(autosave_path) and getattr(operators, "show_recovery_warning", True):
+            col.separator(factor=0.5)
+            rec_box = col.box()
+            rec_box.alert = True
+            rec_box.label(text="Unsaved session recovery available", icon='INFO')
+            row_rec = rec_box.row(align=True)
+            row_rec.operator("fire_maze.restore_autosave", text="Restore Session", icon='RECOVER_LAST')
+            row_rec.operator("fire_maze.discard_autosave", text="Discard", icon='TRASH')
+
+        # 2. Masking & Image Export Box
+        box2 = layout.box()
+        box2.label(text="Masking & Image Export", icon='IMAGE_DATA')
+        col2 = box2.column(align=True)
+        if props.grid_type != 'rect':
+            col2.label(text="Masking requires Rectangular grid", icon='INFO')
+        else:
+            col2.operator("fire_maze.load_mask_image", text="Load Mask from Disk...", icon='FILE_IMAGE')
+            col2.prop(props, "mask_image", text="Selected Mask")
             if props.mask_image:
-                col.prop(props, "mask_invert", text="Invert Mask")
-            col.separator()
-            col.operator("fire_maze.save_as_image", text="Save Maze as Image", icon='IMAGE_ZDEPTH')
+                col2.prop(props, "mask_invert", text="Invert Mask Colors")
+        
+        col2.separator(factor=0.5)
+        col2.label(text="Export Layout:")
+        row2 = col2.row(align=True)
+        row2.operator("fire_maze.save_image_file", text="Save PNG to Disk...", icon='EXPORT')
+        row2.operator("fire_maze.save_as_image", text="Create Blender Image", icon='IMAGE_ZDEPTH')
 
 
 class VIEW3D_PT_fire_maze_entrances(bpy.types.Panel):
@@ -279,6 +319,7 @@ class VIEW3D_PT_fire_maze_props(bpy.types.Panel):
 classes = (
     VIEW3D_PT_fire_maze,
     VIEW3D_PT_fire_maze_algorithm,
+    VIEW3D_PT_fire_maze_session,
     VIEW3D_PT_fire_maze_entrances,
     VIEW3D_PT_fire_maze_loops,
     VIEW3D_PT_fire_maze_guide,

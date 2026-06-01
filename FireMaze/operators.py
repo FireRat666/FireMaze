@@ -3,8 +3,11 @@ import json
 import random
 import math
 from bpy_extras import view3d_utils
+from bpy_extras.io_utils import ExportHelper, ImportHelper
 from .maze_generator import generate_maze, find_shortest_path, MazeData
 from .mesh_builder import build_maze_objects
+
+show_recovery_warning = True
 
 def _find_or_create_maze_collection(base_name):
     col = bpy.data.collections.get(base_name)
@@ -43,57 +46,120 @@ def delete_edit_helper():
         if data and data.users == 0:
             bpy.data.meshes.remove(data)
 
+def _serialize_session_data(context):
+    props = context.scene.fire_maze
+    props_data = {}
+    prop_names = [
+        "width", "depth", "wall_height", "wall_height_tiled", "wall_height_tiles",
+        "wall_thickness", "tile_size", "wall_mode", "grid_type", "polar_rings",
+        "polar_custom_alignment", "mode", "emergency_exits", "seed", "tiles_centered",
+        "algorithm", "rooms_enable", "rooms_count", "min_room_size", "max_room_size",
+        "loop_probability", "isolated_wall_prob", "entrance_side", "exit_side",
+        "num_entrances", "num_exits", "cube_mode_pillar", "generate_guide",
+        "guide_type", "guide_width", "guide_height_offset", "guide_wave_amplitude",
+        "guide_wave_frequency", "wall_translate", "wall_rotate", "wall_scale",
+        "floor_translate", "floor_rotate", "floor_scale", "single_wall_object",
+        "merge_objects", "remove_doubles", "generate_lightmap", "lightmap_method",
+        "generate_colliders", "merge_colliders", "optimize_coplanar", "vertex_paint_enable",
+        "vertex_paint_mode", "vertex_paint_intensity", "prop_torch_density", "prop_chest_density",
+        "mask_invert"
+    ]
+    for name in prop_names:
+        val = getattr(props, name, None)
+        if val is not None:
+            if isinstance(val, (int, float, str, bool)):
+                props_data[name] = val
+            elif hasattr(val, "copy") or isinstance(val, (list, tuple)):
+                props_data[name] = list(val)
+    
+    pointer_props = [
+        "custom_floor_mesh", "custom_wall_north", "custom_wall_south",
+        "custom_wall_east", "custom_wall_west", "custom_roof_mesh",
+        "custom_wall_collection", "custom_floor_collection", "custom_roof_collection",
+        "prop_torch_mesh", "prop_chest_mesh", "prop_door_mesh", "mask_image"
+    ]
+    for name in pointer_props:
+        ref = getattr(props, name, None)
+        if ref:
+            props_data[name] = ref.name
+            
+    maze_json = None
+    col = bpy.data.collections.get("FireMaze")
+    if col and "fire_maze_data" in col:
+        maze_json = col["fire_maze_data"]
+        
+    return {
+        "properties": props_data,
+        "maze_data": maze_json
+    }
+
+def _deserialize_session_data(context, data):
+    props = context.scene.fire_maze
+    properties = data.get("properties", {})
+    maze_json = data.get("maze_data")
+    
+    prop_names = [
+        "width", "depth", "wall_height", "wall_height_tiled", "wall_height_tiles",
+        "wall_thickness", "tile_size", "wall_mode", "grid_type", "polar_rings",
+        "polar_custom_alignment", "mode", "emergency_exits", "seed", "tiles_centered",
+        "algorithm", "rooms_enable", "rooms_count", "min_room_size", "max_room_size",
+        "loop_probability", "isolated_wall_prob", "entrance_side", "exit_side",
+        "num_entrances", "num_exits", "cube_mode_pillar", "generate_guide",
+        "guide_type", "guide_width", "guide_height_offset", "guide_wave_amplitude",
+        "guide_wave_frequency", "wall_translate", "wall_rotate", "wall_scale",
+        "floor_translate", "floor_rotate", "floor_scale", "single_wall_object",
+        "merge_objects", "remove_doubles", "generate_lightmap", "lightmap_method",
+        "generate_colliders", "merge_colliders", "optimize_coplanar", "vertex_paint_enable",
+        "vertex_paint_mode", "vertex_paint_intensity", "prop_torch_density", "prop_chest_density",
+        "mask_invert"
+    ]
+    for name in prop_names:
+        if name in properties:
+            val = properties[name]
+            if isinstance(val, list):
+                val = tuple(val)
+            try:
+                setattr(props, name, val)
+            except Exception as ex:
+                print(f"Failed to set property {name}: {ex}")
+                
+    pointer_props = [
+        "custom_floor_mesh", "custom_wall_north", "custom_wall_south",
+        "custom_wall_east", "custom_wall_west", "custom_roof_mesh",
+        "custom_wall_collection", "custom_floor_collection", "custom_roof_collection",
+        "prop_torch_mesh", "prop_chest_mesh", "prop_door_mesh", "mask_image"
+    ]
+    for name in pointer_props:
+        if name in properties:
+            val = properties[name]
+            ref = None
+            if name == "mask_image":
+                ref = bpy.data.images.get(val)
+            elif name in {"custom_wall_collection", "custom_floor_collection", "custom_roof_collection"}:
+                ref = bpy.data.collections.get(val)
+            elif name in {"custom_floor_mesh", "custom_wall_north", "custom_wall_south", "custom_wall_east", "custom_wall_west", "custom_roof_mesh"}:
+                ref = bpy.data.meshes.get(val)
+            else:
+                ref = bpy.data.objects.get(val)
+            if ref or val is None:
+                setattr(props, name, ref)
+                
+    if maze_json:
+        col = bpy.data.collections.get("FireMaze")
+        if not col:
+            col = bpy.data.collections.new("FireMaze")
+            context.scene.collection.children.link(col)
+        col["fire_maze_data"] = maze_json
+        rebuild_maze_from_collection(context, col)
+
 def save_autosave(context):
     import os
     import tempfile
     import json
     import threading
     try:
-        props = context.scene.fire_maze
-        props_data = {}
-        prop_names = [
-            "width", "depth", "wall_height", "wall_height_tiled", "wall_height_tiles",
-            "wall_thickness", "tile_size", "wall_mode", "grid_type", "polar_rings",
-            "polar_custom_alignment", "mode", "emergency_exits", "seed", "tiles_centered",
-            "algorithm", "rooms_enable", "rooms_count", "min_room_size", "max_room_size",
-            "loop_probability", "isolated_wall_prob", "entrance_side", "exit_side",
-            "num_entrances", "num_exits", "cube_mode_pillar", "generate_guide",
-            "guide_type", "guide_width", "guide_height_offset", "guide_wave_amplitude",
-            "guide_wave_frequency", "wall_translate", "wall_rotate", "wall_scale",
-            "floor_translate", "floor_rotate", "floor_scale", "single_wall_object",
-            "merge_objects", "remove_doubles", "generate_lightmap", "lightmap_method",
-            "generate_colliders", "merge_colliders", "optimize_coplanar", "vertex_paint_enable",
-            "vertex_paint_mode", "vertex_paint_intensity", "prop_torch_density", "prop_chest_density"
-        ]
-        for name in prop_names:
-            val = getattr(props, name, None)
-            if val is not None:
-                if isinstance(val, (int, float, str, bool)):
-                    props_data[name] = val
-                elif hasattr(val, "copy") or isinstance(val, (list, tuple)):
-                    props_data[name] = list(val)
-        
-        pointer_props = [
-            "custom_floor_mesh", "custom_wall_north", "custom_wall_south",
-            "custom_wall_east", "custom_wall_west", "custom_roof_mesh",
-            "custom_wall_collection", "custom_floor_collection", "custom_roof_collection",
-            "prop_torch_mesh", "prop_chest_mesh", "prop_door_mesh", "mask_image"
-        ]
-        for name in pointer_props:
-            ref = getattr(props, name, None)
-            if ref:
-                props_data[name] = ref.name
-                
-        maze_json = None
-        col = bpy.data.collections.get("FireMaze")
-        if col and "fire_maze_data" in col:
-            maze_json = col["fire_maze_data"]
-            
+        payload = _serialize_session_data(context)
         autosave_path = os.path.join(tempfile.gettempdir(), "firemaze_autosave.json")
-        payload = {
-            "properties": props_data,
-            "maze_data": maze_json
-        }
         payload_str = json.dumps(payload, indent=2)
         
         def write_worker(path, data_str):
@@ -105,10 +171,8 @@ def save_autosave(context):
                 try:
                     os.replace(temp_path, path)
                 except PermissionError:
-                    # File is currently locked or read by another thread, ignore as next write will overwrite it anyway
                     pass
                 except Exception as ex:
-                    # Clean up temp file on other replace errors
                     try:
                         os.remove(temp_path)
                     except Exception:
@@ -121,7 +185,6 @@ def save_autosave(context):
                     pass
                 
         threading.Thread(target=write_worker, args=(autosave_path, payload_str), daemon=True).start()
-            
     except Exception as e:
         print("FireMaze: Failed to initiate autosave:", e)
 
@@ -256,6 +319,8 @@ class MAZE_OT_generate(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
+        global show_recovery_warning
+        show_recovery_warning = False
         props = context.scene.fire_maze
 
         if props.grid_type == 'rect':
@@ -1167,6 +1232,90 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
 
+def _generate_maze_image_datablock(context, img_name="FireMaze_Layout"):
+    col = bpy.data.collections.get("FireMaze")
+    if not col or "fire_maze_data" not in col:
+        return None, "No active maze layout found. Please generate a maze first."
+
+    import json
+    try:
+        data = json.loads(col["fire_maze_data"])
+        if data.get('grid_type', 'rect') == 'polar':
+            return None, "Save Maze as Image is currently only supported for Rectangular mazes."
+        width = data["width"]
+        depth = data["depth"]
+        cells = data["cells"]
+        wall_mode = data.get("wall_mode", "thin")
+    except Exception as e:
+        return None, f"Failed to read maze data: {e}"
+
+    # Remove existing image if it exists to refresh
+    old_img = bpy.data.images.get(img_name)
+    if old_img:
+        bpy.data.images.remove(old_img)
+
+    # Create new image block
+    if wall_mode == 'cube':
+        img_w, img_h = width, depth
+    else: # thin mode, upscale 3x
+        img_w, img_h = width * 3, depth * 3
+
+    img = bpy.data.images.new(name=img_name, width=img_w, height=img_h, alpha=False, float_buffer=False)
+
+    # Buffer size is img_w * img_h * 4 (RGBA channels)
+    pixels = [0.0] * (img_w * img_h * 4)
+
+    if wall_mode == 'cube':
+        for y in range(depth):
+            for x in range(width):
+                is_wall = cells[y][x][0]
+                val = 0.0 if is_wall else 1.0
+                idx = (y * img_w + x) * 4
+                pixels[idx] = val
+                pixels[idx + 1] = val
+                pixels[idx + 2] = val
+                pixels[idx + 3] = 1.0
+    else: # thin mode
+        for y in range(depth):
+            for x in range(width):
+                c = cells[y][x]
+                bx, by = x * 3, y * 3
+                
+                # Center is walkable
+                c_idx = ((by + 1) * img_w + (bx + 1)) * 4
+                pixels[c_idx] = pixels[c_idx+1] = pixels[c_idx+2] = 1.0
+                pixels[c_idx+3] = 1.0
+                
+                # North (no North wall)
+                if not c[0]:
+                    n_idx = ((by + 2) * img_w + (bx + 1)) * 4
+                    pixels[n_idx] = pixels[n_idx+1] = pixels[n_idx+2] = 1.0
+                    pixels[n_idx+3] = 1.0
+                    
+                # South (no South wall)
+                if not c[1]:
+                    s_idx = (by * img_w + (bx + 1)) * 4
+                    pixels[s_idx] = pixels[s_idx+1] = pixels[s_idx+2] = 1.0
+                    pixels[s_idx+3] = 1.0
+                    
+                # East (no East wall)
+                if not c[2]:
+                    e_idx = ((by + 1) * img_w + (bx + 2)) * 4
+                    pixels[e_idx] = pixels[e_idx+1] = pixels[e_idx+2] = 1.0
+                    pixels[e_idx+3] = 1.0
+                    
+                # West (no West wall)
+                if not c[3]:
+                    w_idx = ((by + 1) * img_w + bx) * 4
+                    pixels[w_idx] = pixels[w_idx+1] = pixels[w_idx+2] = 1.0
+                    pixels[w_idx+3] = 1.0
+
+    # Set pixel data
+    img.pixels = pixels
+    img.update()
+    return img, None
+
+
 class MAZE_OT_save_as_image(bpy.types.Operator):
     bl_idname = "fire_maze.save_as_image"
     bl_label = "Save Maze as Image"
@@ -1174,93 +1323,75 @@ class MAZE_OT_save_as_image(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        col = bpy.data.collections.get("FireMaze")
-        if not col or "fire_maze_data" not in col:
-            self.report({'ERROR'}, "No active maze layout found. Please generate a maze first.")
+        img, err = _generate_maze_image_datablock(context)
+        if err:
+            self.report({'ERROR'}, err)
             return {'CANCELLED'}
-
-        import json
-        try:
-            data = json.loads(col["fire_maze_data"])
-            if data.get('grid_type', 'rect') == 'polar':
-                self.report({'ERROR'}, "Save Maze as Image is currently only supported for Rectangular mazes.")
-                return {'CANCELLED'}
-            width = data["width"]
-            depth = data["depth"]
-            cells = data["cells"]
-            wall_mode = data.get("wall_mode", "thin")
-        except Exception as e:
-            self.report({'ERROR'}, f"Failed to read maze data: {e}")
-            return {'CANCELLED'}
-
-        img_name = "FireMaze_Layout"
-        # Remove existing image if it exists to refresh
-        old_img = bpy.data.images.get(img_name)
-        if old_img:
-            bpy.data.images.remove(old_img)
-
-        # Create new image block
-        if wall_mode == 'cube':
-            img_w, img_h = width, depth
-        else: # thin mode, upscale 3x
-            img_w, img_h = width * 3, depth * 3
-
-        img = bpy.data.images.new(name=img_name, width=img_w, height=img_h, alpha=False, float_buffer=False)
-
-        # Buffer size is img_w * img_h * 4 (RGBA channels)
-        pixels = [0.0] * (img_w * img_h * 4)
-
-        if wall_mode == 'cube':
-            for y in range(depth):
-                for x in range(width):
-                    is_wall = cells[y][x][0]
-                    val = 0.0 if is_wall else 1.0
-                    idx = (y * img_w + x) * 4
-                    pixels[idx] = val
-                    pixels[idx + 1] = val
-                    pixels[idx + 2] = val
-                    pixels[idx + 3] = 1.0
-        else: # thin mode
-            for y in range(depth):
-                for x in range(width):
-                    c = cells[y][x]
-                    bx, by = x * 3, y * 3
-                    
-                    # Center is walkable
-                    c_idx = ((by + 1) * img_w + (bx + 1)) * 4
-                    pixels[c_idx] = pixels[c_idx+1] = pixels[c_idx+2] = 1.0
-                    pixels[c_idx+3] = 1.0
-                    
-                    # North (no North wall)
-                    if not c[0]:
-                        n_idx = ((by + 2) * img_w + (bx + 1)) * 4
-                        pixels[n_idx] = pixels[n_idx+1] = pixels[n_idx+2] = 1.0
-                        pixels[n_idx+3] = 1.0
-                        
-                    # South (no South wall)
-                    if not c[1]:
-                        s_idx = (by * img_w + (bx + 1)) * 4
-                        pixels[s_idx] = pixels[s_idx+1] = pixels[s_idx+2] = 1.0
-                        pixels[s_idx+3] = 1.0
-                        
-                    # East (no East wall)
-                    if not c[2]:
-                        e_idx = ((by + 1) * img_w + (bx + 2)) * 4
-                        pixels[e_idx] = pixels[e_idx+1] = pixels[e_idx+2] = 1.0
-                        pixels[e_idx+3] = 1.0
-                        
-                    # West (no West wall)
-                    if not c[3]:
-                        w_idx = ((by + 1) * img_w + bx) * 4
-                        pixels[w_idx] = pixels[w_idx+1] = pixels[w_idx+2] = 1.0
-                        pixels[w_idx+3] = 1.0
-
-        # Set pixel data
-        img.pixels = pixels
-        img.update()
-        
-        self.report({'INFO'}, f"Saved maze layout as image '{img_name}' (Size: {img_w}x{img_h})")
+        self.report({'INFO'}, f"Saved maze layout as image '{img.name}' (Size: {img.size[0]}x{img.size[1]})")
         return {'FINISHED'}
+
+
+class MAZE_OT_save_image_file(bpy.types.Operator, ExportHelper):
+    bl_idname = "fire_maze.save_image_file"
+    bl_label = "Save Maze Image to Disk"
+    bl_description = "Save the current maze layout as a PNG image file on disk"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filename_ext = ".png"
+    filter_glob: bpy.props.StringProperty(
+        default="*.png",
+        options={'HIDDEN'},
+        maxlen=255,
+    )
+
+    def execute(self, context):
+        img, err = _generate_maze_image_datablock(context, img_name="FireMaze_Export_Temp")
+        if err:
+            self.report({'ERROR'}, err)
+            return {'CANCELLED'}
+        
+        try:
+            img.filepath_raw = self.filepath
+            img.file_format = 'PNG'
+            img.save()
+            bpy.data.images.remove(img)
+            self.report({'INFO'}, f"Saved maze image successfully to: {self.filepath}")
+            return {'FINISHED'}
+        except Exception as e:
+            try:
+                bpy.data.images.remove(img)
+            except:
+                pass
+            self.report({'ERROR'}, f"Failed to save image file: {e}")
+            return {'CANCELLED'}
+
+
+class MAZE_OT_load_mask_image(bpy.types.Operator, ImportHelper):
+    bl_idname = "fire_maze.load_mask_image"
+    bl_label = "Load Mask Image"
+    bl_description = "Load a black-and-white image from disk to use as a maze mask"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    filename_ext = ".png"
+    filter_glob: bpy.props.StringProperty(
+        default="*.png;*.jpg;*.jpeg;*.bmp;*.tga",
+        options={'HIDDEN'},
+        maxlen=255,
+    )
+    
+    def execute(self, context):
+        import os
+        if not os.path.exists(self.filepath):
+            self.report({'ERROR'}, f"File not found: {self.filepath}")
+            return {'CANCELLED'}
+        try:
+            img = bpy.data.images.load(self.filepath)
+            context.scene.fire_maze.mask_image = img
+            self.report({'INFO'}, f"Loaded mask image: {img.name}")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"Failed to load image: {e}")
+            return {'CANCELLED'}
 
 
 class MAZE_OT_restore_autosave(bpy.types.Operator):
@@ -1270,6 +1401,8 @@ class MAZE_OT_restore_autosave(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
+        global show_recovery_warning
+        show_recovery_warning = False
         import os
         import tempfile
         import json
@@ -1283,66 +1416,9 @@ class MAZE_OT_restore_autosave(bpy.types.Operator):
             with open(autosave_path, 'r') as f:
                 data = json.load(f)
                 
-            props = context.scene.fire_maze
-            properties = data.get("properties", {})
-            maze_json = data.get("maze_data")
+            _deserialize_session_data(context, data)
             
-            # Restore standard properties
-            prop_names = [
-                "width", "depth", "wall_height", "wall_height_tiled", "wall_height_tiles",
-                "wall_thickness", "tile_size", "wall_mode", "grid_type", "polar_rings",
-                "polar_custom_alignment", "mode", "emergency_exits", "seed", "tiles_centered",
-                "algorithm", "rooms_enable", "rooms_count", "min_room_size", "max_room_size",
-                "loop_probability", "isolated_wall_prob", "entrance_side", "exit_side",
-                "num_entrances", "num_exits", "cube_mode_pillar", "generate_guide",
-                "guide_type", "guide_width", "guide_height_offset", "guide_wave_amplitude",
-                "guide_wave_frequency", "wall_translate", "wall_rotate", "wall_scale",
-                "floor_translate", "floor_rotate", "floor_scale", "single_wall_object",
-                "merge_objects", "remove_doubles", "generate_lightmap", "lightmap_method",
-                "generate_colliders", "merge_colliders", "optimize_coplanar", "vertex_paint_enable",
-                "vertex_paint_mode", "vertex_paint_intensity", "prop_torch_density", "prop_chest_density"
-            ]
-            for name in prop_names:
-                if name in properties:
-                    val = properties[name]
-                    if isinstance(val, list):
-                        val = tuple(val)
-                    try:
-                        setattr(props, name, val)
-                    except Exception as ex:
-                        print(f"Failed to set property {name}: {ex}")
-                        
-            # Resolve pointer properties
-            pointer_props = [
-                "custom_floor_mesh", "custom_wall_north", "custom_wall_south",
-                "custom_wall_east", "custom_wall_west", "custom_roof_mesh",
-                "custom_wall_collection", "custom_floor_collection", "custom_roof_collection",
-                "prop_torch_mesh", "prop_chest_mesh", "prop_door_mesh", "mask_image"
-            ]
-            for name in pointer_props:
-                if name in properties:
-                    val = properties[name]
-                    ref = None
-                    if name == "mask_image":
-                        ref = bpy.data.images.get(val)
-                    elif name in {"custom_wall_collection", "custom_floor_collection", "custom_roof_collection"}:
-                        ref = bpy.data.collections.get(val)
-                    elif name in {"custom_floor_mesh", "custom_wall_north", "custom_wall_south", "custom_wall_east", "custom_wall_west", "custom_roof_mesh"}:
-                        ref = bpy.data.meshes.get(val)
-                    else:
-                        ref = bpy.data.objects.get(val)
-                    if ref:
-                        setattr(props, name, ref)
-            
-            # Restore maze data
-            if maze_json:
-                col = bpy.data.collections.get("FireMaze")
-                if not col:
-                    col = bpy.data.collections.new("FireMaze")
-                    context.scene.collection.children.link(col)
-                col["fire_maze_data"] = maze_json
-                
-                rebuild_maze_from_collection(context, col)
+            if data.get("maze_data"):
                 self.report({'INFO'}, "Successfully restored maze session from autosave")
             else:
                 self.report({'INFO'}, "Restored settings from autosave (no maze layout was saved)")
@@ -1356,7 +1432,87 @@ class MAZE_OT_restore_autosave(bpy.types.Operator):
             return {'CANCELLED'}
 
 
-classes = (MAZE_OT_generate, MAZE_OT_clear, MAZE_OT_interactive_edit, MAZE_OT_save_as_image, MAZE_OT_restore_autosave)
+class MAZE_OT_discard_autosave(bpy.types.Operator):
+    bl_idname = "fire_maze.discard_autosave"
+    bl_label = "Discard Recovery Data"
+    bl_description = "Delete the temporary autosave recovery file from disk"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        global show_recovery_warning
+        show_recovery_warning = False
+        import os
+        import tempfile
+        autosave_path = os.path.join(tempfile.gettempdir(), "firemaze_autosave.json")
+        if os.path.exists(autosave_path):
+            try:
+                os.remove(autosave_path)
+                self.report({'INFO'}, "Autosave recovery file discarded successfully")
+            except Exception as e:
+                self.report({'ERROR'}, f"Failed to delete recovery file: {e}")
+                return {'CANCELLED'}
+        else:
+            self.report({'INFO'}, "No recovery file found to discard")
+        return {'FINISHED'}
+
+class MAZE_OT_save_session(bpy.types.Operator, ExportHelper):
+    bl_idname = "fire_maze.save_session"
+    bl_label = "Save Session"
+    bl_description = "Save current maze settings and layout to a JSON file"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    filename_ext = ".json"
+    filter_glob: bpy.props.StringProperty(
+        default="*.json",
+        options={'HIDDEN'},
+        maxlen=255,
+    )
+    
+    def execute(self, context):
+        import json
+        try:
+            payload = _serialize_session_data(context)
+            payload_str = json.dumps(payload, indent=2)
+            with open(self.filepath, 'w') as f:
+                f.write(payload_str)
+            self.report({'INFO'}, f"Session saved successfully to: {self.filepath}")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"Failed to save session: {e}")
+            return {'CANCELLED'}
+
+class MAZE_OT_load_session(bpy.types.Operator, ImportHelper):
+    bl_idname = "fire_maze.load_session"
+    bl_label = "Load Session"
+    bl_description = "Load maze settings and layout from a JSON file"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    filename_ext = ".json"
+    filter_glob: bpy.props.StringProperty(
+        default="*.json",
+        options={'HIDDEN'},
+        maxlen=255,
+    )
+    
+    def execute(self, context):
+        global show_recovery_warning
+        show_recovery_warning = False
+        import json
+        import os
+        if not os.path.exists(self.filepath):
+            self.report({'ERROR'}, f"File not found: {self.filepath}")
+            return {'CANCELLED'}
+        try:
+            with open(self.filepath, 'r') as f:
+                data = json.load(f)
+            _deserialize_session_data(context, data)
+            self.report({'INFO'}, f"Session loaded successfully from: {self.filepath}")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"Failed to load session: {e}")
+            return {'CANCELLED'}
+
+classes = (MAZE_OT_generate, MAZE_OT_clear, MAZE_OT_interactive_edit, MAZE_OT_save_as_image, MAZE_OT_save_image_file, MAZE_OT_load_mask_image, MAZE_OT_restore_autosave, MAZE_OT_discard_autosave, MAZE_OT_save_session, MAZE_OT_load_session)
 
 def register():
     for cls in classes:
