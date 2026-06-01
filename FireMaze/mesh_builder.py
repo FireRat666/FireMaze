@@ -1707,22 +1707,47 @@ def _add_mesh_polar_trapezoid_with_matrix(bm, src_mesh, mat_combined, uv_layer, 
 
     r_mid = r * ts
     alpha_r = 2 * math.pi / Nr
+    theta_a = theta * alpha_r
+    theta_b = (theta + 1) * alpha_r
     theta_mid = (theta + 0.5) * alpha_r
+    r_in = r_mid - ts / 2
+    r_out = r_mid + ts / 2
 
+    c_in_ccw_x = r_in * math.cos(theta_a)
+    c_in_ccw_y = r_in * math.sin(theta_a)
+    c_in_cw_x = r_in * math.cos(theta_b)
+    c_in_cw_y = r_in * math.sin(theta_b)
+    c_out_ccw_x = r_out * math.cos(theta_a)
+    c_out_ccw_y = r_out * math.sin(theta_a)
+    c_out_cw_x = r_out * math.cos(theta_b)
+    c_out_cw_y = r_out * math.sin(theta_b)
+
+    inv_ts = 1.0 / ts
     for v in temp_bm.verts:
         co = v.co
-        x_rel = co.x
-        y_rel = co.y
-        
-        # Scale X (width/angular direction) linearly based on Y (radial distance)
-        scale_x = ((r_mid + y_rel) * alpha_r) / ts if (r_mid > 0 and scale_angular) else 1.0
-        x_scaled = x_rel * scale_x
-        
-        # Rotate and translate in 3D space:
-        cos_t = math.cos(theta_mid)
-        sin_t = math.sin(theta_mid)
-        v.co.x = (r_mid + y_rel) * cos_t - x_scaled * sin_t
-        v.co.y = (r_mid + y_rel) * sin_t + x_scaled * cos_t
+        if r_mid > 0 and scale_angular:
+            # Bilinear interpolation across the four real polar corners of the
+            # wedge so adjacent tiles meet exactly on shared edges.
+            u = co.x * inv_ts + 0.5
+            vv = co.y * inv_ts + 0.5
+            omu = 1.0 - u
+            omv = 1.0 - vv
+            w_in_ccw = omu * omv
+            w_in_cw = u * omv
+            w_out_ccw = omu * vv
+            w_out_cw = u * vv
+            v.co.x = (w_in_ccw * c_in_ccw_x + w_in_cw * c_in_cw_x
+                      + w_out_ccw * c_out_ccw_x + w_out_cw * c_out_cw_x)
+            v.co.y = (w_in_ccw * c_in_ccw_y + w_in_cw * c_in_cw_y
+                      + w_out_ccw * c_out_ccw_y + w_out_cw * c_out_cw_y)
+        else:
+            # Fallback: plain rotate+translate with no angular scaling.
+            x_rel = co.x
+            y_rel = co.y
+            cos_t = math.cos(theta_mid)
+            sin_t = math.sin(theta_mid)
+            v.co.x = (r_mid + y_rel) * cos_t - x_rel * sin_t
+            v.co.y = (r_mid + y_rel) * sin_t + x_rel * cos_t
         v.co.z = co.z + z_off
 
     if reverse_faces:
