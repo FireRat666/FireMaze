@@ -60,7 +60,7 @@ def _serialize_session_data(context):
         "guide_wave_frequency", "wall_translate", "wall_rotate", "wall_scale",
         "floor_translate", "floor_rotate", "floor_scale", "single_wall_object",
         "merge_objects", "remove_doubles", "generate_lightmap", "lightmap_method",
-        "generate_colliders", "merge_colliders", "optimize_coplanar", "vertex_paint_enable",
+        "generate_colliders", "merge_colliders", "optimize_colliders_coplanar", "optimize_coplanar", "vertex_paint_enable",
         "vertex_paint_mode", "vertex_paint_intensity", "prop_torch_density", "prop_chest_density",
         "mask_invert"
     ]
@@ -109,7 +109,7 @@ def _deserialize_session_data(context, data):
         "guide_wave_frequency", "wall_translate", "wall_rotate", "wall_scale",
         "floor_translate", "floor_rotate", "floor_scale", "single_wall_object",
         "merge_objects", "remove_doubles", "generate_lightmap", "lightmap_method",
-        "generate_colliders", "merge_colliders", "optimize_coplanar", "vertex_paint_enable",
+        "generate_colliders", "merge_colliders", "optimize_colliders_coplanar", "optimize_coplanar", "vertex_paint_enable",
         "vertex_paint_mode", "vertex_paint_intensity", "prop_torch_density", "prop_chest_density",
         "mask_invert"
     ]

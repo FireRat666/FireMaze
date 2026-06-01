@@ -1,6 +1,6 @@
 # FireMaze
 
-A powerful, feature-rich Blender 4.2+ extension (v2.0.1) for generating, editing, and customizing tile-based mazes. Supports two grid types (Rectangular and Polar/Circular), two construction modes (Thin and Cube), 10 generation algorithms, procedural rooms, loop/pillar settings, image masking, custom collection randomization, interactive viewport editing, real-time pathfinding guides, vertex painting, prop/decor spawning, and detailed local transformations.
+A powerful, feature-rich Blender 4.2+ extension (v2.0.1) for generating, editing, and customizing tile-based mazes. Supports two grid types (Rectangular and Polar/Circular), two construction modes (Thin and Cube), 10 generation algorithms, procedural rooms, loop/pillar settings, image masking, custom collection randomization, interactive viewport editing, real-time pathfinding guides, vertex painting, prop/decor spawning, session save/load to disk, image export to disk, and detailed local transformations.
 
 ![main](Mazes.png)
 
@@ -22,7 +22,7 @@ Rectangular and Polar (Circular) grids are supported, each with its own maze gen
 * **Polar (Circular) Grid**: Maze generated in concentric rings with radially-divided sectors. Each ring's sector count increases outward for a natural circular look. Custom tile alignment modes are available for polar mazes:
   * **Procedural Only**: Uses procedurally generated curved meshes (wedges, circular arcs, radial walls). Custom tiles are ignored.
   * **Trapezoidal Scaling**: Stretches custom tiles to fit the wedge-shaped cells (straight walls, segmented appearance).
-  * **Polar Bending (Warp)**: Dynamically bends/warps custom tile vertices along circular arcs for a smooth organic look.
+  * **Polar Bending (Warp)**: Dynamically bends/warps custom tile vertices along circular arcs for a smooth organic look. Subdivision cuts for the bending warp are automatically capped (max 2 for detailed meshes, max 4 for simple proxy tiles) to prevent vertex explosion and memory crashes.
 
 ### 3. Advanced Generation Algorithms
 
@@ -72,6 +72,7 @@ You can paint, modify, and customize the maze layout in real time directly from 
 4. Press `ESC` or `ENTER` (or click **Exit Edit Mode** in the sidebar) to return to normal scene interaction.
 *Note: Clicks on the Sidebar (N-panel) are ignored by the editor modal so you can modify materials, view settings, or click buttons without leaving edit mode.*
 *Precision Click Target: The editor modal temporarily generates an invisible flat-faced helper mesh (`_FireMaze_Edit_Helper`) and raycasts against it. This makes face classification and grid coordination 100% mathematically exact, preventing clicks on complex/curved custom meshes from misrouting. In **Instanced Pillars (Pillar) Mode**, clicking the top/roof area of a pillar is fully supported for toggling or swapping, even though the roof mesh itself is not generated.*
+*Performance: During interactive editing, heavy post-processing (lightmap UV unwrap, vertex painting, planar dissolve, prop spawning, collider generation) is automatically bypassed to keep click-to-toggle response instantaneous. Exiting edit mode triggers a single full rebuild with all post-processing applied.
 
 ### 8. Real-Time Guide Paths
 
@@ -93,6 +94,7 @@ Replace standard meshes with randomized objects from collections and customize i
 * **Independent Face/Tile Swapping**: In Interactive Edit Mode, `Shift + Left-Clicking` a face cycles its mesh index from the respective collection:
   * In **Cube Mode**, raycast hit normals are used to detect the clicked direction, allowing you to swap North, South, East, and West wall faces, floor tiles, and roof tiles completely independently (when not in Instanced Pillar Mode).
   * In **Thin Wall Mode**, distance-to-edge calculations (`d_N`, `d_S`, `d_E`, `d_W`) are used to precisely target and swap the clicked thin wall segment, floor, or roof. Shared walls between adjacent cells are automatically synchronized to maintain consistent rendering.
+* **Stable Custom Mesh Merging**: Custom meshes are loaded and transformed using a lightweight BMesh-to-BMesh copy function (`_merge_bmesh_geometries`) that avoids intermediate `bpy.types.Mesh` allocations and C-level datablock mutations, preventing memory corruption and Blender crashes even with high-density tiles and complex polar deformations.
 * **Mesh Origin & Alignment Requirements**: For proper alignment of custom/collection meshes:
   * **Pillars & Walls (especially Instanced Pillars)**: Meshes MUST be centered horizontally (local X=0, Y=0) and have their bottom aligned vertically with the local origin (local Z=0). If a mesh is centered vertically (origin at the center of the asset, like default Blender cubes), it will sink halfway into the floor (i.e. it will be lower than it should be).
   * **Floors**: Floor meshes should be centered horizontally (local X=0, Y=0) with their top surface aligned vertically at local Z=0.
@@ -110,9 +112,11 @@ Add variety and organic offsets to standard or custom tiles using local matrix t
 
 Use a black-and-white image to define the walkable shape of the maze:
 
-* **Mask Image**: Select an Image datablock in Blender. White pixels are walkable (path), black pixels are blocked (wall).
+* **Load Mask from Disk**: Directly import a PNG, JPG, BMP, or TGA file from disk as the mask image via the **Session & Image Management** panel.
+* **Mask Image**: Select an existing Image datablock in Blender. White pixels are walkable (path), black pixels are blocked (wall).
 * **Invert Mask**: Swap the interpretation (black = walkable, white = blocked).
 * The mask image is sampled at each cell's position, making it easy to create mazes shaped like logos, text, or custom silhouettes.
+* **Note**: Image masking is only available for Rectangular grids.
 
 ### 12. Vertex Painting
 
@@ -146,6 +150,7 @@ Automatically place decorative objects on wall faces, dead-ends, and entrances/e
 * **Optimize Geometry (Dissolve Planar)**: Simplifies mesh geometry by dissolving coplanar faces. Reduces poly count but may stretch seamless tiled textures.
 * **Generate Colliders**: Generates simple, flat-faced helper meshes (`FireMaze_Floor_Collider`, `FireMaze_Walls_Collider`, `FireMaze_Roof_Collider`) matching the maze layout for easy game engine integration (hidden in final renders by default). *Note: Roof colliders are generated even when Instanced Pillars (Pillar Mode) is enabled so that they can be used for collision.*
 * **Merge Colliders**: Combines all active collider objects into a single unified `FireMaze_Collider` mesh.
+* **Optimize Colliders**: Applies planar dissolve (limited dissolve) to collider meshes, merging coplanar faces to reduce polygon count. Works on individual or merged colliders.
 
 ---
 
@@ -180,9 +185,26 @@ When generated, the addon creates separate objects based on your merge configura
 * Generating a maze creates a new nested collection (e.g. `FireMaze`, `FireMaze.001`, etc.) containing all generated objects.
 * The collection stores a serialized JSON custom property named `fire_maze_data`. This property contains the grid dimensions, cell states, entrance/exit coordinates, and wall mode.
 * Interactive editing and rebuild operators read this serialized data directly, ensuring that the viewport editor works seamlessly across different files and sessions.
-* Clicking **Clear Maze** scans the scene for any object carrying the `fire_maze` tag, unlinks them, and purges empty `FireMaze*` collections.
-* **Save Maze as Image**: Exports the current maze layout as a black-and-white Blender Image datablock (`FireMaze_Layout`), rendering wall cells as black and walkable cells as white. Useful as a reference minimap or for external editing.
-* **Autosave & Restore Last Session**: The addon automatically saves current settings and maze data to a temporary JSON file. Click **Restore Last Session** in the sidebar to recover settings and rebuild the maze from the last generation or edit, surviving Blender restarts.
+* Clicking **Clear Maze** scans the scene for any object carrying the `fire_maze` tag, unlinks them, and purges empty `FireMaze*` collections. Orphaned mesh/curve datablocks are swept from the database to prevent memory leaks.
+
+### Session Management
+
+* **Save Session to Disk**: Exports all maze settings, pointer references, and the full grid layout to a `.json` file via a file dialog. The session includes every property and the serialized cell data, enabling full reconstruction on any machine.
+* **Load Session from Disk**: Opens a `.json` session file, restores all properties (including `mask_invert`, `optimize_colliders_coplanar`, etc.), re-links mesh/collection/image references by name, recreates the collection, and rebuilds the maze layout.
+* **Autosave (Crash Recovery)**: The addon automatically saves current settings and maze data to a temporary file on every generation. After a crash or restart, a **Restore Session** button appears in the **Session & Image Management** panel alongside a **Discard** button to dismiss the recovery data.
+* **Discard Recovery Data**: Deletes the temporary autosave file from disk and dismisses the recovery warning without loading.
+
+### Image Export
+
+* **Save PNG to Disk**: Exports the maze layout as a black-and-white PNG directly to a file path of your choice (uses Blender's native file save dialog).
+* **Create Blender Image**: Generates an in-memory Blender Image datablock (`FireMaze_Layout`) showing walls as black and walkable cells as white. Useful as a reference minimap or for external editing.
+
+### Session & Image Management Panel
+
+A dedicated sidebar panel groups all session and image operations in one place:
+- **Session Management** section with side-by-side `Save Session...` / `Load Session...` buttons.
+- Conditional **crash recovery warning box** (shows `Restore Session` and `Discard` buttons) that only appears when a leftover autosave file exists from a previous session.
+- **Masking & Image Export** section with `Load Mask from Disk...`, mask selection, invert toggle, `Save PNG to Disk...`, and `Create Blender Image` buttons.
 
 ---
 

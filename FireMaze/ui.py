@@ -289,6 +289,7 @@ class VIEW3D_PT_fire_maze_cleanup(bpy.types.Panel):
         col.prop(props, "generate_colliders")
         if props.generate_colliders:
             col.prop(props, "merge_colliders")
+            col.prop(props, "optimize_colliders_coplanar")
 
 
 

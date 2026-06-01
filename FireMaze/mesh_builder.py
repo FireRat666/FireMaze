@@ -2209,7 +2209,14 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
     if name_suffix == "_Collider":
         if props.merge_colliders:
             meshes_to_merge = [obj for obj in created_objects if obj.type == 'MESH']
-            _merge_maze_objects(meshes_to_merge, context, name="FireMaze_Collider")
+            merged_obj = _merge_maze_objects(meshes_to_merge, context, name="FireMaze_Collider")
+            if props.optimize_colliders_coplanar and merged_obj:
+                _optimize_coplanar_on_obj(merged_obj)
+        else:
+            if props.optimize_colliders_coplanar:
+                for obj in created_objects:
+                    if obj.type == 'MESH':
+                        _optimize_coplanar_on_obj(obj)
     elif name_suffix == "_EditHelper":
         meshes_to_merge = [obj for obj in created_objects if obj.type == 'MESH']
         merged_obj = _merge_maze_objects(meshes_to_merge, context, name="_FireMaze_Edit_Helper")
@@ -2759,6 +2766,13 @@ def build_maze_objects(props, maze_data, context, collection=None, force_simple=
         if props.merge_colliders:
             meshes_to_merge = [obj for obj in created_objects if obj.type == 'MESH']
             merged_obj = _merge_maze_objects(meshes_to_merge, context, name="FireMaze_Collider")
+            if props.optimize_colliders_coplanar and merged_obj:
+                _optimize_coplanar_on_obj(merged_obj)
+        else:
+            if props.optimize_colliders_coplanar:
+                for obj in created_objects:
+                    if obj.type == 'MESH':
+                        _optimize_coplanar_on_obj(obj)
     elif name_suffix == "_EditHelper":
         meshes_to_merge = [obj for obj in created_objects if obj.type == 'MESH']
         merged_obj = _merge_maze_objects(meshes_to_merge, context, name="_FireMaze_Edit_Helper")

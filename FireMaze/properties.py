@@ -408,6 +408,11 @@ class FireMazeProperties(bpy.types.PropertyGroup):
         description="Merge all generated collider meshes into a single object named FireMaze_Collider",
         default=False,
     )
+    optimize_colliders_coplanar: bpy.props.BoolProperty(
+        name="Optimize Colliders",
+        description="Simplify collider geometry by dissolving coplanar faces to reduce polygon count",
+        default=False,
+    )
     optimize_coplanar: bpy.props.BoolProperty(
         name="Optimize Geometry (Dissolve Planar)",
         description="Simplify geometry by dissolving coplanar faces (may stretch tiled textures)",
