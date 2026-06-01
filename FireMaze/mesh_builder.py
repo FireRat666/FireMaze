@@ -2335,7 +2335,7 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
 
             if r == 0:
                 if src_roof and alignment != 'procedural':
-                    _add_mesh_polar_center(bm_roof, src_roof, mat_floor_offset, uv_roof, roof_materials, ts, wh, centered, reverse_faces=(props.wall_mode == 'cube'))
+                    _add_mesh_polar_center(bm_roof, src_roof, mat_floor_offset, uv_roof, roof_materials, ts, wh, centered, reverse_faces=(props.wall_mode != 'cube'))
                 else:
                     _add_polar_center_fan(bm_roof, uv_roof, ts, wh, is_roof=True, flip_normal=(props.wall_mode == 'thin'))
             elif src_roof and alignment != 'procedural':
