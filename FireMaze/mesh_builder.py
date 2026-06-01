@@ -293,7 +293,9 @@ def _add_cube_roof_face_transformed(bm, uv_layer, cx, cy, sx, sy, sz, mat_offset
 
 def _create_object_from_bm(bm, name, collection, material):
     mesh = bpy.data.meshes.new(name)
+    bm.normal_update()
     bm.to_mesh(mesh)
+    mesh.update()
     bm.free()
     obj = bpy.data.objects.new(name, mesh)
     collection.objects.link(obj)
@@ -366,7 +368,9 @@ def _remove_doubles_on_obj(obj):
     bm = bmesh.new()
     bm.from_mesh(obj.data)
     bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.001)
+    bm.normal_update()
     bm.to_mesh(obj.data)
+    obj.data.update()
     bm.free()
 
 def _generate_lightmap_on_obj(obj, context, method='smart'):
@@ -478,7 +482,9 @@ def _optimize_coplanar_on_obj(obj):
         verts=bm.verts,
         edges=bm.edges
     )
+    bm.normal_update()
     bm.to_mesh(obj.data)
+    obj.data.update()
     bm.free()
 
 def _compute_grid_distances(maze_data, wall_mode):
@@ -812,7 +818,9 @@ def _apply_vertex_painting_on_obj(obj, props, maze_data):
                 
             loop[color_layer] = (r_col, g_col, b_col, a_col)
             
+    bm.normal_update()
     bm.to_mesh(obj.data)
+    obj.data.update()
     bm.free()
 
 def _spawn_decorations(props, maze_data, context, parent_collection):
