@@ -169,6 +169,10 @@ class VIEW3D_PT_fire_maze_loops(bpy.types.Panel):
     bl_parent_id = "VIEW3D_PT_fire_maze"
     bl_options = {'DEFAULT_CLOSED'}
 
+    @classmethod
+    def poll(cls, context):
+        return context.scene.fire_maze.grid_type == 'rect'
+
     def draw(self, context):
         layout = self.layout
         props = context.scene.fire_maze
