@@ -123,25 +123,16 @@ class FireMazeProperties(bpy.types.PropertyGroup):
         description="Optional custom mesh for floor tiles",
         type=bpy.types.Mesh,
     )
-    custom_wall_north: bpy.props.PointerProperty(
-        name="Wall Mesh (+Y)",
-        description="Optional custom mesh for north-facing (+Y) wall faces",
+    custom_wall_mesh: bpy.props.PointerProperty(
+        name="Wall Mesh",
+        description="Optional custom mesh for wall segments",
         type=bpy.types.Mesh,
     )
-    custom_wall_south: bpy.props.PointerProperty(
-        name="Wall Mesh (-Y)",
-        description="Optional custom mesh for south-facing (-Y) wall faces",
-        type=bpy.types.Mesh,
-    )
-    custom_wall_east: bpy.props.PointerProperty(
-        name="Wall Mesh (+X)",
-        description="Optional custom mesh for east-facing (+X) wall faces",
-        type=bpy.types.Mesh,
-    )
-    custom_wall_west: bpy.props.PointerProperty(
-        name="Wall Mesh (-X)",
-        description="Optional custom mesh for west-facing (-X) wall faces",
-        type=bpy.types.Mesh,
+    thin_wall_double_sided: bpy.props.BoolProperty(
+        name="Double-Sided Thin Walls",
+        description="Duplicate single-sided custom wall tiles on both sides of grid lines to create thickness. "
+                    "Disable to use a single centered custom tile with built-in thickness",
+        default=True,
     )
     custom_roof_mesh: bpy.props.PointerProperty(
         name="Roof Mesh",

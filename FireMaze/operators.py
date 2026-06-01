@@ -62,7 +62,7 @@ def _serialize_session_data(context):
         "merge_objects", "remove_doubles", "generate_lightmap", "lightmap_method",
         "generate_colliders", "merge_colliders", "optimize_colliders_coplanar", "optimize_coplanar", "vertex_paint_enable",
         "vertex_paint_mode", "vertex_paint_intensity", "prop_torch_density", "prop_chest_density",
-        "mask_invert"
+        "mask_invert", "thin_wall_double_sided"
     ]
     for name in prop_names:
         val = getattr(props, name, None)
@@ -73,8 +73,7 @@ def _serialize_session_data(context):
                 props_data[name] = list(val)
     
     pointer_props = [
-        "custom_floor_mesh", "custom_wall_north", "custom_wall_south",
-        "custom_wall_east", "custom_wall_west", "custom_roof_mesh",
+        "custom_floor_mesh", "custom_wall_mesh", "custom_roof_mesh",
         "custom_wall_collection", "custom_floor_collection", "custom_roof_collection",
         "prop_torch_mesh", "prop_chest_mesh", "prop_door_mesh", "mask_image"
     ]
@@ -111,7 +110,7 @@ def _deserialize_session_data(context, data):
         "merge_objects", "remove_doubles", "generate_lightmap", "lightmap_method",
         "generate_colliders", "merge_colliders", "optimize_colliders_coplanar", "optimize_coplanar", "vertex_paint_enable",
         "vertex_paint_mode", "vertex_paint_intensity", "prop_torch_density", "prop_chest_density",
-        "mask_invert"
+        "mask_invert", "thin_wall_double_sided"
     ]
     for name in prop_names:
         if name in properties:
@@ -124,8 +123,7 @@ def _deserialize_session_data(context, data):
                 print(f"Failed to set property {name}: {ex}")
                 
     pointer_props = [
-        "custom_floor_mesh", "custom_wall_north", "custom_wall_south",
-        "custom_wall_east", "custom_wall_west", "custom_roof_mesh",
+        "custom_floor_mesh", "custom_wall_mesh", "custom_roof_mesh",
         "custom_wall_collection", "custom_floor_collection", "custom_roof_collection",
         "prop_torch_mesh", "prop_chest_mesh", "prop_door_mesh", "mask_image"
     ]
@@ -137,7 +135,7 @@ def _deserialize_session_data(context, data):
                 ref = bpy.data.images.get(val)
             elif name in {"custom_wall_collection", "custom_floor_collection", "custom_roof_collection"}:
                 ref = bpy.data.collections.get(val)
-            elif name in {"custom_floor_mesh", "custom_wall_north", "custom_wall_south", "custom_wall_east", "custom_wall_west", "custom_roof_mesh"}:
+            elif name in {"custom_floor_mesh", "custom_wall_mesh", "custom_roof_mesh"}:
                 ref = bpy.data.meshes.get(val)
             else:
                 ref = bpy.data.objects.get(val)

@@ -219,10 +219,9 @@ class VIEW3D_PT_fire_maze_custom_tiles(bpy.types.Panel):
         col.prop(props, "custom_roof_mesh", text="Roof Mesh")
         col.prop(props, "custom_roof_collection", text="Roof Collection")
         col.separator(factor=0.3)
-        col.prop(props, "custom_wall_north", text="Wall +Y (North)")
-        col.prop(props, "custom_wall_south", text="Wall -Y (South)")
-        col.prop(props, "custom_wall_east", text="Wall +X (East)")
-        col.prop(props, "custom_wall_west", text="Wall -X (West)")
+        col.prop(props, "custom_wall_mesh", text="Wall Mesh")
+        if props.wall_mode == 'thin':
+            col.prop(props, "thin_wall_double_sided", text="Double-Sided Thin Walls")
         col.separator(factor=0.3)
         col.prop(props, "custom_wall_collection", text="Wall Collection")
         if props.wall_mode == 'cube':
@@ -276,7 +275,7 @@ class VIEW3D_PT_fire_maze_cleanup(bpy.types.Panel):
         if props.optimize_coplanar:
             warn_box = layout.box()
             warn_box.alert = True
-            warn_box.label(text="Warning: Planar dissolve simplifies geometry", icon='WARNING')
+            warn_box.label(text="Warning: Planar dissolve simplifies geometry", icon='ERROR')
             warn_box.label(text="but can stretch/break seamless tiled textures.")
         
         col.separator()
