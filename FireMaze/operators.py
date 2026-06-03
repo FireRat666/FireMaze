@@ -298,10 +298,15 @@ def _raycast_from_mouse(context, event):
     scene = context.scene
     region = context.region
     rv3d = context.region_data
-    coord = event.mouse_region_x, event.mouse_region_y
+    if region is None or rv3d is None or region.type != 'WINDOW':
+        return None, None, None
 
-    view_vector = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
-    ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
+    coord = event.mouse_region_x, event.mouse_region_y
+    try:
+        view_vector = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
+        ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
+    except Exception:
+        return None, None, None
     
     depsgraph = context.evaluated_depsgraph_get()
     result, location, normal, index, object, matrix = scene.ray_cast(depsgraph, ray_origin, view_vector)
@@ -461,6 +466,22 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
         if not props.is_editing:
             context.workspace.status_text_set(None)
             self.report({'INFO'}, "Interactive Edit finished")
+            return {'FINISHED'}
+
+        # Auto-exit interactive edit mode if the workspace/tab changed or active area is not 3D viewport
+        if (getattr(self, "init_workspace", None) and context.workspace.name != self.init_workspace) or \
+           context.area is None or context.area.type != 'VIEW_3D':
+            context.workspace.status_text_set(None)
+            props.is_editing = False
+            delete_edit_helper()
+            col = None
+            for c in bpy.data.collections:
+                if "fire_maze_data" in c:
+                    col = c
+                    break
+            if col:
+                rebuild_maze_from_collection(context, col)
+            self.report({'INFO'}, "Interactive Edit finished (auto-exited)")
             return {'FINISHED'}
 
         # Check if the mouse is within the main 3D viewport WINDOW region coordinates.
@@ -1226,6 +1247,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
         props.is_editing = True
         rebuild_maze_from_collection(context, col)
         context.workspace.status_text_set("FireMaze Editor: Left-click walls to toggle. Shift+Left-click to cycle mesh. Enter/Esc to exit.")
+        self.init_workspace = context.workspace.name
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
 
