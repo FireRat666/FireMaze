@@ -1,10 +1,10 @@
 # FireMaze
 
 [![Blender](https://img.shields.io/badge/Blender-4.2%2B-orange?logo=blender&logoColor=white)](https://www.blender.org/)
-[![Version](https://img.shields.io/badge/version-3.0.0-blue)](https://github.com/FireRat666/FireMaze/)
+[![Version](https://img.shields.io/badge/version-3.0.0-blue)](https://github.com/FireRat666/FireMaze/releases/tag/v3.0.0)
 [![License](https://img.shields.io/badge/license-GPL--3.0--or--later-green)](LICENSE)
 
-A Blender 4.2+ extension (v3.0.0) for generating, editing, and customizing tile-based mazes.
+A Blender 4.2+ extension for generating, editing, and customizing tile-based mazes.
 
 It supports rectangular and polar (circular) grids, two construction modes (Thin walls and Cube pillars), 10 generation algorithms, procedural rooms, loop and pillar settings, image masking, custom collection randomization, interactive viewport editing, real-time pathfinding guides, vertex painting, prop/decor spawning, and full session save/load to disk.
 
