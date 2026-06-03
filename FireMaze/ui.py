@@ -294,7 +294,7 @@ class VIEW3D_PT_fire_maze_cleanup(bpy.types.Panel):
 
 
 class VIEW3D_PT_fire_maze_props(bpy.types.Panel):
-    bl_label = "Prop & Decor Spawner"
+    bl_label = "Prop & Decor Spawner EXPERIMENTAL"
     bl_idname = "VIEW3D_PT_fire_maze_props"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'

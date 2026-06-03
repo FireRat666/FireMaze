@@ -202,7 +202,7 @@ Procedurally paint vertex colors on maze meshes for shading, texturing, or game 
   - **Path Highlight**: Greens the floor tiles along the shortest path to the exit/center.
   - **Distance Gradient**: Black-to-white gradient mapped by BFS distance from the entrance.
 
-### 13. Prop & Decor Spawner
+### 13. Prop & Decor Spawner EXPERIMENTAL
 
 *(Prop & Decor Spawner panel)*
 
