@@ -3,8 +3,9 @@ id = "fire_maze"
 name = "FireMaze"
 version = "2.0.1"
 tagline = "Random maze generator with tiled construction"
-maintainer = "FireRat666"
+maintainer = "FireRat666 <maze@firer.at>"
 blender_version_min = "4.2.0"
+website = "https://github.com/FireRat666/FireMaze"
 license = [
     "SPDX:GPL-3.0-or-later",
 ]

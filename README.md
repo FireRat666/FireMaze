@@ -1,8 +1,55 @@
 # FireMaze
 
-A powerful, feature-rich Blender 4.2+ extension (v2.0.1) for generating, editing, and customizing tile-based mazes. Supports two grid types (Rectangular and Polar/Circular), two construction modes (Thin and Cube), 10 generation algorithms, procedural rooms, loop/pillar settings, image masking, custom collection randomization, interactive viewport editing, real-time pathfinding guides, vertex painting, prop/decor spawning, session save/load to disk, image export to disk, and detailed local transformations.
+[![Blender](https://img.shields.io/badge/Blender-4.2%2B-orange?logo=blender&logoColor=white)](https://www.blender.org/)
+[![Version](https://img.shields.io/badge/version-2.0.1-blue)](#)
+[![License](https://img.shields.io/badge/license-GPL--3.0--or--later-green)](#license)
+
+A Blender 4.2+ extension (v2.0.1) for generating, editing, and customizing tile-based mazes.
+
+It supports rectangular and polar (circular) grids, two construction modes (Thin walls and Cube pillars), 10 generation algorithms, procedural rooms, loop and pillar settings, image masking, custom collection randomization, interactive viewport editing, real-time pathfinding guides, vertex painting, prop/decor spawning, and full session save/load to disk.
 
 ![main](Mazes.png)
+
+---
+
+## Table of Contents
+
+- [Quick Start](#quick-start)
+- [Features & Settings Guide](#features--settings-guide)
+  - [1. Wall Construction Modes](#1-wall-construction-modes)
+  - [2. Grid Types](#2-grid-types)
+  - [3. Advanced Generation Algorithms](#3-advanced-generation-algorithms)
+  - [4. Procedural Rooms](#4-procedural-rooms)
+  - [5. Loops & Isolated Obstacles](#5-loops--isolated-obstacles)
+  - [6. Entrances & Exits](#6-entrances--exits)
+  - [7. Interactive Viewport Editor](#7-interactive-viewport-editor)
+  - [8. Real-Time Guide Paths](#8-real-time-guide-paths)
+  - [9. Custom Tiles, Collections, & Independent Face Swapping](#9-custom-tiles-collections--independent-face-swapping)
+  - [10. Detailed Transform Offsets](#10-detailed-transform-offsets)
+  - [11. Image Masking](#11-image-masking)
+  - [12. Vertex Painting](#12-vertex-painting)
+  - [13. Prop & Decor Spawner](#13-prop--decor-spawner)
+  - [14. Post-Processing, Cleanups & Colliders](#14-post-processing-cleanups--colliders)
+- [Installation](#installation)
+- [Project Structure](#project-structure)
+- [Object Categories & Material Slots](#object-categories--material-slots)
+- [Collection & Data Management](#collection--data-management)
+  - [Session Management](#session-management)
+  - [Image Export](#image-export)
+  - [Session & Image Management Panel](#session--image-management-panel)
+- [License](#license)
+
+---
+
+## Quick Start
+
+1. **Install** the extension - see [Installation](#installation) below.
+2. Open the 3D Viewport, press `N` to open the sidebar, and select the **FireRat** tab.
+3. In the **Maze Settings** panel, pick a **Grid Type** (Rectangular or Polar), set **Width/Depth** or **Rings**, and choose a **Wall Mode** (Thin or Cube).
+4. Click **Generate Maze** to create your maze. The default algorithm (Depth-First Search) works well for a first run.
+5. *(Optional)* Click **Interactive Edit** in the **Generation & Editing** section to paint walls in the viewport. Left-click toggles walls on/off; Shift+left-click cycles through the meshes in your custom collection.
+
+For everything else (algorithms, custom meshes, post-processing, image masking, session save/load, etc.), see the [Features & Settings Guide](#features--settings-guide) below.
 
 ---
 
@@ -10,11 +57,15 @@ A powerful, feature-rich Blender 4.2+ extension (v2.0.1) for generating, editing
 
 ### 1. Wall Construction Modes
 
+*(Maze Settings panel)*
+
 * **Thin Wall Mode**: Walls are rendered as thin box segments aligned along grid lines with customizable thickness. Ideal for classic dungeon layouts.
 * **Cube Mode**: Walls are full, tile-sized cubes centered on grid cells. The generated maze respects the exact layout dimensions, and path cell centers are placed perfectly within the grid.
 * **Tiled Height**: Optionally stack walls in tile-height increments for consistent UV mapping across segmented wall stacks (set number of tiles high).
 
 ### 2. Grid Types
+
+*(Maze Settings panel)*
 
 Rectangular and Polar (Circular) grids are supported, each with its own maze generation and mesh construction logic.
 
@@ -25,6 +76,8 @@ Rectangular and Polar (Circular) grids are supported, each with its own maze gen
   * **Polar Bending (Warp)**: Dynamically bends/warps custom tile vertices along circular arcs for a smooth organic look. Subdivision cuts for the bending warp are automatically capped (max 2 for detailed meshes, max 4 for simple proxy tiles) to prevent vertex explosion and memory crashes.
 
 ### 3. Advanced Generation Algorithms
+
+*(Algorithm & Rooms panel)*
 
 FireMaze supports multiple algorithms to generate distinct maze layout architectures:
 
@@ -41,19 +94,27 @@ FireMaze supports multiple algorithms to generate distinct maze layout architect
 
 ### 4. Procedural Rooms
 
+*(Algorithm & Rooms panel)*
+
 Pre-carve open room areas within the maze.
 
 * **Enable Rooms**: Toggles room generation.
 * **Room Count**: The number of rooms to place.
 * **Min / Max Room Size**: Bounds for the randomized width and depth of rooms (measured in cells).
 * Rooms automatically connect to the corridor network and are guaranteed to contain no stray pillars or internal walls in both Thin and Cube modes.
+* *Note: Rooms are only generated for Rectangular grids.*
 
 ### 5. Loops & Isolated Obstacles
 
+*(Loops & Layout panel)*
+
 * **Loop Probability**: Set between `0.0` (perfect maze) and `1.0` (maximum loops). Randomly removes additional walls to create alternative paths, loops, and circular corridors.
 * **Isolated Wall Prob**: Set between `0.0` and `1.0`. Places standalone, single-wall columns or pillars in floor regions to act as obstacles.
+* *Note: Loops & Layout settings only apply to Rectangular grids.*
 
 ### 6. Entrances & Exits
+
+*(Entrances & Exits panel)*
 
 * **Completion Goals**:
   * `Find Center`: Edge entrance leading to a goal in the center.
@@ -64,17 +125,21 @@ Pre-carve open room areas within the maze.
 
 ### 7. Interactive Viewport Editor
 
+*(top-level FireMaze panel)*
+
 You can paint, modify, and customize the maze layout in real time directly from the 3D viewport:
 
 1. Click **Interactive Edit** (or press the button in the Sidebar).
-2. Your viewport status bar displays editing shortcuts. Left-click on any cell or wall face to toggle it on/off.
+2. Your viewport status bar displays editing shortcuts. Left-click on any cell or wall face to toggle it on/off; Shift + left-click to cycle that face's mesh from its custom collection.
 3. The guide path and Blender meshes rebuild automatically in real time.
 4. Press `ESC` or `ENTER` (or click **Exit Edit Mode** in the sidebar) to return to normal scene interaction.
 *Note: Clicks on the Sidebar (N-panel) are ignored by the editor modal so you can modify materials, view settings, or click buttons without leaving edit mode.*
-*Precision Click Target: The editor modal temporarily generates an invisible flat-faced helper mesh (`_FireMaze_Edit_Helper`) and raycasts against it. This makes face classification and grid coordination 100% mathematically exact, preventing clicks on complex/curved custom meshes from misrouting. In **Instanced Pillars (Pillar) Mode**, clicking the top/roof area of a pillar is fully supported for toggling or swapping, even though the roof mesh itself is not generated.*
-*Performance: During interactive editing, heavy post-processing (lightmap UV unwrap, vertex painting, planar dissolve, prop spawning, collider generation) is automatically bypassed to keep click-to-toggle response instantaneous. Exiting edit mode triggers a single full rebuild with all post-processing applied.
+*Precision Click Target: The editor modal temporarily generates an invisible flat-faced helper mesh (`_FireMaze_Edit_Helper`) and raycasts against it. This makes face classification and grid coordination 100% mathematically exact, preventing clicks on complex/curved custom meshes from misrouting. In **Instanced Pillars (Pillar Mode)**, clicking the top/roof area of a pillar is fully supported for toggling or swapping, even though the roof mesh itself is not generated.*
+*Performance: During interactive editing, heavy post-processing (lightmap UV unwrap, vertex painting, planar dissolve, prop spawning, collider generation) is automatically bypassed to keep click-to-toggle response instantaneous. Exiting edit mode triggers a single full rebuild with all post-processing applied.*
 
 ### 8. Real-Time Guide Paths
+
+*(Guide Path panel)*
 
 Generate and display the shortest route through your maze:
 
@@ -85,23 +150,27 @@ Generate and display the shortest route through your maze:
 
 ### 9. Custom Tiles, Collections, & Independent Face Swapping
 
+*(Custom Meshes & Collections panel)*
+
 Replace standard meshes with randomized objects from collections and customize individual faces:
 
 * **Floor / Roof Meshes & Collections**: Replace standard tiles with a custom mesh or assign collections (`Floor Collection` / `Roof Collection`) containing multiple mesh objects to randomly distribute varied floor and roof tiles.
-* **Directional Walls**: Set different custom meshes for North (+Y), South (-Y), East (+X), and West (-X) wall segments.
-* **Wall Collection**: Select a Blender Collection containing multiple wall meshes to randomly distribute varied wall segments.
-* **Instanced Pillars (Cube Mode)**: Enable **Instanced Pillars** to use whole meshes from your Wall Collection as single pillars/cubes rather than assembling them face-by-face. Roof tile generation is automatically suppressed in this mode because each pillar mesh is assumed to already have its own roof. Clicking or Shift-clicking on the top/roof area of these pillars works seamlessly to toggle or cycle them.
-* **Independent Face/Tile Swapping**: In Interactive Edit Mode, `Shift + Left-Clicking` a face cycles its mesh index from the respective collection:
-  * In **Cube Mode**, raycast hit normals are used to detect the clicked direction, allowing you to swap North, South, East, and West wall faces, floor tiles, and roof tiles completely independently (when not in Instanced Pillar Mode).
-  * In **Thin Wall Mode**, distance-to-edge calculations (`d_N`, `d_S`, `d_E`, `d_W`) are used to precisely target and swap the clicked thin wall segment, floor, or roof. Shared walls between adjacent cells are automatically synchronized to maintain consistent rendering.
+* **Wall Mesh & Wall Collection**: All wall segments are generated from a single optional `Wall Mesh` (or, when `Wall Collection` is set, randomly distributed across all meshes in that collection). There is no separate mesh-per-direction - directional variety comes from the runtime per-face cycling described in the **Independent Face/Tile Swapping** bullet below.
+* **Double-Sided Thin Walls** (Thin Wall Mode only): When enabled, a single-sided custom thin-wall tile is duplicated on both sides of the grid line to fake thickness. Disable this when your custom wall tile already has built-in thickness, so a single centered tile is used.
+* **Instanced Pillars (Pillar Mode)** (Cube Mode only): Enable **Instanced Pillars** to use whole meshes from your Wall Collection as single pillars/cubes rather than assembling them face-by-face. Roof tile generation is automatically suppressed in this mode because each pillar mesh is assumed to already have its own roof. Clicking or Shift-clicking on the top/roof area of these pillars works seamlessly to toggle or cycle them.
+* **Independent Face/Tile Swapping**: In Interactive Edit Mode, `Shift + Left-Clicking` a face cycles its mesh index from the respective collection. Walls themselves do not have separate per-direction (N/S/E/W) assets - rather, the Shift+click action on a given wall face swaps the whole wall in that cell:
+  * In **Cube Mode**, raycast hit normals are used to detect the clicked direction, allowing you to cycle the wall assembly on the North, South, East, and West faces of a pillar (when not in Instanced Pillar Mode), as well as the floor tile and roof tile of the cell, completely independently.
+  * In **Thin Wall Mode**, distance-to-edge calculations (`d_N`, `d_S`, `d_E`, `d_W`) are used to precisely target and cycle the clicked thin wall segment, floor, or roof. Shared walls between adjacent cells are automatically synchronized to maintain consistent rendering.
 * **Stable Custom Mesh Merging**: Custom meshes are loaded and transformed using a lightweight BMesh-to-BMesh copy function (`_merge_bmesh_geometries`) that avoids intermediate `bpy.types.Mesh` allocations and C-level datablock mutations, preventing memory corruption and Blender crashes even with high-density tiles and complex polar deformations.
 * **Mesh Origin & Alignment Requirements**: For proper alignment of custom/collection meshes:
   * **Pillars & Walls (especially Instanced Pillars)**: Meshes MUST be centered horizontally (local X=0, Y=0) and have their bottom aligned vertically with the local origin (local Z=0). If a mesh is centered vertically (origin at the center of the asset, like default Blender cubes), it will sink halfway into the floor (i.e. it will be lower than it should be).
-  * **Floors**: Floor meshes should be centered horizontally (local X=0, Y=0) with their top surface aligned vertically at local Z=0.
+  * **Floors**: Floor meshes should be centered horizontally (local X=0, Y=0) with their bottom face aligned vertically at local Z=0 (so they sit on the ground plane).
   * **Roofs**: Roof meshes should be centered horizontally (local X=0, Y=0) with their top surface aligned vertically at local Z=0.
 * **Tiles Centered**: Toggles whether your custom assets have their origin at their center (like Blender primitives) or at the bottom-left corner.
 
 ### 10. Detailed Transform Offsets
+
+*(Detailed Transforms panel)*
 
 Add variety and organic offsets to standard or custom tiles using local matrix transforms:
 
@@ -110,20 +179,24 @@ Add variety and organic offsets to standard or custom tiles using local matrix t
 
 ### 11. Image Masking
 
+*(Session & Image Management panel)*
+
 Use a black-and-white image to define the walkable shape of the maze:
 
 * **Load Mask from Disk**: Directly import a PNG, JPG, BMP, or TGA file from disk as the mask image via the **Session & Image Management** panel.
 * **Mask Image**: Select an existing Image datablock in Blender. White pixels are walkable (path), black pixels are blocked (wall).
 * **Invert Mask**: Swap the interpretation (black = walkable, white = blocked).
 * The mask image is sampled at each cell's position, making it easy to create mazes shaped like logos, text, or custom silhouettes.
-* **Note**: Image masking is only available for Rectangular grids.
+* *Note: Image masking is only available for Rectangular grids.*
 
 ### 12. Vertex Painting
+
+*(Post-Processing panel)*
 
 Procedurally paint vertex colors on maze meshes for shading, texturing, or game engine blending:
 
 * **Enable Vertex Painting**: Toggle the vertex color pass on/off.
-* **Paint Intensity**: Controls the opacity/strength of the effect (0.0–1.0).
+* **Paint Intensity**: Controls the opacity/strength of the effect (0.0-1.0).
 * **Paint Modes**:
   * **Ambient Occlusion**: Procedural darkening in corners, seams, and near floor/roof boundaries for a natural shadowed look.
   * **Texture Blend Weights**: RGBA channels encode material blends (R=Moss near floor, G=Cracks in corners, B=Wetness on flat floors, A=Soot in dead-ends).
@@ -131,6 +204,8 @@ Procedurally paint vertex colors on maze meshes for shading, texturing, or game 
   * **Distance Gradient**: Black-to-white gradient mapped by BFS distance from the entrance.
 
 ### 13. Prop & Decor Spawner
+
+*(Prop & Decor Spawner panel)*
 
 Automatically place decorative objects on wall faces, dead-ends, and entrances/exits:
 
@@ -140,6 +215,8 @@ Automatically place decorative objects on wall faces, dead-ends, and entrances/e
 * Spawned props are grouped under a `FireMaze_Props` sub-collection and tagged with `fire_maze` for automatic cleanup.
 
 ### 14. Post-Processing, Cleanups & Colliders
+
+*(Post-Processing panel)*
 
 * **Single Wall Object**: Merges all wall and cap faces into a single object (`FireMaze_Walls`) to keep the outliner clean.
 * **Merge Objects**: Combines floors, walls, roofs, and caps into one single merged mesh (`FireMaze_Merged`).
@@ -159,7 +236,7 @@ Automatically place decorative objects on wall faces, dead-ends, and entrances/e
 FireMaze is structured as a standard Blender 4.2+ extension.
 
 1. Zip the `FireMaze/` subdirectory to create `FireMaze.zip` (or use the pre-packaged ZIP in this repository).
-2. In Blender, navigate to **Edit** → **Preferences** → **Get Extensions**.
+2. In Blender, navigate to **Edit** -> **Preferences** -> **Get Extensions**.
 3. Click the dropdown arrow (▼) in the top-right corner and choose **Install from Disk...**
 4. Select `FireMaze.zip` and click Install.
 5. Enable the extension. The interface will appear in the Sidebar (**N** key) under the **FireRat** tab.
@@ -202,12 +279,15 @@ When generated, the addon creates separate objects based on your merge configura
 ### Session & Image Management Panel
 
 A dedicated sidebar panel groups all session and image operations in one place:
-- **Session Management** section with side-by-side `Save Session...` / `Load Session...` buttons.
-- Conditional **crash recovery warning box** (shows `Restore Session` and `Discard` buttons) that only appears when a leftover autosave file exists from a previous session.
-- **Masking & Image Export** section with `Load Mask from Disk...`, mask selection, invert toggle, `Save PNG to Disk...`, and `Create Blender Image` buttons.
+
+* **Session Management** section with side-by-side `Save Session...` / `Load Session...` buttons.
+* Conditional **crash recovery warning box** (shows `Restore Session` and `Discard` buttons) that only appears when a leftover autosave file exists from a previous session.
+* **Masking & Image Export** section with `Load Mask from Disk...`, mask selection, invert toggle, `Save PNG to Disk...`, and `Create Blender Image` buttons.
 
 ---
 
 ## License
 
-This addon is distributed under the GNU General Public License v3.0. See `LICENSE` for details.
+This addon is distributed under the GNU General Public License v3.0-or-later. See [`LICENSE`](LICENSE) for details.
+
+Maintained by **FireRat666**. Issues and feedback are welcome via the GitHub issue tracker.
