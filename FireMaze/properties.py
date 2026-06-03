@@ -478,6 +478,11 @@ class FireMazeProperties(bpy.types.PropertyGroup):
         description="Whether the interactive maze editor is active",
         default=False,
     )
+    fire_maze_collection_name: bpy.props.StringProperty(
+        name="Collection Name",
+        description="The name of the collection containing the active maze",
+        default="",
+    )
 
 
 

@@ -22,7 +22,7 @@ PROP_NAMES = [
     "merge_objects", "remove_doubles", "generate_lightmap", "lightmap_method",
     "generate_colliders", "merge_colliders", "optimize_colliders_coplanar", "optimize_coplanar", "vertex_paint_enable",
     "vertex_paint_mode", "vertex_paint_intensity", "prop_torch_density", "prop_chest_density",
-    "mask_invert", "thin_wall_double_sided"
+    "mask_invert", "thin_wall_double_sided", "fire_maze_collection_name"
 ]
 
 POINTER_PROPS = [
@@ -34,6 +34,17 @@ POINTER_PROPS = [
 show_recovery_warning = True
 AUTOSAVE_PATH = os.path.join(tempfile.gettempdir(), "firemaze_autosave.json")
 has_autosave = os.path.exists(AUTOSAVE_PATH)
+
+def _get_active_maze_collection(context):
+    props = context.scene.fire_maze
+    col_name = getattr(props, "fire_maze_collection_name", "")
+    col = bpy.data.collections.get(col_name) if col_name else None
+    if not col:
+        for c in bpy.data.collections:
+            if "fire_maze_data" in c:
+                col = c
+                break
+    return col
 
 
 def is_valid_ref(ref):
@@ -103,11 +114,7 @@ def _serialize_session_data(context):
             pass
             
     maze_json = None
-    col = None
-    for c in bpy.data.collections:
-        if "fire_maze_data" in c:
-            col = c
-            break
+    col = _get_active_maze_collection(context)
     if col and "fire_maze_data" in col:
         maze_json = col["fire_maze_data"]
         
@@ -149,9 +156,15 @@ def _deserialize_session_data(context, data):
             setattr(props, name, ref)
                 
     if maze_json:
-        col = _find_or_create_maze_collection("FireMaze")
+        col_name = getattr(props, "fire_maze_collection_name", "FireMaze")
+        if not col_name:
+            col_name = "FireMaze"
+        col = bpy.data.collections.get(col_name)
+        if not col:
+            col = _find_or_create_maze_collection(col_name)
         if col.name not in context.scene.collection.children:
             context.scene.collection.children.link(col)
+        props.fire_maze_collection_name = col.name
         col["fire_maze_data"] = maze_json
         rebuild_maze_from_collection(context, col)
 
@@ -385,6 +398,7 @@ class MAZE_OT_generate(bpy.types.Operator):
         )
 
         col = _find_or_create_maze_collection("FireMaze")
+        props.fire_maze_collection_name = col.name
         
         # Serialize and store maze data on the collection
         col["fire_maze_data"] = json.dumps({
@@ -452,6 +466,7 @@ class MAZE_OT_clear(bpy.types.Operator):
                 except Exception:
                     pass
 
+        context.scene.fire_maze.fire_maze_collection_name = ""
         self.report({'INFO'}, f"Removed {count} maze object(s)")
         return {'FINISHED'}
 
@@ -483,11 +498,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
             context.workspace.status_text_set(None)
             props.is_editing = False
             delete_edit_helper()
-            col = None
-            for c in bpy.data.collections:
-                if "fire_maze_data" in c:
-                    col = c
-                    break
+            col = _get_active_maze_collection(context)
             if col:
                 rebuild_maze_from_collection(context, col)
             self.report({'INFO'}, "Interactive Edit finished (auto-exited)")
@@ -520,11 +531,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
             context.workspace.status_text_set(None)
             props.is_editing = False
             delete_edit_helper()
-            col = None
-            for c in bpy.data.collections:
-                if "fire_maze_data" in c:
-                    col = c
-                    break
+            col = _get_active_maze_collection(context)
             if col:
                 rebuild_maze_from_collection(context, col)
             self.report({'INFO'}, "Interactive Edit finished")
@@ -561,12 +568,15 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                 context.view_layer.update()
                 
                 if obj:
-                    col = None
-                    for c in bpy.data.collections:
-                        if "fire_maze_data" in c:
-                            if obj.name in c.objects:
-                                col = c
-                                break
+                    col_name = getattr(props, "fire_maze_collection_name", "")
+                    col = bpy.data.collections.get(col_name) if col_name else None
+                    if not col or (obj.name not in col.objects):
+                        col = None
+                        for c in bpy.data.collections:
+                            if "fire_maze_data" in c:
+                                if obj.name in c.objects:
+                                    col = c
+                                    break
                     
                     if not col:
                         col = context.collection
@@ -1233,21 +1243,13 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
             props.is_editing = False
             context.workspace.status_text_set(None)
             delete_edit_helper()
-            col = None
-            for c in bpy.data.collections:
-                if "fire_maze_data" in c:
-                    col = c
-                    break
+            col = _get_active_maze_collection(context)
             if col:
                 rebuild_maze_from_collection(context, col)
             self.report({'INFO'}, "Interactive Edit finished")
             return {'FINISHED'}
 
-        col = None
-        for c in bpy.data.collections:
-            if "fire_maze_data" in c:
-                col = c
-                break
+        col = _get_active_maze_collection(context)
                 
         if not col:
             self.report({'ERROR'}, "No generated maze found to edit. Please generate a maze first.")
@@ -1262,11 +1264,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
 
 
 def _generate_maze_image_datablock(context, img_name="FireMaze_Layout"):
-    col = None
-    for c in bpy.data.collections:
-        if "fire_maze_data" in c:
-            col = c
-            break
+    col = _get_active_maze_collection(context)
     if not col or "fire_maze_data" not in col:
         return None, "No active maze layout found. Please generate a maze first."
 
