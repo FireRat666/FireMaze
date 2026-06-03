@@ -9,6 +9,16 @@ from .mesh_builder import build_maze_objects
 
 show_recovery_warning = True
 
+def is_valid_ref(ref):
+    """Check if a Blender RNA pointer is valid and has not been deleted."""
+    if ref is None:
+        return False
+    try:
+        _ = ref.name
+        return True
+    except ReferenceError:
+        return False
+
 def _find_or_create_maze_collection(base_name):
     col = bpy.data.collections.get(base_name)
     if col:
@@ -78,9 +88,12 @@ def _serialize_session_data(context):
         "prop_torch_mesh", "prop_chest_mesh", "prop_door_mesh", "mask_image"
     ]
     for name in pointer_props:
-        ref = getattr(props, name, None)
-        if ref:
-            props_data[name] = ref.name
+        try:
+            ref = getattr(props, name, None)
+            if ref and hasattr(ref, "name") and ref.name:
+                props_data[name] = ref.name
+        except (ReferenceError, AttributeError):
+            pass
             
     maze_json = None
     col = bpy.data.collections.get("FireMaze")
@@ -197,15 +210,15 @@ def rebuild_maze_from_collection(context, col):
 
     # Determine number of meshes in collections
     num_wall_meshes = 0
-    if props.custom_wall_collection:
+    if is_valid_ref(props.custom_wall_collection):
         num_wall_meshes = len([o for o in props.custom_wall_collection.objects if o.type == 'MESH'])
 
     num_floor_meshes = 0
-    if props.custom_floor_collection:
+    if is_valid_ref(props.custom_floor_collection):
         num_floor_meshes = len([o for o in props.custom_floor_collection.objects if o.type == 'MESH'])
 
     num_roof_meshes = 0
-    if props.custom_roof_collection:
+    if is_valid_ref(props.custom_roof_collection):
         num_roof_meshes = len([o for o in props.custom_roof_collection.objects if o.type == 'MESH'])
     
     grid_type = data_dict.get('grid_type')
@@ -337,16 +350,18 @@ class MAZE_OT_generate(bpy.types.Operator):
 
         # Determine number of meshes in collections
         num_wall_meshes = 0
-        if props.custom_wall_collection:
+        if is_valid_ref(props.custom_wall_collection):
             num_wall_meshes = len([o for o in props.custom_wall_collection.objects if o.type == 'MESH'])
 
         num_floor_meshes = 0
-        if props.custom_floor_collection:
+        if is_valid_ref(props.custom_floor_collection):
             num_floor_meshes = len([o for o in props.custom_floor_collection.objects if o.type == 'MESH'])
 
         num_roof_meshes = 0
-        if props.custom_roof_collection:
+        if is_valid_ref(props.custom_roof_collection):
             num_roof_meshes = len([o for o in props.custom_roof_collection.objects if o.type == 'MESH'])
+
+        mask_image = props.mask_image if is_valid_ref(props.mask_image) else None
 
         maze_data = generate_maze(
             width=props.width,
@@ -369,7 +384,7 @@ class MAZE_OT_generate(bpy.types.Operator):
             num_floor_meshes=num_floor_meshes,
             num_roof_meshes=num_roof_meshes,
             wall_mode=props.wall_mode,
-            mask_image=props.mask_image,
+            mask_image=mask_image,
             mask_invert=props.mask_invert,
             grid_type=props.grid_type,
             polar_rings=props.polar_rings,

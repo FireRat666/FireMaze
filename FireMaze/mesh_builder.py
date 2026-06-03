@@ -6,6 +6,18 @@ from collections import deque
 from mathutils import Matrix, Vector
 
 
+def is_valid_ref(ref):
+    """Check if a Blender RNA pointer is valid and has not been deleted."""
+    if ref is None:
+        return False
+    try:
+        _ = ref.name
+        return True
+    except ReferenceError:
+        return False
+
+_current_bmesh_cache = None
+
 def _get_wall_segments(maze_data):
     segments = set()
     for y in range(maze_data.depth):
@@ -72,7 +84,7 @@ def _merge_bmesh_geometries(src_bm, dst_bm):
     dst_bm.from_mesh(temp_mesh)
     bpy.data.meshes.remove(temp_mesh)
 
-def _add_mesh_at(bm, src_mesh, matrix, uv_layer, final_materials_list=None, temp_mesh=None):
+def _add_mesh_at(bm, src_mesh, matrix, uv_layer, final_materials_list=None, temp_mesh=None, bmesh_cache=None):
     # Map the source mesh's materials to the final combined materials list
     material_map = []
     if final_materials_list is not None and src_mesh:
@@ -84,8 +96,16 @@ def _add_mesh_at(bm, src_mesh, matrix, uv_layer, final_materials_list=None, temp
             else:
                 material_map.append(0)
 
-    temp_bm = bmesh.new()
-    temp_bm.from_mesh(src_mesh)
+    global _current_bmesh_cache
+    cache = bmesh_cache if bmesh_cache is not None else _current_bmesh_cache
+    if cache is not None and src_mesh in cache:
+        temp_bm = cache[src_mesh].copy()
+    else:
+        temp_bm = bmesh.new()
+        temp_bm.from_mesh(src_mesh)
+        if cache is not None:
+            cache[src_mesh] = temp_bm.copy()
+
     bmesh.ops.transform(temp_bm, matrix=matrix, verts=temp_bm.verts)
 
     if final_materials_list is not None and material_map:
@@ -474,19 +494,26 @@ def _merge_maze_objects(objects, context, name="FireMaze_Merged"):
         objects[0].name = name
         return objects[0]
 
-    if bpy.ops.object.mode_set.poll():
-        bpy.ops.object.mode_set(mode='OBJECT')
+    try:
+        if bpy.ops.object.mode_set.poll():
+            bpy.ops.object.mode_set(mode='OBJECT')
 
-    bpy.ops.object.select_all(action='DESELECT')
-    for obj in objects:
-        obj.select_set(True)
+        bpy.ops.object.select_all(action='DESELECT')
+        for obj in objects:
+            try:
+                obj.select_set(True)
+            except Exception:
+                pass
 
-    context.view_layer.objects.active = objects[0]
-    bpy.ops.object.join()
-    
-    merged_obj = context.view_layer.objects.active
-    merged_obj.name = name
-    return merged_obj
+        context.view_layer.objects.active = objects[0]
+        bpy.ops.object.join()
+        
+        merged_obj = context.view_layer.objects.active
+        merged_obj.name = name
+        return merged_obj
+    except Exception as e:
+        print(f"FireMaze: Object merging failed: {e}")
+        return objects[0]
 
 def _optimize_coplanar_on_obj(obj):
     if not obj or obj.type != 'MESH':
@@ -844,8 +871,11 @@ def _apply_vertex_painting_on_obj(obj, props, maze_data):
     bm.free()
 
 def _spawn_decorations(props, maze_data, context, parent_collection):
-    has_props = (props.prop_torch_mesh or props.prop_chest_mesh or props.prop_door_mesh)
-    if not has_props:
+    torch_mesh = props.prop_torch_mesh if is_valid_ref(props.prop_torch_mesh) else None
+    chest_mesh = props.prop_chest_mesh if is_valid_ref(props.prop_chest_mesh) else None
+    door_mesh = props.prop_door_mesh if is_valid_ref(props.prop_door_mesh) else None
+
+    if not (torch_mesh or chest_mesh or door_mesh):
         return
  
     # Create or get props collection
@@ -875,8 +905,8 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
         ring_sectors = maze_data.ring_sectors
         
         # 1. Torches
-        if props.prop_torch_mesh:
-            torch_src = props.prop_torch_mesh
+        if torch_mesh:
+            torch_src = torch_mesh
             density = props.prop_torch_density
             offset = 0.02 * ts
             
@@ -905,7 +935,7 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                         pos_y = (r_in + offset) * math.sin(theta_mid)
                         pos = (pos_x, pos_y, 0.6 * wh)
                         place_prop(torch_src, pos, theta_mid)
-
+ 
                     # Outer boundary torch
                     if r == rings - 1:
                         is_entrance = (theta == 0)
@@ -921,10 +951,10 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                             pos_y = (r_out - offset) * math.sin(theta_mid)
                             pos = (pos_x, pos_y, 0.6 * wh)
                             place_prop(torch_src, pos, theta_mid + math.pi)
-
+ 
         # 2. Chests
-        if props.prop_chest_mesh:
-            chest_src = props.prop_chest_mesh
+        if chest_mesh:
+            chest_src = chest_mesh
             density = props.prop_chest_density
             chest_offset = 0.15 * ts
             
@@ -993,8 +1023,8 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                                 place_prop(chest_src, (pos_x, pos_y, 0.0), theta_mid + math.pi / 2)
 
         # 3. Doors
-        if props.prop_door_mesh:
-            door_src = props.prop_door_mesh
+        if door_mesh:
+            door_src = door_mesh
             
             if maze_data.entrance:
                 er, etheta, eside = maze_data.entrance
@@ -1021,8 +1051,8 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
         return
 
     # 1. Torches
-    if props.prop_torch_mesh:
-        torch_src = props.prop_torch_mesh
+    if torch_mesh:
+        torch_src = torch_mesh
         density = props.prop_torch_density
         offset = 0.02 * ts
         
@@ -1070,8 +1100,8 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                                 place_prop(torch_src, pos, -math.pi / 2)
 
     # 2. Chests (Dead-Ends)
-    if props.prop_chest_mesh:
-        chest_src = props.prop_chest_mesh
+    if chest_mesh:
+        chest_src = chest_mesh
         density = props.prop_chest_density
         chest_offset = 0.15 * ts
         
@@ -1115,8 +1145,8 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                         place_prop(chest_src, pos, -math.pi / 2)
 
     # 3. Doors (Entrance / Exits)
-    if props.prop_door_mesh:
-        door_src = props.prop_door_mesh
+    if door_mesh:
+        door_src = door_mesh
         entries = []
         if maze_data.entrance:
             entries.append(maze_data.entrance)
@@ -1606,7 +1636,7 @@ def _add_mesh_polar_center(bm, src_mesh, mat_offset, uv_layer, final_materials_l
     _merge_bmesh_geometries(temp_bm, bm)
     temp_bm.free()
 
-def _add_mesh_polar_bend_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, scale_angular=True, cuts=4, reverse_faces=True, temp_mesh=None):
+def _add_mesh_polar_bend_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, scale_angular=True, cuts=4, reverse_faces=True, temp_mesh=None, bmesh_cache=None):
     material_map = []
     if final_materials_list is not None and src_mesh:
         for mat in src_mesh.materials:
@@ -1618,8 +1648,15 @@ def _add_mesh_polar_bend_with_matrix(bm, src_mesh, mat_combined, uv_layer, final
                 material_map.append(0)
 
     # 1. Create temp BMesh, load, transform, subdivide, warp, flip normals, map materials
-    temp_bm = bmesh.new()
-    temp_bm.from_mesh(src_mesh)
+    global _current_bmesh_cache
+    cache = bmesh_cache if bmesh_cache is not None else _current_bmesh_cache
+    if cache is not None and src_mesh in cache:
+        temp_bm = cache[src_mesh].copy()
+    else:
+        temp_bm = bmesh.new()
+        temp_bm.from_mesh(src_mesh)
+        if cache is not None:
+            cache[src_mesh] = temp_bm.copy()
 
     bmesh.ops.transform(temp_bm, matrix=mat_combined, verts=temp_bm.verts)
 
@@ -1669,13 +1706,13 @@ def _add_mesh_polar_bend_with_matrix(bm, src_mesh, mat_combined, uv_layer, final
     temp_bm.free()
 
 
-def _add_mesh_polar_bend(bm, src_mesh, mat_offset, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, centered, cuts=4, reverse_faces=True, temp_mesh=None):
+def _add_mesh_polar_bend(bm, src_mesh, mat_offset, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, centered, cuts=4, reverse_faces=True, temp_mesh=None, bmesh_cache=None):
     cent = Matrix.Translation(Vector((-ts / 2, -ts / 2, 0))) if not centered else Matrix.Identity(4)
     mat_combined = mat_offset @ cent
-    _add_mesh_polar_bend_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, scale_angular=True, cuts=cuts, reverse_faces=reverse_faces, temp_mesh=temp_mesh)
+    _add_mesh_polar_bend_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, scale_angular=True, cuts=cuts, reverse_faces=reverse_faces, temp_mesh=temp_mesh, bmesh_cache=bmesh_cache)
 
 
-def _add_wall_polar_bend(bm, src_mesh, mat_wall_offset, uv_layer, final_materials_list, wall_type, r, theta, Nr, ts, z_off, centered, cuts=4, flip_out=False, reverse_faces=True, thin_wall_offset=0.0, temp_mesh=None):
+def _add_wall_polar_bend(bm, src_mesh, mat_wall_offset, uv_layer, final_materials_list, wall_type, r, theta, Nr, ts, z_off, centered, cuts=4, flip_out=False, reverse_faces=True, thin_wall_offset=0.0, temp_mesh=None, bmesh_cache=None):
     cent = Matrix.Translation(Vector((-ts / 2, -ts / 2, 0))) if not centered else Matrix.Identity(4)
     alpha_r = 2 * math.pi / Nr
     theta_mid = (theta + 0.5) * alpha_r
@@ -1694,7 +1731,7 @@ def _add_wall_polar_bend(bm, src_mesh, mat_wall_offset, uv_layer, final_material
         else:  # CCW
             mat_local = Matrix.Rotation(math.radians(180), 4, 'Z') @ Matrix.Rotation(math.radians(90), 4, 'X')
         mat_combined = mat_base @ mat_wall_offset @ mat_local @ cent
-        _add_mesh_at(bm, src_mesh, mat_combined, uv_layer, final_materials_list, temp_mesh=temp_mesh)
+        _add_mesh_at(bm, src_mesh, mat_combined, uv_layer, final_materials_list, temp_mesh=temp_mesh, bmesh_cache=bmesh_cache)
     else:
         y_loc = -ts/2 + thin_wall_offset if wall_type == 'IN' else ts/2 + thin_wall_offset
         if flip_out:
@@ -1702,10 +1739,10 @@ def _add_wall_polar_bend(bm, src_mesh, mat_wall_offset, uv_layer, final_material
         else:
             mat_place = Matrix.Translation(Vector((0, y_loc, 0))) @ Matrix.Rotation(math.radians(90), 4, 'X') @ Matrix.Scale(-1, 4, Vector((1, 0, 0)))
         mat_combined = mat_place @ mat_wall_offset @ cent
-        _add_mesh_polar_bend_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_lifted, scale_angular=True, cuts=cuts, reverse_faces=False, temp_mesh=temp_mesh)
+        _add_mesh_polar_bend_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_lifted, scale_angular=True, cuts=cuts, reverse_faces=False, temp_mesh=temp_mesh, bmesh_cache=bmesh_cache)
 
 
-def _add_mesh_polar_trapezoid_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, scale_angular=True, reverse_faces=True, temp_mesh=None):
+def _add_mesh_polar_trapezoid_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, scale_angular=True, reverse_faces=True, temp_mesh=None, bmesh_cache=None):
     material_map = []
     if final_materials_list is not None and src_mesh:
         for mat in src_mesh.materials:
@@ -1717,8 +1754,15 @@ def _add_mesh_polar_trapezoid_with_matrix(bm, src_mesh, mat_combined, uv_layer, 
                 material_map.append(0)
 
     # 1. Create temp BMesh, load, transform, warp, flip normals, map materials
-    temp_bm = bmesh.new()
-    temp_bm.from_mesh(src_mesh)
+    global _current_bmesh_cache
+    cache = bmesh_cache if bmesh_cache is not None else _current_bmesh_cache
+    if cache is not None and src_mesh in cache:
+        temp_bm = cache[src_mesh].copy()
+    else:
+        temp_bm = bmesh.new()
+        temp_bm.from_mesh(src_mesh)
+        if cache is not None:
+            cache[src_mesh] = temp_bm.copy()
 
     bmesh.ops.transform(temp_bm, matrix=mat_combined, verts=temp_bm.verts)
 
@@ -1781,13 +1825,13 @@ def _add_mesh_polar_trapezoid_with_matrix(bm, src_mesh, mat_combined, uv_layer, 
     temp_bm.free()
 
 
-def _add_mesh_polar_trapezoid(bm, src_mesh, mat_offset, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, centered, reverse_faces=True, temp_mesh=None):
+def _add_mesh_polar_trapezoid(bm, src_mesh, mat_offset, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, centered, reverse_faces=True, temp_mesh=None, bmesh_cache=None):
     cent = Matrix.Translation(Vector((-ts / 2, -ts / 2, 0))) if not centered else Matrix.Identity(4)
     mat_combined = mat_offset @ cent
-    _add_mesh_polar_trapezoid_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, scale_angular=True, reverse_faces=reverse_faces, temp_mesh=temp_mesh)
+    _add_mesh_polar_trapezoid_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_off, scale_angular=True, reverse_faces=reverse_faces, temp_mesh=temp_mesh, bmesh_cache=bmesh_cache)
 
 
-def _add_wall_polar_trapezoid(bm, src_mesh, mat_wall_offset, uv_layer, final_materials_list, wall_type, r, theta, Nr, ts, z_off, centered, flip_out=False, reverse_faces=True, thin_wall_offset=0.0, temp_mesh=None):
+def _add_wall_polar_trapezoid(bm, src_mesh, mat_wall_offset, uv_layer, final_materials_list, wall_type, r, theta, Nr, ts, z_off, centered, flip_out=False, reverse_faces=True, thin_wall_offset=0.0, temp_mesh=None, bmesh_cache=None):
     cent = Matrix.Translation(Vector((-ts / 2, -ts / 2, 0))) if not centered else Matrix.Identity(4)
     alpha_r = 2 * math.pi / Nr
     theta_mid = (theta + 0.5) * alpha_r
@@ -1805,7 +1849,7 @@ def _add_wall_polar_trapezoid(bm, src_mesh, mat_wall_offset, uv_layer, final_mat
         else:  # CCW
             mat_local = Matrix.Rotation(math.radians(180), 4, 'Z') @ Matrix.Rotation(math.radians(90), 4, 'X')
         mat_combined = mat_base @ mat_wall_offset @ mat_local @ cent
-        _add_mesh_at(bm, src_mesh, mat_combined, uv_layer, final_materials_list, temp_mesh=temp_mesh)
+        _add_mesh_at(bm, src_mesh, mat_combined, uv_layer, final_materials_list, temp_mesh=temp_mesh, bmesh_cache=bmesh_cache)
     else:
         y_loc = -ts/2 + thin_wall_offset if wall_type == 'IN' else ts/2 + thin_wall_offset
         if flip_out:
@@ -1813,9 +1857,23 @@ def _add_wall_polar_trapezoid(bm, src_mesh, mat_wall_offset, uv_layer, final_mat
         else:
             mat_place = Matrix.Translation(Vector((0, y_loc, 0))) @ Matrix.Rotation(math.radians(90), 4, 'X') @ Matrix.Scale(-1, 4, Vector((1, 0, 0)))
         mat_combined = mat_place @ mat_wall_offset @ cent
-        _add_mesh_polar_trapezoid_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_lifted, scale_angular=True, reverse_faces=False, temp_mesh=temp_mesh)
+        _add_mesh_polar_trapezoid_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_lifted, scale_angular=True, reverse_faces=False, temp_mesh=temp_mesh, bmesh_cache=bmesh_cache)
 
 def _build_polar_maze_objects(props, maze_data, context, collection=None, force_simple=False, name_suffix=""):
+    global _current_bmesh_cache
+    _current_bmesh_cache = {}
+    try:
+        return _build_polar_maze_objects_impl(props, maze_data, context, collection, force_simple, name_suffix)
+    finally:
+        if _current_bmesh_cache:
+            for bm in _current_bmesh_cache.values():
+                try:
+                    bm.free()
+                except Exception:
+                    pass
+        _current_bmesh_cache = None
+
+def _build_polar_maze_objects_impl(props, maze_data, context, collection=None, force_simple=False, name_suffix=""):
 
     ts = props.tile_size
     tiled = props.wall_height_tiled
@@ -1833,23 +1891,23 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
         custom_roof = None
         centered = props.tiles_centered
     else:
-        custom_floor = props.custom_floor_mesh
-        custom_wall = props.custom_wall_mesh
-        custom_roof = props.custom_roof_mesh
+        custom_floor = props.custom_floor_mesh if is_valid_ref(props.custom_floor_mesh) else None
+        custom_wall = props.custom_wall_mesh if is_valid_ref(props.custom_wall_mesh) else None
+        custom_roof = props.custom_roof_mesh if is_valid_ref(props.custom_roof_mesh) else None
         centered = props.tiles_centered
 
     mat_floor_offset = _get_offset_matrix(props.floor_translate, props.floor_rotate, props.floor_scale)
     mat_wall_offset = _get_offset_matrix(props.wall_translate, props.wall_rotate, props.wall_scale)
 
     wall_meshes_list = []
-    if not force_simple and props.custom_wall_collection:
-        wall_meshes_list = [obj.data for obj in props.custom_wall_collection.objects if obj.type == 'MESH']
+    if not force_simple and is_valid_ref(props.custom_wall_collection):
+        wall_meshes_list = [obj.data for obj in props.custom_wall_collection.objects if obj.type == 'MESH' and obj.data]
     floor_meshes_list = []
-    if not force_simple and props.custom_floor_collection:
-        floor_meshes_list = [obj.data for obj in props.custom_floor_collection.objects if obj.type == 'MESH']
+    if not force_simple and is_valid_ref(props.custom_floor_collection):
+        floor_meshes_list = [obj.data for obj in props.custom_floor_collection.objects if obj.type == 'MESH' and obj.data]
     roof_meshes_list = []
-    if not force_simple and props.custom_roof_collection:
-        roof_meshes_list = [obj.data for obj in props.custom_roof_collection.objects if obj.type == 'MESH']
+    if not force_simple and is_valid_ref(props.custom_roof_collection):
+        roof_meshes_list = [obj.data for obj in props.custom_roof_collection.objects if obj.type == 'MESH' and obj.data]
 
     if collection is None:
         col = bpy.data.collections.new("FireMaze")
@@ -2428,6 +2486,20 @@ def _build_polar_maze_objects(props, maze_data, context, collection=None, force_
     return col
 
 def build_maze_objects(props, maze_data, context, collection=None, force_simple=False, name_suffix=""):
+    global _current_bmesh_cache
+    _current_bmesh_cache = {}
+    try:
+        return build_maze_objects_impl(props, maze_data, context, collection, force_simple, name_suffix)
+    finally:
+        if _current_bmesh_cache:
+            for bm in _current_bmesh_cache.values():
+                try:
+                    bm.free()
+                except Exception:
+                    pass
+        _current_bmesh_cache = None
+
+def build_maze_objects_impl(props, maze_data, context, collection=None, force_simple=False, name_suffix=""):
     if maze_data.grid_type == 'polar':
         return _build_polar_maze_objects(props, maze_data, context, collection, force_simple, name_suffix)
 
@@ -2449,9 +2521,9 @@ def build_maze_objects(props, maze_data, context, collection=None, force_simple=
         custom_roof = None
         centered = props.tiles_centered
     else:
-        custom_floor = props.custom_floor_mesh
-        custom_wall = props.custom_wall_mesh
-        custom_roof = props.custom_roof_mesh
+        custom_floor = props.custom_floor_mesh if is_valid_ref(props.custom_floor_mesh) else None
+        custom_wall = props.custom_wall_mesh if is_valid_ref(props.custom_wall_mesh) else None
+        custom_roof = props.custom_roof_mesh if is_valid_ref(props.custom_roof_mesh) else None
         centered = props.tiles_centered
 
     # Compute offset matrices
@@ -2460,18 +2532,18 @@ def build_maze_objects(props, maze_data, context, collection=None, force_simple=
 
     # Pick wall meshes randomly from custom_wall_collection if defined
     wall_meshes_list = []
-    if not force_simple and props.custom_wall_collection:
-        wall_meshes_list = [obj.data for obj in props.custom_wall_collection.objects if obj.type == 'MESH']
+    if not force_simple and is_valid_ref(props.custom_wall_collection):
+        wall_meshes_list = [obj.data for obj in props.custom_wall_collection.objects if obj.type == 'MESH' and obj.data]
 
     # Pick floor meshes randomly from custom_floor_collection if defined
     floor_meshes_list = []
-    if not force_simple and props.custom_floor_collection:
-        floor_meshes_list = [obj.data for obj in props.custom_floor_collection.objects if obj.type == 'MESH']
+    if not force_simple and is_valid_ref(props.custom_floor_collection):
+        floor_meshes_list = [obj.data for obj in props.custom_floor_collection.objects if obj.type == 'MESH' and obj.data]
 
     # Pick roof meshes randomly from custom_roof_collection if defined
     roof_meshes_list = []
-    if not force_simple and props.custom_roof_collection:
-        roof_meshes_list = [obj.data for obj in props.custom_roof_collection.objects if obj.type == 'MESH']
+    if not force_simple and is_valid_ref(props.custom_roof_collection):
+        roof_meshes_list = [obj.data for obj in props.custom_roof_collection.objects if obj.type == 'MESH' and obj.data]
 
     if collection is None:
         col = bpy.data.collections.new("FireMaze")
