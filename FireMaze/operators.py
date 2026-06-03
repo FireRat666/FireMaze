@@ -390,6 +390,12 @@ class MAZE_OT_generate(bpy.types.Operator):
 
         mask_image = props.mask_image if is_valid_ref(props.mask_image) else None
 
+        effective_rings = props.polar_rings
+        if props.grid_type == 'polar' and props.wall_mode == 'cube' and effective_rings % 2 == 1:
+            effective_rings += 1
+            self.report({'WARNING'}, f"Rings must be even when wall_mode='cube'; "
+                                     f"increased from {props.polar_rings} to {effective_rings}")
+
         maze_data = generate_maze(
             width=props.width,
             depth=props.depth,
@@ -414,7 +420,7 @@ class MAZE_OT_generate(bpy.types.Operator):
             mask_image=mask_image,
             mask_invert=props.mask_invert,
             grid_type=props.grid_type,
-            polar_rings=props.polar_rings,
+            polar_rings=effective_rings,
         )
 
         col = _find_or_create_maze_collection("FireMaze")
@@ -447,7 +453,7 @@ class MAZE_OT_generate(bpy.types.Operator):
         if props.grid_type == 'rect':
             self.report({'INFO'}, f"Maze generated ({props.width}x{props.depth})")
         else:
-            self.report({'INFO'}, f"Polar maze generated ({props.polar_rings} rings)")
+            self.report({'INFO'}, f"Polar maze generated ({effective_rings} rings)")
         return {'FINISHED'}
 
 class MAZE_OT_clear(bpy.types.Operator):

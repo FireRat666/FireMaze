@@ -803,7 +803,7 @@ def generate_maze(
             entrance_list = [item for item in entrance_list if not cells[item[1]][item[0]][0]]
             exit_list = [item for item in exit_list if not cells[item[1]][item[0]][0]]
             maze_data.entrance = entrance_list[0] if entrance_list else (1, 1, 'S')
-            maze_data.exit = exit_list
+            maze_data.exits = exit_list
         
         maze_data.guide_path = find_shortest_path(maze_data, wall_mode='cube')
         return maze_data
@@ -1498,7 +1498,7 @@ def generate_maze(
         entrance_list = [item for item in entrance_list if not blocked[item[1]][item[0]]]
         exit_list = [item for item in exit_list if not blocked[item[1]][item[0]]]
         maze_data.entrance = entrance_list[0] if entrance_list else (0, 0, 'S')
-        maze_data.exit = exit_list
+        maze_data.exits = exit_list
                         
     maze_data.guide_path = find_shortest_path(maze_data, wall_mode='thin')
     return maze_data
