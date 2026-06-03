@@ -63,6 +63,32 @@ class FireMazeProperties(bpy.types.PropertyGroup):
              'Walls are full tile-sized cubes centered on grid lines, floor tiles remain full size'),
         ],
     )
+    grid_type: bpy.props.EnumProperty(
+        name="Grid Type",
+        description="Layout shape of the maze",
+        default='rect',
+        items=[
+            ('rect', 'Rectangular', 'Standard rectangular grid maze'),
+            ('polar', 'Polar (Circular)', 'Circular maze generated in concentric rings'),
+        ],
+    )
+    polar_rings: bpy.props.IntProperty(
+        name="Rings",
+        description="Number of concentric rings in the polar maze",
+        default=5,
+        min=2,
+        max=100,
+    )
+    polar_custom_alignment: bpy.props.EnumProperty(
+        name="Polar Custom Alignment",
+        description="How custom tiles are aligned to the wedge-shaped polar cells",
+        default='bend',
+        items=[
+            ('procedural', 'Procedural Only', 'Use procedurally generated curved meshes, ignoring custom tiles'),
+            ('trapezoid', 'Trapezoidal Scaling', 'Scale/stretch custom tiles to fit cells (straight walls, segmented look)'),
+            ('bend', 'Polar Bending (Warp)', 'Dynamically bend and warp custom tile vertices along the circular arcs'),
+        ],
+    )
     mode: bpy.props.EnumProperty(
         name="Mode",
         description="Maze completion goal",
@@ -97,25 +123,16 @@ class FireMazeProperties(bpy.types.PropertyGroup):
         description="Optional custom mesh for floor tiles",
         type=bpy.types.Mesh,
     )
-    custom_wall_north: bpy.props.PointerProperty(
-        name="Wall Mesh (+Y)",
-        description="Optional custom mesh for north-facing (+Y) wall faces",
+    custom_wall_mesh: bpy.props.PointerProperty(
+        name="Wall Mesh",
+        description="Optional custom mesh for wall segments",
         type=bpy.types.Mesh,
     )
-    custom_wall_south: bpy.props.PointerProperty(
-        name="Wall Mesh (-Y)",
-        description="Optional custom mesh for south-facing (-Y) wall faces",
-        type=bpy.types.Mesh,
-    )
-    custom_wall_east: bpy.props.PointerProperty(
-        name="Wall Mesh (+X)",
-        description="Optional custom mesh for east-facing (+X) wall faces",
-        type=bpy.types.Mesh,
-    )
-    custom_wall_west: bpy.props.PointerProperty(
-        name="Wall Mesh (-X)",
-        description="Optional custom mesh for west-facing (-X) wall faces",
-        type=bpy.types.Mesh,
+    thin_wall_double_sided: bpy.props.BoolProperty(
+        name="Double-Sided Thin Walls",
+        description="Duplicate single-sided custom wall tiles on both sides of grid lines to create thickness. "
+                    "Disable to use a single centered custom tile with built-in thickness",
+        default=True,
     )
     custom_roof_mesh: bpy.props.PointerProperty(
         name="Roof Mesh",
@@ -382,10 +399,89 @@ class FireMazeProperties(bpy.types.PropertyGroup):
         description="Merge all generated collider meshes into a single object named FireMaze_Collider",
         default=False,
     )
+    optimize_colliders_coplanar: bpy.props.BoolProperty(
+        name="Optimize Colliders",
+        description="Simplify collider geometry by dissolving coplanar faces to reduce polygon count",
+        default=False,
+    )
+    optimize_coplanar: bpy.props.BoolProperty(
+        name="Optimize Geometry (Dissolve Planar)",
+        description="Simplify geometry by dissolving coplanar faces (may stretch tiled textures)",
+        default=False,
+    )
+    vertex_paint_enable: bpy.props.BoolProperty(
+        name="Enable Vertex Painting",
+        description="Procedurally paint vertex colors for shading or blending",
+        default=False,
+    )
+    vertex_paint_mode: bpy.props.EnumProperty(
+        name="Vertex Paint Mode",
+        description="How vertex colors are assigned",
+        default='ao',
+        items=[
+            ('ao', "Ambient Occlusion", "Procedural shadows in corners and seams"),
+            ('blend', "Texture Blend Weights", "R=Moss, G=Cracks, B=Wetness, A=Soot"),
+            ('path', "Path Highlight", "Highlight the correct path in green"),
+            ('distance', "Distance Gradient", "Black-to-white gradient from entrance to exit"),
+        ],
+    )
+    vertex_paint_intensity: bpy.props.FloatProperty(
+        name="Paint Intensity",
+        description="Intensity/opacity scale of the vertex paint effect",
+        default=1.0,
+        min=0.0,
+        max=1.0,
+    )
+    # Prop spawner settings
+    prop_torch_mesh: bpy.props.PointerProperty(
+        name="Torch Object",
+        description="Optional object (mesh, light, or group) to spawn as a wall torch",
+        type=bpy.types.Object,
+    )
+    prop_chest_mesh: bpy.props.PointerProperty(
+        name="Chest Object",
+        description="Optional object to spawn in dead-ends/corners",
+        type=bpy.types.Object,
+    )
+    prop_door_mesh: bpy.props.PointerProperty(
+        name="Door Object",
+        description="Optional object to spawn at room transitions or exits",
+        type=bpy.types.Object,
+    )
+    prop_torch_density: bpy.props.FloatProperty(
+        name="Torch Density",
+        description="Probability of placing a torch on any valid wall face",
+        default=0.2,
+        min=0.0,
+        max=1.0,
+    )
+    prop_chest_density: bpy.props.FloatProperty(
+        name="Chest Density",
+        description="Probability of placing a chest in any dead-end cell",
+        default=0.5,
+        min=0.0,
+        max=1.0,
+    )
+    # Image masking settings
+    mask_image: bpy.props.PointerProperty(
+        name="Mask Image",
+        description="Black-and-white image to mask the maze shape (White = Walkable, Black = Blocked/Wall)",
+        type=bpy.types.Image,
+    )
+    mask_invert: bpy.props.BoolProperty(
+        name="Invert Mask",
+        description="Invert mask colors (Black = Walkable, White = Blocked/Wall)",
+        default=False,
+    )
     is_editing: bpy.props.BoolProperty(
         name="Is Editing",
         description="Whether the interactive maze editor is active",
         default=False,
+    )
+    fire_maze_collection_name: bpy.props.StringProperty(
+        name="Collection Name",
+        description="The name of the collection containing the active maze",
+        default="",
     )
 
 

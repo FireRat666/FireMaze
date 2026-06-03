@@ -1,4 +1,5 @@
 import random
+import math
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional
 from collections import deque
@@ -12,6 +13,9 @@ class MazeData:
     exits: List[Tuple[int, int, str]] = field(default_factory=list)
     center: Tuple[int, int] = (0, 0)
     guide_path: List[Tuple[int, int]] = field(default_factory=list)
+    grid_type: str = 'rect'
+    polar_rings: int = 0
+    ring_sectors: List[int] = field(default_factory=list)
 
 
 class UnionFind:
@@ -36,6 +40,45 @@ class UnionFind:
         return False
 
 
+def _get_image_mask_data(mask_image, invert, width, depth):
+    blocked = [[False] * width for _ in range(depth)]
+    if not mask_image:
+        return blocked
+
+    img_w, img_h = mask_image.size[0], mask_image.size[1]
+    pixels = list(mask_image.pixels)
+    if not pixels:
+        return blocked
+
+    for y in range(depth):
+        for x in range(width):
+            px = int(((x + 0.5) / width) * img_w)
+            py = int(((y + 0.5) / depth) * img_h)
+            px = max(0, min(img_w - 1, px))
+            py = max(0, min(img_h - 1, py))
+            
+            idx = (py * img_w + px) * 4
+            if idx + 2 < len(pixels):
+                r = pixels[idx]
+                g = pixels[idx + 1]
+                b = pixels[idx + 2]
+                brightness = 0.299 * r + 0.587 * g + 0.114 * b
+                if invert:
+                    brightness = 1.0 - brightness
+                if brightness < 0.5:
+                    blocked[y][x] = True
+
+    return blocked
+
+
+def _get_start_cell(blocked, w, h):
+    walkable = [(x, y) for y in range(h) for x in range(w) if not blocked[y][x]]
+    if walkable:
+        return random.choice(walkable)
+    return (random.randrange(w), random.randrange(h))
+
+
+
 def generate_maze(
     width: int,
     depth: int,
@@ -57,7 +100,23 @@ def generate_maze(
     num_wall_meshes: int = 0,
     num_floor_meshes: int = 0,
     num_roof_meshes: int = 0,
+    mask_image = None,
+    mask_invert: bool = False,
+    grid_type: str = 'rect',
+    polar_rings: int = 5,
 ) -> MazeData:
+    if grid_type == 'polar':
+        return generate_polar_maze(
+            rings=polar_rings,
+            seed=seed,
+            algorithm=algorithm,
+            mode=mode,
+            wall_mode=wall_mode,
+            num_wall_meshes=num_wall_meshes,
+            num_floor_meshes=num_floor_meshes,
+            num_roof_meshes=num_roof_meshes,
+        )
+
     if seed:
         random.seed(seed)
 
@@ -71,6 +130,7 @@ def generate_maze(
         # Initialize all cells to walls (True)
         # cells[y][x] = [is_wall, wall_n_index, wall_s_index, wall_e_index, wall_w_index, floor_index, roof_index]
         cells = [[[True, -1, -1, -1, -1, -1, -1] for _ in range(width)] for _ in range(depth)]
+        blocked = _get_image_mask_data(mask_image, mask_invert, sub_w, sub_h)
 
         # Determine Rooms on the W x H sub-grid
         rooms = []
@@ -125,12 +185,11 @@ def generate_maze(
 
         # Run maze carving algorithms directly on the path cells
         if algorithm == 'dfs':
-            visited = [[False] * sub_w for _ in range(sub_h)]
+            visited = [[blocked[y][x] for x in range(sub_w)] for y in range(sub_h)]
             stack = []
             
             # Start cell
-            sx = random.randrange(sub_w)
-            sy = random.randrange(sub_h)
+            sx, sy = _get_start_cell(blocked, sub_w, sub_h)
             
             r_start = cell_to_room.get((sx, sy))
             if r_start is not None:
@@ -724,12 +783,35 @@ def generate_maze(
             center = (center[0], depth // 2)
 
         maze_data = MazeData(width, depth, cells, main_entrance, main_exits, center)
+        if mask_image:
+            blocked = _get_image_mask_data(mask_image, mask_invert, sub_w, sub_h)
+            for y in range(sub_h):
+                for x in range(sub_w):
+                    if blocked[y][x]:
+                        # Center cell is a wall
+                        cells[2 * y + 1][2 * x + 1][0] = True
+                        for idx in range(1, 7):
+                            cells[2 * y + 1][2 * x + 1][idx] = -1
+                        # Neighbors
+                        for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+                            nx, ny = 2 * x + 1 + dx, 2 * y + 1 + dy
+                            if 0 <= nx < width and 0 <= ny < depth:
+                                cells[ny][nx][0] = True
+                                for idx in range(1, 7):
+                                    cells[ny][nx][idx] = -1
+            # Recompute entrance_list/exit_list and set against final cells state
+            entrance_list = [item for item in entrance_list if not cells[item[1]][item[0]][0]]
+            exit_list = [item for item in exit_list if not cells[item[1]][item[0]][0]]
+            maze_data.entrance = entrance_list[0] if entrance_list else (1, 1, 'S')
+            maze_data.exits = exit_list
+        
         maze_data.guide_path = find_shortest_path(maze_data, wall_mode='cube')
         return maze_data
 
     # Thin wall mode
     # cells[y][x] = [N, S, E, W, n_wall_idx, s_wall_idx, e_wall_idx, w_wall_idx, floor_mesh_index, roof_mesh_index]
     cells = [[[True, True, True, True, -1, -1, -1, -1, -1, -1] for _ in range(width)] for _ in range(depth)]
+    blocked = _get_image_mask_data(mask_image, mask_invert, width, depth)
     index = {'N': 0, 'S': 1, 'E': 2, 'W': 3}
     opposites = {'N': 'S', 'S': 'N', 'E': 'W', 'W': 'E'}
 
@@ -784,11 +866,10 @@ def generate_maze(
 
     # Generate Maze using selected Algorithm
     if algorithm == 'dfs':
-        visited = [[False] * width for _ in range(depth)]
+        visited = [[blocked[y][x] for x in range(width)] for y in range(depth)]
         stack = []
         
-        sx = random.randrange(width)
-        sy = random.randrange(depth)
+        sx, sy = _get_start_cell(blocked, width, depth)
         
         r_start = cell_to_room.get((sx, sy))
         if r_start is not None:
@@ -1314,6 +1395,8 @@ def generate_maze(
         random.shuffle(candidates)
         carved_count = 0
         for x, y, d in candidates:
+            if blocked and blocked[y][x]:
+                continue
             if carved_count >= count:
                 break
             already_used = False
@@ -1334,6 +1417,8 @@ def generate_maze(
         # If we still need more but ran out of unique cells, allow reuse/overlapping
         if carved_count < count:
             for x, y, d in candidates:
+                if blocked and blocked[y][x]:
+                    continue
                 if carved_count >= count:
                     break
                 cells[y][x][index[d]] = False
@@ -1392,6 +1477,29 @@ def generate_maze(
     center = (width // 2, depth // 2)
 
     maze_data = MazeData(width, depth, cells, main_entrance, main_exits, center)
+    if mask_image:
+        blocked = _get_image_mask_data(mask_image, mask_invert, width, depth)
+        for y in range(depth):
+            for x in range(width):
+                if blocked[y][x]:
+                    cells[y][x][8] = -2
+                    cells[y][x][9] = -2
+                    cells[y][x][0] = cells[y][x][1] = cells[y][x][2] = cells[y][x][3] = False
+                    
+                    if y + 1 < depth and not blocked[y+1][x]:
+                        cells[y+1][x][1] = True
+                    if y - 1 >= 0 and not blocked[y-1][x]:
+                        cells[y-1][x][0] = True
+                    if x + 1 < width and not blocked[y][x+1]:
+                        cells[y][x+1][3] = True
+                    if x - 1 >= 0 and not blocked[y][x-1]:
+                        cells[y][x-1][2] = True
+        # Filter entrances and exits to exclude masked cells
+        entrance_list = [item for item in entrance_list if not blocked[item[1]][item[0]]]
+        exit_list = [item for item in exit_list if not blocked[item[1]][item[0]]]
+        maze_data.entrance = entrance_list[0] if entrance_list else (0, 0, 'S')
+        maze_data.exits = exit_list
+                        
     maze_data.guide_path = find_shortest_path(maze_data, wall_mode='thin')
     return maze_data
 
@@ -1399,6 +1507,95 @@ def generate_maze(
 def find_shortest_path(maze_data: MazeData, wall_mode: str) -> List[Tuple[int, int]]:
     if not maze_data.entrance:
         return []
+    
+    if maze_data.grid_type == 'polar':
+        start = maze_data.entrance[0:2]
+        targets = []
+        if maze_data.exits:
+            for ex_r, ex_theta, _ in maze_data.exits:
+                targets.append((ex_r, ex_theta))
+        else:
+            targets.append(maze_data.center)
+            
+        if not targets:
+            return []
+            
+        queue = deque([[start]])
+        bfs_visited = {start}
+        rings = maze_data.polar_rings
+        ring_sectors = maze_data.ring_sectors
+
+        def get_neighbors(r, theta):
+            neighbors = []
+            Nr = ring_sectors[r]
+            if r >= 1:
+                neighbors.append((r, (theta + 1) % Nr))
+                neighbors.append((r, (theta - 1) % Nr))
+            if r > 0:
+                N_in = ring_sectors[r - 1]
+                if N_in == Nr:
+                    neighbors.append((r - 1, theta))
+                elif N_in == 1:
+                    neighbors.append((r - 1, 0))
+                else:
+                    neighbors.append((r - 1, theta // 2))
+            if r < rings - 1:
+                N_out = ring_sectors[r + 1]
+                if N_out == Nr:
+                    neighbors.append((r + 1, theta))
+                elif Nr == 1:
+                    for t in range(N_out):
+                        neighbors.append((r + 1, t))
+                else:
+                    neighbors.append((r + 1, 2 * theta))
+                    neighbors.append((r + 1, 2 * theta + 1))
+            return neighbors
+        
+        while queue:
+            path = queue.popleft()
+            node = path[-1]
+            if node in targets:
+                return path
+            r, theta = node
+            Nr = ring_sectors[r]
+            accessible = []
+            if wall_mode == 'cube':
+                for nr, ntheta in get_neighbors(r, theta):
+                    if not maze_data.cells[nr][ntheta][0]:
+                        accessible.append((nr, ntheta))
+            else:
+                if r >= 1 and not maze_data.cells[r][theta][0]:
+                    accessible.append((r, (theta + 1) % Nr))
+                if r >= 1 and not maze_data.cells[r][(theta - 1) % Nr][0]:
+                    accessible.append((r, (theta - 1) % Nr))
+                if r > 0 and not maze_data.cells[r][theta][1]:
+                    N_in = ring_sectors[r - 1]
+                    if N_in == Nr:
+                        accessible.append((r - 1, theta))
+                    elif N_in == 1:
+                        accessible.append((r - 1, 0))
+                    else:
+                        accessible.append((r - 1, theta // 2))
+                if r < rings - 1:
+                    N_out = ring_sectors[r + 1]
+                    if N_out == Nr:
+                        if not maze_data.cells[r + 1][theta][1]:
+                            accessible.append((r + 1, theta))
+                    elif Nr == 1:
+                        for t in range(N_out):
+                            if not maze_data.cells[r + 1][t][1]:
+                                accessible.append((r + 1, t))
+                    else:
+                        if not maze_data.cells[r + 1][2 * theta][1]:
+                            accessible.append((r + 1, 2 * theta))
+                        if not maze_data.cells[r + 1][2 * theta + 1][1]:
+                            accessible.append((r + 1, 2 * theta + 1))
+            for neighbor in accessible:
+                if neighbor not in bfs_visited:
+                    bfs_visited.add(neighbor)
+                    queue.append(path + [neighbor])
+        return []
+
     start_x, start_y, _ = maze_data.entrance
 
     targets = []
@@ -1435,3 +1632,319 @@ def find_shortest_path(maze_data: MazeData, wall_mode: str) -> List[Tuple[int, i
                             visited.add((nx, ny))
                             queue.append((nx, ny, path + [(nx, ny)]))
     return []
+
+
+def generate_polar_maze(
+    rings: int,
+    seed: int = 0,
+    algorithm: str = 'dfs',
+    mode: str = 'center',
+    wall_mode: str = 'thin',
+    num_wall_meshes: int = 0,
+    num_floor_meshes: int = 0,
+    num_roof_meshes: int = 0,
+) -> MazeData:
+    if seed:
+        random.seed(seed)
+
+    if wall_mode == 'cube' and rings % 2 == 1:
+        rings += 1
+
+    # Compute sector counts Nr for each ring r
+    ring_sectors = [1] # r=0 has 1 center cell
+    for r in range(1, rings):
+        power = int(math.log2(r))
+        sectors = 6 * (2 ** power)
+        ring_sectors.append(sectors)
+
+    # Setup cells
+    cells = []
+    if wall_mode == 'cube':
+        for r in range(rings):
+            row = []
+            for theta in range(ring_sectors[r]):
+                if r == 0:
+                    is_wall = False
+                elif r % 2 == 1:
+                    is_wall = True
+                else:
+                    is_wall = (theta % 2 == 0)
+                row.append([is_wall, False, -1, -1, -1, -1, -1, -1, -1])
+            cells.append(row)
+    else:
+        for r in range(rings):
+            row = []
+            for theta in range(ring_sectors[r]):
+                if r == 0:
+                    row.append([False, False, -1, -1, -1, -1, -1])
+                else:
+                    row.append([True, True, -1, -1, -1, -1, -1])
+            cells.append(row)
+
+    # Setup adjacency graph
+    def get_neighbors(r, theta):
+        neighbors = []
+        Nr = ring_sectors[r]
+        if r >= 1:
+            neighbors.append((r, (theta + 1) % Nr))
+            neighbors.append((r, (theta - 1) % Nr))
+        if r > 0:
+            N_in = ring_sectors[r - 1]
+            if N_in == Nr:
+                neighbors.append((r - 1, theta))
+            elif N_in == 1:
+                neighbors.append((r - 1, 0))
+            else:
+                neighbors.append((r - 1, theta // 2))
+        if r < rings - 1:
+            N_out = ring_sectors[r + 1]
+            if N_out == Nr:
+                neighbors.append((r + 1, theta))
+            elif Nr == 1:
+                for t in range(N_out):
+                    neighbors.append((r + 1, t))
+            else:
+                neighbors.append((r + 1, 2 * theta))
+                neighbors.append((r + 1, 2 * theta + 1))
+        return neighbors
+
+    if wall_mode == 'cube':
+        # 1. Build Passage Cells and Bidirectional graph
+        passage_cells = []
+        for r in range(0, rings, 2):
+            if r == 0:
+                passage_cells.append((0, 0))
+            else:
+                for theta in range(1, ring_sectors[r], 2):
+                    passage_cells.append((r, theta))
+
+        graph = {cell: [] for cell in passage_cells}
+
+        for r, theta in passage_cells:
+            # Angular neighbors
+            if r >= 2:
+                Nr = ring_sectors[r]
+                for dt in [2, -2]:
+                    ntheta = (theta + dt) % Nr
+                    int_theta = (theta + (dt // 2)) % Nr
+                    neighbor = (r, ntheta)
+                    int_cell = (r, int_theta)
+                    if neighbor in graph:
+                        graph[(r, theta)].append((neighbor, int_cell))
+
+            # Inward radial neighbors
+            if r == 2:
+                neighbor = (0, 0)
+                int_cell = (1, theta // 2)
+                if neighbor in graph:
+                    graph[(r, theta)].append((neighbor, int_cell))
+                    graph[neighbor].append(((r, theta), int_cell))
+            elif r > 2:
+                N_in = ring_sectors[r - 2]
+                if N_in == ring_sectors[r]:
+                    neighbor = (r - 2, theta)
+                    int_cell = (r - 1, theta)
+                    if neighbor in graph:
+                        graph[(r, theta)].append((neighbor, int_cell))
+                        graph[neighbor].append(((r, theta), int_cell))
+                elif N_in == ring_sectors[r] // 2:
+                    t = theta // 2
+                    if t % 2 == 1:
+                        neighbor = (r - 2, t)
+                        int_cell = (r - 1, t)
+                        if neighbor in graph:
+                            graph[(r, theta)].append((neighbor, int_cell))
+                            graph[neighbor].append(((r, theta), int_cell))
+
+        # 2. Carve Spanning Tree on the Passage Graph
+        if algorithm == 'dfs':
+            visited = {cell: False for cell in passage_cells}
+            start_cell = (rings - 2, 1) if rings > 2 else (0, 0)
+            visited[start_cell] = True
+            stack = [start_cell]
+            while stack:
+                cell = stack[-1]
+                unvisited = [edge for edge in graph[cell] if not visited[edge[0]]]
+                if unvisited:
+                    neighbor, int_cell = random.choice(unvisited)
+                    ir, itheta = int_cell
+                    cells[ir][itheta][0] = False
+                    visited[neighbor] = True
+                    stack.append(neighbor)
+                else:
+                    stack.pop()
+        else:
+            edges = []
+            seen_edges = set()
+            for u in graph:
+                for v, int_cell in graph[u]:
+                    edge_key = tuple(sorted([u, v]))
+                    if edge_key not in seen_edges:
+                        seen_edges.add(edge_key)
+                        edges.append((u, v, int_cell))
+            random.shuffle(edges)
+            uf = UnionFind(len(passage_cells))
+            cell_to_idx = {cell: idx for idx, cell in enumerate(passage_cells)}
+            for u, v, int_cell in edges:
+                id1 = cell_to_idx[u]
+                id2 = cell_to_idx[v]
+                if uf.union(id1, id2):
+                    ir, itheta = int_cell
+                    cells[ir][itheta][0] = False
+
+    else:
+        total_cells = sum(ring_sectors)
+        if algorithm == 'dfs':
+            visited = [[False] * ring_sectors[r] for r in range(rings)]
+            visited[0][0] = True
+            stack = [(0, 0)]
+            while stack:
+                r, theta = stack[-1]
+                neighbors = get_neighbors(r, theta)
+                unvisited = [n for n in neighbors if not visited[n[0]][n[1]]]
+                if unvisited:
+                    nr, ntheta = random.choice(unvisited)
+                    if nr == r:
+                        Nr = ring_sectors[r]
+                        if ntheta == (theta + 1) % Nr:
+                            cells[r][theta][0] = False
+                        else:
+                            cells[r][ntheta][0] = False
+                    elif nr == r - 1:
+                        cells[r][theta][1] = False
+                    elif nr == r + 1:
+                        cells[nr][ntheta][1] = False
+                    visited[nr][ntheta] = True
+                    stack.append((nr, ntheta))
+                else:
+                    stack.pop()
+
+        elif algorithm == 'kruskal' or algorithm == 'prims' or algorithm == 'eller' or algorithm == 'binary_tree' or algorithm == 'hunt_and_kill' or algorithm == 'sidewinder' or algorithm == 'wilsons' or algorithm == 'recursive_division' or algorithm == 'growing_tree':
+            def get_id(r, theta):
+                return sum(ring_sectors[:r]) + theta
+            uf = UnionFind(total_cells)
+            walls = []
+            for r in range(1, rings):
+                for theta in range(ring_sectors[r]):
+                    walls.append((r, theta, 'CW'))
+                    walls.append((r, theta, 'IN'))
+            random.shuffle(walls)
+            for r, theta, wtype in walls:
+                Nr = ring_sectors[r]
+                if wtype == 'CW':
+                    r2, theta2 = r, (theta + 1) % Nr
+                else:
+                    r2 = r - 1
+                    N_in = ring_sectors[r2]
+                    if N_in == Nr:
+                        theta2 = theta
+                    elif N_in == 1:
+                        theta2 = 0
+                    else:
+                        theta2 = theta // 2
+                id1 = get_id(r, theta)
+                id2 = get_id(r2, theta2)
+                if uf.union(id1, id2):
+                    if wtype == 'CW':
+                        cells[r][theta][0] = False
+                    else:
+                        cells[r][theta][1] = False
+
+    if wall_mode == 'cube':
+        entrance = (rings - 1, 1, 'OUT')
+        if mode == 'center':
+            exits = [(0, 0, 'CENTER')]
+        else:
+            ex_theta = (ring_sectors[rings - 1] // 2) | 1
+            exits = [(rings - 1, ex_theta, 'OUT')]
+    else:
+        entrance = (rings - 1, 0, 'OUT')
+        if mode == 'center':
+            exits = [(0, 0, 'CENTER')]
+        else:
+            exits = [(rings - 1, ring_sectors[rings - 1] // 2, 'OUT')]
+
+    if wall_mode == 'cube':
+        cells[entrance[0]][entrance[1]][0] = False
+        for ex in exits:
+            cells[ex[0]][ex[1]][0] = False
+
+    start = (rings - 1, 1) if wall_mode == 'cube' else (rings - 1, 0)
+    target = exits[0][0:2] if exits else (0, 0)
+    queue = deque([[start]])
+    bfs_visited = {start}
+    guide_path = []
+    while queue:
+        path = queue.popleft()
+        node = path[-1]
+        if node == target:
+            guide_path = path
+            break
+        r, theta = node
+        Nr = ring_sectors[r]
+        accessible = []
+        if wall_mode == 'cube':
+            for nr, ntheta in get_neighbors(r, theta):
+                if not cells[nr][ntheta][0]:
+                    accessible.append((nr, ntheta))
+        else:
+            if r >= 1 and not cells[r][theta][0]:
+                accessible.append((r, (theta + 1) % Nr))
+            if r >= 1 and not cells[r][(theta - 1) % Nr][0]:
+                accessible.append((r, (theta - 1) % Nr))
+            if r > 0 and not cells[r][theta][1]:
+                N_in = ring_sectors[r - 1]
+                if N_in == Nr:
+                    accessible.append((r - 1, theta))
+                elif N_in == 1:
+                    accessible.append((r - 1, 0))
+                else:
+                    accessible.append((r - 1, theta // 2))
+            if r < rings - 1:
+                N_out = ring_sectors[r + 1]
+                if N_out == Nr:
+                    if not cells[r + 1][theta][1]:
+                        accessible.append((r + 1, theta))
+                elif Nr == 1:
+                    for t in range(N_out):
+                        if not cells[r + 1][t][1]:
+                            accessible.append((r + 1, t))
+                else:
+                    if not cells[r + 1][2 * theta][1]:
+                        accessible.append((r + 1, 2 * theta))
+                    if not cells[r + 1][2 * theta + 1][1]:
+                        accessible.append((r + 1, 2 * theta + 1))
+        for neighbor in accessible:
+            if neighbor not in bfs_visited:
+                bfs_visited.add(neighbor)
+                queue.append(path + [neighbor])
+
+    for r in range(rings):
+        for theta in range(ring_sectors[r]):
+            if num_floor_meshes > 0:
+                cells[r][theta][4] = random.randrange(num_floor_meshes)
+            if num_roof_meshes > 0:
+                cells[r][theta][5] = random.randrange(num_roof_meshes)
+            if num_wall_meshes > 0:
+                cells[r][theta][2] = random.randrange(num_wall_meshes)
+                cells[r][theta][3] = random.randrange(num_wall_meshes)
+                if len(cells[r][theta]) > 6:
+                    cells[r][theta][6] = random.randrange(num_wall_meshes)
+                if len(cells[r][theta]) > 7:
+                    cells[r][theta][7] = random.randrange(num_wall_meshes)
+                if len(cells[r][theta]) > 8:
+                    cells[r][theta][8] = random.randrange(num_wall_meshes)
+
+    maze_data = MazeData(
+        width=rings,
+        depth=rings,
+        cells=cells,
+        entrance=entrance,
+        exits=exits,
+        center=(0, 0),
+        guide_path=guide_path,
+        grid_type='polar',
+        polar_rings=rings,
+        ring_sectors=ring_sectors,
+    )
+    return maze_data

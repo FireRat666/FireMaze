@@ -1,7 +1,7 @@
 bl_info = {
     "name": "FireMaze",
     "author": "FireRat666",
-    "version": (2, 0, 1),
+    "version": (3, 0, 0),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar > FireRat",
     "description": "Random maze generator with tiled construction",
