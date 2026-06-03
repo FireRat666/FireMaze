@@ -2,12 +2,39 @@ import bpy
 import json
 import random
 import math
+import os
+import tempfile
 from bpy_extras import view3d_utils
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 from .maze_generator import generate_maze, find_shortest_path, MazeData
 from .mesh_builder import build_maze_objects
 
+PROP_NAMES = [
+    "width", "depth", "wall_height", "wall_height_tiled", "wall_height_tiles",
+    "wall_thickness", "tile_size", "wall_mode", "grid_type", "polar_rings",
+    "polar_custom_alignment", "mode", "emergency_exits", "seed", "tiles_centered",
+    "algorithm", "rooms_enable", "rooms_count", "min_room_size", "max_room_size",
+    "loop_probability", "isolated_wall_prob", "entrance_side", "exit_side",
+    "num_entrances", "num_exits", "cube_mode_pillar", "generate_guide",
+    "guide_type", "guide_width", "guide_height_offset", "guide_wave_amplitude",
+    "guide_wave_frequency", "wall_translate", "wall_rotate", "wall_scale",
+    "floor_translate", "floor_rotate", "floor_scale", "single_wall_object",
+    "merge_objects", "remove_doubles", "generate_lightmap", "lightmap_method",
+    "generate_colliders", "merge_colliders", "optimize_colliders_coplanar", "optimize_coplanar", "vertex_paint_enable",
+    "vertex_paint_mode", "vertex_paint_intensity", "prop_torch_density", "prop_chest_density",
+    "mask_invert", "thin_wall_double_sided"
+]
+
+POINTER_PROPS = [
+    "custom_floor_mesh", "custom_wall_mesh", "custom_roof_mesh",
+    "custom_wall_collection", "custom_floor_collection", "custom_roof_collection",
+    "prop_torch_mesh", "prop_chest_mesh", "prop_door_mesh", "mask_image"
+]
+
 show_recovery_warning = True
+AUTOSAVE_PATH = os.path.join(tempfile.gettempdir(), "firemaze_autosave.json")
+has_autosave = os.path.exists(AUTOSAVE_PATH)
+
 
 def is_valid_ref(ref):
     """Check if a Blender RNA pointer is valid and has not been deleted."""
@@ -59,22 +86,7 @@ def delete_edit_helper():
 def _serialize_session_data(context):
     props = context.scene.fire_maze
     props_data = {}
-    prop_names = [
-        "width", "depth", "wall_height", "wall_height_tiled", "wall_height_tiles",
-        "wall_thickness", "tile_size", "wall_mode", "grid_type", "polar_rings",
-        "polar_custom_alignment", "mode", "emergency_exits", "seed", "tiles_centered",
-        "algorithm", "rooms_enable", "rooms_count", "min_room_size", "max_room_size",
-        "loop_probability", "isolated_wall_prob", "entrance_side", "exit_side",
-        "num_entrances", "num_exits", "cube_mode_pillar", "generate_guide",
-        "guide_type", "guide_width", "guide_height_offset", "guide_wave_amplitude",
-        "guide_wave_frequency", "wall_translate", "wall_rotate", "wall_scale",
-        "floor_translate", "floor_rotate", "floor_scale", "single_wall_object",
-        "merge_objects", "remove_doubles", "generate_lightmap", "lightmap_method",
-        "generate_colliders", "merge_colliders", "optimize_colliders_coplanar", "optimize_coplanar", "vertex_paint_enable",
-        "vertex_paint_mode", "vertex_paint_intensity", "prop_torch_density", "prop_chest_density",
-        "mask_invert", "thin_wall_double_sided"
-    ]
-    for name in prop_names:
+    for name in PROP_NAMES:
         val = getattr(props, name, None)
         if val is not None:
             if isinstance(val, (int, float, str, bool)):
@@ -82,12 +94,7 @@ def _serialize_session_data(context):
             elif hasattr(val, "copy") or isinstance(val, (list, tuple)):
                 props_data[name] = list(val)
     
-    pointer_props = [
-        "custom_floor_mesh", "custom_wall_mesh", "custom_roof_mesh",
-        "custom_wall_collection", "custom_floor_collection", "custom_roof_collection",
-        "prop_torch_mesh", "prop_chest_mesh", "prop_door_mesh", "mask_image"
-    ]
-    for name in pointer_props:
+    for name in POINTER_PROPS:
         try:
             ref = getattr(props, name, None)
             if ref and hasattr(ref, "name") and ref.name:
@@ -110,22 +117,7 @@ def _deserialize_session_data(context, data):
     properties = data.get("properties", {})
     maze_json = data.get("maze_data")
     
-    prop_names = [
-        "width", "depth", "wall_height", "wall_height_tiled", "wall_height_tiles",
-        "wall_thickness", "tile_size", "wall_mode", "grid_type", "polar_rings",
-        "polar_custom_alignment", "mode", "emergency_exits", "seed", "tiles_centered",
-        "algorithm", "rooms_enable", "rooms_count", "min_room_size", "max_room_size",
-        "loop_probability", "isolated_wall_prob", "entrance_side", "exit_side",
-        "num_entrances", "num_exits", "cube_mode_pillar", "generate_guide",
-        "guide_type", "guide_width", "guide_height_offset", "guide_wave_amplitude",
-        "guide_wave_frequency", "wall_translate", "wall_rotate", "wall_scale",
-        "floor_translate", "floor_rotate", "floor_scale", "single_wall_object",
-        "merge_objects", "remove_doubles", "generate_lightmap", "lightmap_method",
-        "generate_colliders", "merge_colliders", "optimize_colliders_coplanar", "optimize_coplanar", "vertex_paint_enable",
-        "vertex_paint_mode", "vertex_paint_intensity", "prop_torch_density", "prop_chest_density",
-        "mask_invert", "thin_wall_double_sided"
-    ]
-    for name in prop_names:
+    for name in PROP_NAMES:
         if name in properties:
             val = properties[name]
             if isinstance(val, list):
@@ -135,12 +127,7 @@ def _deserialize_session_data(context, data):
             except Exception as ex:
                 print(f"Failed to set property {name}: {ex}")
                 
-    pointer_props = [
-        "custom_floor_mesh", "custom_wall_mesh", "custom_roof_mesh",
-        "custom_wall_collection", "custom_floor_collection", "custom_roof_collection",
-        "prop_torch_mesh", "prop_chest_mesh", "prop_door_mesh", "mask_image"
-    ]
-    for name in pointer_props:
+    for name in POINTER_PROPS:
         if name in properties:
             val = properties[name]
             ref = None
@@ -152,7 +139,7 @@ def _deserialize_session_data(context, data):
                 ref = bpy.data.meshes.get(val)
             else:
                 ref = bpy.data.objects.get(val)
-            if ref or val is None:
+            if ref is not None:
                 setattr(props, name, ref)
                 
     if maze_json:
@@ -181,6 +168,8 @@ def save_autosave(context):
                     f.write(data_str)
                 try:
                     os.replace(temp_path, path)
+                    global has_autosave
+                    has_autosave = True
                 except PermissionError:
                     pass
                 except Exception as ex:
@@ -635,14 +624,14 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                                 rebuilt_text = ""
                                 
                                 if face_dir == 'ROOF':
-                                    roof_idx_pos = 5 if len(cells[r_idx][theta]) >= 8 else 5
+                                    roof_idx_pos = 5
                                     if num_roof_meshes > 0 and len(cells[r_idx][theta]) > roof_idx_pos:
                                         current_idx = cells[r_idx][theta][roof_idx_pos] if isinstance(cells[r_idx][theta][roof_idx_pos], int) else -1
                                         cells[r_idx][theta][roof_idx_pos] = (current_idx + 1) % num_roof_meshes
                                         modified = True
                                         rebuilt_text = "roof"
                                 elif face_dir == 'FLOOR':
-                                    floor_idx_pos = 4 if len(cells[r_idx][theta]) >= 8 else 4
+                                    floor_idx_pos = 4
                                     if num_floor_meshes > 0 and len(cells[r_idx][theta]) > floor_idx_pos:
                                         current_idx = cells[r_idx][theta][floor_idx_pos] if isinstance(cells[r_idx][theta][floor_idx_pos], int) else -1
                                         cells[r_idx][theta][floor_idx_pos] = (current_idx + 1) % num_floor_meshes
@@ -1099,8 +1088,8 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                                                     
                                     tr, ttheta = target_cell
                                     cells[tr][ttheta][0] = not cells[tr][ttheta][0]
-                                    roof_pos = 5 if len(cells[tr][ttheta]) >= 8 else 5
-                                    floor_pos = 4 if len(cells[tr][ttheta]) >= 8 else 4
+                                    roof_pos = 5
+                                    floor_pos = 4
                                     if cells[tr][ttheta][0]:
                                         if num_wall_meshes > 0:
                                             cells[tr][ttheta][2] = random.randrange(num_wall_meshes)
@@ -1220,7 +1209,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                                         else:
                                             cells[cy_clamped][cx_clamped][3] = not cells[cy_clamped][cx_clamped][3]
                                             if cx_clamped - 1 >= 0:
-                                                cells[cy_clamped - 1][cx_clamped][2] = cells[cy_clamped][cx_clamped][3]
+                                                cells[cy_clamped][cx_clamped - 1][2] = cells[cy_clamped][cx_clamped][3]
                                                 
                                         data_dict['cells'] = cells
                                         col["fire_maze_data"] = json.dumps(data_dict)
@@ -1395,7 +1384,7 @@ class MAZE_OT_save_image_file(bpy.types.Operator, ExportHelper):
         except Exception as e:
             try:
                 bpy.data.images.remove(img)
-            except:
+            except Exception as remove_err:
                 pass
             self.report({'ERROR'}, f"Failed to save image file: {e}")
             return {'CANCELLED'}
@@ -1436,8 +1425,9 @@ class MAZE_OT_restore_autosave(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        global show_recovery_warning
+        global show_recovery_warning, has_autosave
         show_recovery_warning = False
+        has_autosave = False
         import os
         import tempfile
         import json
@@ -1474,8 +1464,9 @@ class MAZE_OT_discard_autosave(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        global show_recovery_warning
+        global show_recovery_warning, has_autosave
         show_recovery_warning = False
+        has_autosave = False
         import os
         import tempfile
         autosave_path = os.path.join(tempfile.gettempdir(), "firemaze_autosave.json")

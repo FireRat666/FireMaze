@@ -103,11 +103,8 @@ class VIEW3D_PT_fire_maze_session(bpy.types.Panel):
         row.operator("fire_maze.save_session", text="Save Session...", icon='EXPORT')
         row.operator("fire_maze.load_session", text="Load Session...", icon='IMPORT')
         
-        import os
-        import tempfile
-        autosave_path = os.path.join(tempfile.gettempdir(), "firemaze_autosave.json")
         from . import operators
-        if os.path.exists(autosave_path) and getattr(operators, "show_recovery_warning", True):
+        if getattr(operators, "has_autosave", False) and getattr(operators, "show_recovery_warning", True):
             col.separator(factor=0.5)
             rec_box = col.box()
             rec_box.alert = True

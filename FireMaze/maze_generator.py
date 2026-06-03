@@ -790,11 +790,20 @@ def generate_maze(
                     if blocked[y][x]:
                         # Center cell is a wall
                         cells[2 * y + 1][2 * x + 1][0] = True
+                        for idx in range(1, 7):
+                            cells[2 * y + 1][2 * x + 1][idx] = -1
                         # Neighbors
                         for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
                             nx, ny = 2 * x + 1 + dx, 2 * y + 1 + dy
                             if 0 <= nx < width and 0 <= ny < depth:
                                 cells[ny][nx][0] = True
+                                for idx in range(1, 7):
+                                    cells[ny][nx][idx] = -1
+            # Recompute entrance_list/exit_list and set against final cells state
+            entrance_list = [item for item in entrance_list if not cells[item[1]][item[0]][0]]
+            exit_list = [item for item in exit_list if not cells[item[1]][item[0]][0]]
+            maze_data.entrance = entrance_list[0] if entrance_list else (1, 1, 'S')
+            maze_data.exit = exit_list
         
         maze_data.guide_path = find_shortest_path(maze_data, wall_mode='cube')
         return maze_data
@@ -1386,6 +1395,8 @@ def generate_maze(
         random.shuffle(candidates)
         carved_count = 0
         for x, y, d in candidates:
+            if blocked and blocked[y][x]:
+                continue
             if carved_count >= count:
                 break
             already_used = False
@@ -1406,6 +1417,8 @@ def generate_maze(
         # If we still need more but ran out of unique cells, allow reuse/overlapping
         if carved_count < count:
             for x, y, d in candidates:
+                if blocked and blocked[y][x]:
+                    continue
                 if carved_count >= count:
                     break
                 cells[y][x][index[d]] = False
@@ -1481,6 +1494,11 @@ def generate_maze(
                         cells[y][x+1][3] = True
                     if x - 1 >= 0 and not blocked[y][x-1]:
                         cells[y][x-1][2] = True
+        # Filter entrances and exits to exclude masked cells
+        entrance_list = [item for item in entrance_list if not blocked[item[1]][item[0]]]
+        exit_list = [item for item in exit_list if not blocked[item[1]][item[0]]]
+        maze_data.entrance = entrance_list[0] if entrance_list else (0, 0, 'S')
+        maze_data.exit = exit_list
                         
     maze_data.guide_path = find_shortest_path(maze_data, wall_mode='thin')
     return maze_data

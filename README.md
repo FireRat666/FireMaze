@@ -1,10 +1,10 @@
 # FireMaze
 
 [![Blender](https://img.shields.io/badge/Blender-4.2%2B-orange?logo=blender&logoColor=white)](https://www.blender.org/)
-[![Version](https://img.shields.io/badge/version-2.0.1-blue)](#)
-[![License](https://img.shields.io/badge/license-GPL--3.0--or--later-green)](#license)
+[![Version](https://img.shields.io/badge/version-3.0.0-blue)](#)
+[![License](https://img.shields.io/badge/license-GPL--3.0--or--later-green)](LICENSE)
 
-A Blender 4.2+ extension (v2.0.1) for generating, editing, and customizing tile-based mazes.
+A Blender 4.2+ extension (v3.0.0) for generating, editing, and customizing tile-based mazes.
 
 It supports rectangular and polar (circular) grids, two construction modes (Thin walls and Cube pillars), 10 generation algorithms, procedural rooms, loop and pillar settings, image masking, custom collection randomization, interactive viewport editing, real-time pathfinding guides, vertex painting, prop/decor spawning, and full session save/load to disk.
 
@@ -31,7 +31,6 @@ It supports rectangular and polar (circular) grids, two construction modes (Thin
   - [13. Prop & Decor Spawner](#13-prop--decor-spawner)
   - [14. Post-Processing, Cleanups & Colliders](#14-post-processing-cleanups--colliders)
 - [Installation](#installation)
-- [Project Structure](#project-structure)
 - [Object Categories & Material Slots](#object-categories--material-slots)
 - [Collection & Data Management](#collection--data-management)
   - [Session Management](#session-management)
