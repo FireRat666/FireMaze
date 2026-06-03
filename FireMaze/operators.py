@@ -33,17 +33,37 @@ POINTER_PROPS = [
 
 show_recovery_warning = True
 AUTOSAVE_PATH = os.path.join(tempfile.gettempdir(), "firemaze_autosave.json")
-has_autosave = os.path.exists(AUTOSAVE_PATH)
+AUTOSAVE_ACK_PATH = os.path.join(tempfile.gettempdir(), "firemaze_autosave_ack.json")
+
+def check_has_autosave():
+    import os
+    import json
+    if not os.path.exists(AUTOSAVE_PATH):
+        return False
+    if os.path.exists(AUTOSAVE_ACK_PATH):
+        try:
+            with open(AUTOSAVE_PATH, 'r') as f1:
+                d1 = json.load(f1)
+            with open(AUTOSAVE_ACK_PATH, 'r') as f2:
+                d2 = json.load(f2)
+            if d1 == d2:
+                return False
+        except Exception:
+            pass
+    return True
+
+has_autosave = check_has_autosave()
 
 def _get_active_maze_collection(context):
     props = context.scene.fire_maze
     col_name = getattr(props, "fire_maze_collection_name", "")
     col = bpy.data.collections.get(col_name) if col_name else None
     if not col:
-        for c in bpy.data.collections:
-            if "fire_maze_data" in c:
-                col = c
-                break
+        candidates = [c for c in bpy.data.collections if "fire_maze_data" in c]
+        if len(candidates) == 1:
+            col = candidates[0]
+        else:
+            col = None
     return col
 
 
@@ -187,7 +207,7 @@ def save_autosave(context):
                 try:
                     os.replace(temp_path, path)
                     global has_autosave
-                    has_autosave = True
+                    has_autosave = check_has_autosave()
                 except PermissionError:
                     pass
                 except Exception as ex:
@@ -584,6 +604,8 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                             col = None
                             
                     if col:
+                        if props.fire_maze_collection_name != col.name:
+                            props.fire_maze_collection_name = col.name
                         ts = props.tile_size
                         # Offset hit coordinates slightly inward along normal to prevent floating-point boundary issues
                         if normal:
@@ -1144,6 +1166,21 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                                             cells[r_idx + 1][theta_out][1] = not cells[r_idx + 1][theta_out][1]
                                             modified = True
                                             rebuilt_text = "outward wall"
+                                        else:
+                                            theta_out = theta
+                                            if 'exits' not in data_dict or data_dict['exits'] is None:
+                                                data_dict['exits'] = []
+                                            found_idx = -1
+                                            for idx, ex in enumerate(data_dict['exits']):
+                                                if len(ex) >= 3 and ex[0] == r_idx and ex[1] == theta_out and ex[2] == 'OUT':
+                                                    found_idx = idx
+                                                    break
+                                            if found_idx != -1:
+                                                data_dict['exits'].pop(found_idx)
+                                            else:
+                                                data_dict['exits'].append([r_idx, theta_out, 'OUT'])
+                                            modified = True
+                                            rebuilt_text = "outward wall"
                                             
                                 if modified:
                                     data_dict['cells'] = cells
@@ -1256,6 +1293,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
             return {'CANCELLED'}
             
         props.is_editing = True
+        props.fire_maze_collection_name = col.name
         rebuild_maze_from_collection(context, col)
         context.workspace.status_text_set("FireMaze Editor: Left-click walls to toggle. Shift+Left-click to cycle mesh. Enter/Esc to exit.")
         self.init_workspace = context.workspace.name
@@ -1448,6 +1486,13 @@ class MAZE_OT_restore_autosave(bpy.types.Operator):
                 
             _deserialize_session_data(context, data)
             
+            # Persist an acknowledgement in the sidecar ack file
+            try:
+                with open(AUTOSAVE_ACK_PATH, 'w') as f:
+                    json.dump(data, f, indent=2)
+            except Exception as ack_err:
+                print("Failed to write autosave ack:", ack_err)
+            
             show_recovery_warning = False
             has_autosave = False
             
@@ -1476,20 +1521,27 @@ class MAZE_OT_discard_autosave(bpy.types.Operator):
         import os
         import tempfile
         autosave_path = os.path.join(tempfile.gettempdir(), "firemaze_autosave.json")
-        if os.path.exists(autosave_path):
-            try:
+        ack_path = os.path.join(tempfile.gettempdir(), "firemaze_autosave_ack.json")
+        
+        file_removed = False
+        try:
+            if os.path.exists(autosave_path):
                 os.remove(autosave_path)
-                show_recovery_warning = False
-                has_autosave = False
-                self.report({'INFO'}, "Autosave recovery file discarded successfully")
-            except Exception as e:
-                self.report({'ERROR'}, f"Failed to delete recovery file: {e}")
-                return {'CANCELLED'}
-        else:
+                file_removed = True
+            if os.path.exists(ack_path):
+                os.remove(ack_path)
+                
             show_recovery_warning = False
             has_autosave = False
-            self.report({'INFO'}, "No recovery file found to discard")
-        return {'FINISHED'}
+            
+            if file_removed:
+                self.report({'INFO'}, "Autosave recovery file discarded successfully")
+            else:
+                self.report({'INFO'}, "No recovery file found to discard")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"Failed to discard recovery files: {e}")
+            return {'CANCELLED'}
 
 class MAZE_OT_save_session(bpy.types.Operator, ExportHelper):
     bl_idname = "fire_maze.save_session"
