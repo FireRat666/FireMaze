@@ -103,7 +103,11 @@ def _serialize_session_data(context):
             pass
             
     maze_json = None
-    col = bpy.data.collections.get("FireMaze")
+    col = None
+    for c in bpy.data.collections:
+        if "fire_maze_data" in c:
+            col = c
+            break
     if col and "fire_maze_data" in col:
         maze_json = col["fire_maze_data"]
         
@@ -130,6 +134,9 @@ def _deserialize_session_data(context, data):
     for name in POINTER_PROPS:
         if name in properties:
             val = properties[name]
+            if not val:
+                setattr(props, name, None)
+                continue
             ref = None
             if name == "mask_image":
                 ref = bpy.data.images.get(val)
@@ -139,13 +146,11 @@ def _deserialize_session_data(context, data):
                 ref = bpy.data.meshes.get(val)
             else:
                 ref = bpy.data.objects.get(val)
-            if ref is not None:
-                setattr(props, name, ref)
+            setattr(props, name, ref)
                 
     if maze_json:
-        col = bpy.data.collections.get("FireMaze")
-        if not col:
-            col = bpy.data.collections.new("FireMaze")
+        col = _find_or_create_maze_collection("FireMaze")
+        if col.name not in context.scene.collection.children:
             context.scene.collection.children.link(col)
         col["fire_maze_data"] = maze_json
         rebuild_maze_from_collection(context, col)
@@ -1257,7 +1262,11 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
 
 
 def _generate_maze_image_datablock(context, img_name="FireMaze_Layout"):
-    col = bpy.data.collections.get("FireMaze")
+    col = None
+    for c in bpy.data.collections:
+        if "fire_maze_data" in c:
+            col = c
+            break
     if not col or "fire_maze_data" not in col:
         return None, "No active maze layout found. Please generate a maze first."
 
@@ -1426,8 +1435,6 @@ class MAZE_OT_restore_autosave(bpy.types.Operator):
 
     def execute(self, context):
         global show_recovery_warning, has_autosave
-        show_recovery_warning = False
-        has_autosave = False
         import os
         import tempfile
         import json
@@ -1442,6 +1449,9 @@ class MAZE_OT_restore_autosave(bpy.types.Operator):
                 data = json.load(f)
                 
             _deserialize_session_data(context, data)
+            
+            show_recovery_warning = False
+            has_autosave = False
             
             if data.get("maze_data"):
                 self.report({'INFO'}, "Successfully restored maze session from autosave")
@@ -1465,19 +1475,21 @@ class MAZE_OT_discard_autosave(bpy.types.Operator):
 
     def execute(self, context):
         global show_recovery_warning, has_autosave
-        show_recovery_warning = False
-        has_autosave = False
         import os
         import tempfile
         autosave_path = os.path.join(tempfile.gettempdir(), "firemaze_autosave.json")
         if os.path.exists(autosave_path):
             try:
                 os.remove(autosave_path)
+                show_recovery_warning = False
+                has_autosave = False
                 self.report({'INFO'}, "Autosave recovery file discarded successfully")
             except Exception as e:
                 self.report({'ERROR'}, f"Failed to delete recovery file: {e}")
                 return {'CANCELLED'}
         else:
+            show_recovery_warning = False
+            has_autosave = False
             self.report({'INFO'}, "No recovery file found to discard")
         return {'FINISHED'}
 
@@ -1522,7 +1534,6 @@ class MAZE_OT_load_session(bpy.types.Operator, ImportHelper):
     
     def execute(self, context):
         global show_recovery_warning
-        show_recovery_warning = False
         import json
         import os
         if not os.path.exists(self.filepath):
@@ -1532,6 +1543,7 @@ class MAZE_OT_load_session(bpy.types.Operator, ImportHelper):
             with open(self.filepath, 'r') as f:
                 data = json.load(f)
             _deserialize_session_data(context, data)
+            show_recovery_warning = False
             self.report({'INFO'}, f"Session loaded successfully from: {self.filepath}")
             return {'FINISHED'}
         except Exception as e:
