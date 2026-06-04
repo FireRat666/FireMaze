@@ -8,7 +8,7 @@ A Blender 4.2+ extension for generating, editing, and customizing tile-based maz
 
 It supports rectangular and polar (circular) grids, two construction modes (Thin walls and Cube pillars), 10 generation algorithms, procedural rooms, loop and pillar settings, image masking, custom collection randomization, interactive viewport editing, real-time pathfinding guides, vertex painting, prop/decor spawning, and full session save/load to disk.
 
-![main](Mazes.png)
+![main](FireMaze.jpg)
 
 ---
 
