@@ -1181,7 +1181,7 @@ def _generate_thin_maze(
             x, y = stack[-1]
             chosen_dir = None
             if last_dir and last_dir in raw_dirs:
-                ldname, (ldx, ldy) = last_dir
+                _ldname, (ldx, ldy) = last_dir
                 nx, ny = x + ldx, y + ldy
                 if 0 <= nx < width and 0 <= ny < depth and not visited[ny][nx]:
                     if random.random() < straightness:
@@ -1426,7 +1426,7 @@ def _generate_thin_maze(
                 raw_dirs = [('N', (0, 1)), ('S', (0, -1)), ('E', (1, 0)), ('W', (-1, 0))]
                 chosen_dir = None
                 if last_dir and last_dir in raw_dirs:
-                    ldname, (ldx, ldy) = last_dir
+                    _ldname, (ldx, ldy) = last_dir
                     nx, ny = cx + ldx, cy + ldy
                     if 0 <= nx < width and 0 <= ny < depth and not visited[ny][nx]:
                         if random.random() < straightness:
