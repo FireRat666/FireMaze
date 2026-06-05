@@ -520,6 +520,7 @@ class MAZE_OT_generate(bpy.types.Operator):
             stair_footprint=props.stair_footprint,
             stair_style=props.stair_style,
             stair_count=props.stair_count,
+            stair_direction=props.stair_direction,
         )
 
         col = _find_or_create_maze_collection("FireMaze")

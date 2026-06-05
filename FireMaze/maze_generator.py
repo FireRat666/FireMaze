@@ -61,7 +61,7 @@ class UnionFind:
         return False
 
 
-def _expand_cells_to_3d(cells_2d, width, depth, floors, wall_mode, stair_count=1, stair_footprint='1x1'):
+def _expand_cells_to_3d(cells_2d, width, depth, floors, wall_mode, stair_count=1, stair_footprint='1x1', stair_style='stair', stair_direction='random'):
     """Clone 2D cells to 3D [floors][depth][width] and carve stair footprints.
 
     Args:
@@ -72,6 +72,8 @@ def _expand_cells_to_3d(cells_2d, width, depth, floors, wall_mode, stair_count=1
         wall_mode: 'thin' or 'cube'.
         stair_count: Number of staircases per floor transition.
         stair_footprint: Footprint size ('1x1', '1x2', '2x2').
+        stair_style: Stair style ('stair' or 'ramp').
+        stair_direction: Stair direction.
 
     Returns:
         Tuple of (cells_3d, stairs_placed).
@@ -81,7 +83,11 @@ def _expand_cells_to_3d(cells_2d, width, depth, floors, wall_mode, stair_count=1
     cells_3d = [cells_2d]
     for _ in range(1, floors):
         cells_3d.append(copy.deepcopy(cells_2d))
-    stairs_placed = _place_stairs(cells_3d, width, depth, floors, wall_mode, stair_count=stair_count, stair_footprint=stair_footprint)
+    stairs_placed = _place_stairs(
+        cells_3d, width, depth, floors, wall_mode,
+        stair_count=stair_count, stair_footprint=stair_footprint,
+        stair_style=stair_style, stair_direction=stair_direction
+    )
     return cells_3d, stairs_placed
 
 
@@ -146,7 +152,7 @@ def _get_stair_footprint_coords(x, y, footprint, orientation):
     return result
 
 
-def _place_stairs(cells_3d, width, depth, floors, wall_mode, stair_count=1, stair_footprint='1x1'):
+def _place_stairs(cells_3d, width, depth, floors, wall_mode, stair_count=1, stair_footprint='1x1', stair_style='stair', stair_direction='random'):
     """Place stair footprints in 3D cells and return placed stair records.
 
     Args:
@@ -157,6 +163,8 @@ def _place_stairs(cells_3d, width, depth, floors, wall_mode, stair_count=1, stai
         wall_mode: 'thin' or 'cube'.
         stair_count: Number of stairs per floor transition.
         stair_footprint: Footprint size ('1x1', '1x2', '2x2').
+        stair_style: Stair style ('stair' or 'ramp').
+        stair_direction: Stair direction.
 
     Returns:
         List of stair dicts with keys z, x, y, type, footprint, orientation.
@@ -174,7 +182,10 @@ def _place_stairs(cells_3d, width, depth, floors, wall_mode, stair_count=1, stai
             continue
 
         footprint = stair_footprint
-        orientation = random.choice(['N', 'S', 'E', 'W'])
+        if stair_direction == 'random':
+            orientation = random.choice(['N', 'S', 'E', 'W'])
+        else:
+            orientation = stair_direction
         num_stairs = max(1, min(stair_count, len(candidates)))
 
         random.shuffle(candidates)
@@ -192,11 +203,12 @@ def _place_stairs(cells_3d, width, depth, floors, wall_mode, stair_count=1, stai
                 _force_cell_open(cells_3d, z, c[1], c[0], wall_mode)
                 _force_cell_open(cells_3d, z + 1, c[1], c[0], wall_mode)
 
+            rec_type = 'ramp' if stair_style in ('ramp', 'rectangular') else 'stair'
             rec = {
                 'z': z,
                 'x': sx,
                 'y': sy,
-                'type': 'stair',
+                'type': rec_type,
                 'footprint': footprint,
                 'orientation': orientation,
             }
@@ -282,6 +294,7 @@ def _generate_cube_maze(
     stair_footprint: str,
     stair_style: str,
     stair_count: int,
+    stair_direction: str = 'random',
     wall_mode: str = 'cube',
 ) -> MazeData:
     """Carve a rectangular maze in cube wall mode."""
@@ -954,7 +967,11 @@ def _generate_cube_maze(
 
     # Expand to 3D for multilevel
     if floors > 1:
-        cells, stairs_placed = _expand_cells_to_3d(cells, width, depth, floors, wall_mode, stair_count=stair_count, stair_footprint=stair_footprint)
+        cells, stairs_placed = _expand_cells_to_3d(
+            cells, width, depth, floors, wall_mode,
+            stair_count=stair_count, stair_footprint=stair_footprint,
+            stair_style=stair_style, stair_direction=stair_direction
+        )
     else:
         cells = [cells]
         stairs_placed = []
@@ -1015,6 +1032,7 @@ def _generate_thin_maze(
     stair_footprint: str,
     stair_style: str,
     stair_count: int,
+    stair_direction: str = 'random',
     wall_mode: str = 'thin',
 ) -> MazeData:
     """Carve a rectangular maze in thin wall mode."""
@@ -1695,7 +1713,11 @@ def _generate_thin_maze(
 
     # Expand to 3D for multilevel
     if floors > 1:
-        cells, stairs_placed = _expand_cells_to_3d(cells, width, depth, floors, wall_mode, stair_count=stair_count, stair_footprint=stair_footprint)
+        cells, stairs_placed = _expand_cells_to_3d(
+            cells, width, depth, floors, wall_mode,
+            stair_count=stair_count, stair_footprint=stair_footprint,
+            stair_style=stair_style, stair_direction=stair_direction
+        )
     else:
         cells = [cells]
         stairs_placed = []
@@ -1761,6 +1783,7 @@ def generate_maze(
     stair_footprint: str = '1x1',
     stair_style: str = 'stair',
     stair_count: int = 1,
+    stair_direction: str = 'random',
 ) -> MazeData:
     """Generate a complete rectangular or polar maze with the selected algorithm."""
     # Disable mask for multilevel mazes
@@ -1781,6 +1804,7 @@ def generate_maze(
             stair_footprint=stair_footprint,
             stair_style=stair_style,
             stair_count=stair_count,
+            stair_direction=stair_direction,
         )
 
     if seed:
@@ -1798,7 +1822,7 @@ def generate_maze(
             num_wall_meshes=num_wall_meshes, num_floor_meshes=num_floor_meshes,
             num_roof_meshes=num_roof_meshes, mask_image=mask_image,
             mask_invert=mask_invert, floors=floors, stair_footprint=stair_footprint,
-            stair_style=stair_style, stair_count=stair_count
+            stair_style=stair_style, stair_count=stair_count, stair_direction=stair_direction
         )
     else:
         return _generate_thin_maze(
@@ -1812,7 +1836,7 @@ def generate_maze(
             num_wall_meshes=num_wall_meshes, num_floor_meshes=num_floor_meshes,
             num_roof_meshes=num_roof_meshes, mask_image=mask_image,
             mask_invert=mask_invert, floors=floors, stair_footprint=stair_footprint,
-            stair_style=stair_style, stair_count=stair_count
+            stair_style=stair_style, stair_count=stair_count, stair_direction=stair_direction
         )
 
 
@@ -2209,6 +2233,7 @@ def generate_polar_maze(
     stair_footprint: str = '1x1',
     stair_style: str = 'stair',
     stair_count: int = 1,
+    stair_direction: str = 'random',
 ) -> MazeData:
     """Generate a polar (circular) maze.
 
@@ -2524,11 +2549,13 @@ def generate_polar_maze(
                 if (r, theta) in placed_cells_z:
                     continue
                 placed_cells_z.add((r, theta))
+                polar_orient = (random.choice(['IN', 'OUT', 'CW', 'CCW']) if stair_direction == 'random'
+                                else {'N': 'CCW', 'E': 'OUT', 'S': 'CW', 'W': 'IN'}.get(stair_direction, stair_direction))
                 stair_defs.append({
                     'z': z, 'x': theta, 'y': r,
                     'type': stair_style,
                     'footprint': '1x1',
-                    'orientation': random.choice(['IN', 'OUT', 'CW', 'CCW']),
+                    'orientation': polar_orient,
                 })
                 placed_count += 1
         # For polar, we can't use the rect _expand_cells_to_3d directly
