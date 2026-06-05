@@ -1,7 +1,46 @@
+"""Property group definitions for all FireMaze maze settings.
+
+Each bpy.props.* entry stores its description directly in the
+property definition, so only module-level, class-level, and helper
+function docstrings are added here.
+"""
+
 import bpy
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def _update_edit_floor_level(self, context):
+    """Clamp edit_floor_level when floors change and trigger a rebuild."""
+    from .operators import _get_active_maze_collection
+    import json
+    col = _get_active_maze_collection(context)
+    floors = self.floors
+    if col and "fire_maze_data" in col:
+        try:
+            data_dict = json.loads(col["fire_maze_data"])
+            floors = data_dict.get('floors', 1)
+        except Exception as e:
+            logger.debug(f"Failed to parse maze data for floor level: {e}")
+
+    max_floor = max(0, floors - 1)
+    if self.edit_floor_level > max_floor:
+        self["edit_floor_level"] = max_floor
+
+    if self.is_editing and col:
+        from .operators import rebuild_maze_from_collection
+        rebuild_maze_from_collection(context, col)
+
 
 
 class FireMazeProperties(bpy.types.PropertyGroup):
+    """All user-configurable maze generation and editing properties.
+
+    Stored on ``context.scene.fire_maze`` as a Blender PointerProperty.
+    Property descriptions are set inline on each bpy.props.* call and
+    displayed in the UI tooltips.
+    """
     width: bpy.props.IntProperty(
         name="Width",
         description="Number of cells along X",
@@ -52,6 +91,54 @@ class FireMazeProperties(bpy.types.PropertyGroup):
         max=100.0,
         unit='LENGTH',
     )
+
+    # Multilevel settings
+    floors: bpy.props.IntProperty(
+        name="Floors",
+        description="Number of vertical levels in the maze",
+        default=1,
+        min=1,
+        max=20,
+    )
+    stair_footprint: bpy.props.EnumProperty(
+        name="Stair Footprint",
+        description="Size of the staircase footprint (rectangular grids only)",
+        default='1x1',
+        items=[
+            ('1x1', '1x1', 'Single-cell staircase (spiral)'),
+            ('1x2', '1x2', 'Two-cell straight staircase'),
+            ('2x2', '2x2', 'Two-by-two U-turn staircase with landing'),
+        ],
+    )
+    stair_style: bpy.props.EnumProperty(
+        name="Stair Style",
+        description="Procedural style for staircase/ramp generation",
+        default='stair',
+        items=[
+            ('stair', 'Staircase', 'Standard stepped staircase'),
+            ('ramp', 'Ramp', 'Smooth sloped ramp'),
+        ],
+    )
+    stair_direction: bpy.props.EnumProperty(
+        name="Stair Direction",
+        description="Direction/orientation of the stairs (North/East/South/West for rectangular, CCW/Outward/CW/Inward for polar)",
+        default='N',
+        items=[
+            ('N', 'North / CCW', 'Facing North for Rectangular / CCW for Polar'),
+            ('E', 'East / Outward', 'Facing East for Rectangular / Outward for Polar'),
+            ('S', 'South / CW', 'Facing South for Rectangular / CW for Polar'),
+            ('W', 'West / Inward', 'Facing West for Rectangular / Inward for Polar'),
+        ],
+    )
+    stair_count: bpy.props.IntProperty(
+        name="Stairs Per Level",
+        description="Number of stairs to place per floor transition during generation",
+        default=1,
+        min=1,
+        max=50,
+    )
+
+
     wall_mode: bpy.props.EnumProperty(
         name="Wall Mode",
         description="Construction style for wall segments",
@@ -140,6 +227,18 @@ class FireMazeProperties(bpy.types.PropertyGroup):
         type=bpy.types.Mesh,
     )
 
+    # Custom stair/ramp meshes
+    custom_stair_mesh: bpy.props.PointerProperty(
+        name="Staircase Object",
+        description="Optional custom mesh or object for staircases",
+        type=bpy.types.Object,
+    )
+    custom_ramp_mesh: bpy.props.PointerProperty(
+        name="Ramp Object",
+        description="Optional custom mesh or object for ramps",
+        type=bpy.types.Object,
+    )
+
     # Algorithm
     algorithm: bpy.props.EnumProperty(
         name="Algorithm",
@@ -178,6 +277,7 @@ class FireMazeProperties(bpy.types.PropertyGroup):
         default=2,
         min=2,
         max=20,
+        update=lambda self, ctx: setattr(self, 'max_room_size', max(self.max_room_size, self.min_room_size)),
     )
     max_room_size: bpy.props.IntProperty(
         name="Max Room Size",
@@ -185,6 +285,7 @@ class FireMazeProperties(bpy.types.PropertyGroup):
         default=4,
         min=2,
         max=20,
+        update=lambda self, ctx: setattr(self, 'min_room_size', min(self.min_room_size, self.max_room_size)),
     )
 
     # Loops & Layout
@@ -358,6 +459,26 @@ class FireMazeProperties(bpy.types.PropertyGroup):
         description="Scale multiplier for floor instances",
         default=(1.0, 1.0, 1.0),
     )
+    roof_translate: bpy.props.FloatVectorProperty(
+        name="Roof Translate",
+        description="Translation offset for roof instances",
+        default=(0.0, 0.0, 0.0),
+        subtype='TRANSLATION',
+        unit='LENGTH',
+    )
+    roof_rotate: bpy.props.FloatVectorProperty(
+        name="Roof Rotate",
+        description="Euler rotation offset for roof instances (in degrees, around its own center)",
+        default=(0.0, 0.0, 0.0),
+        subtype='EULER',
+        unit='ROTATION',
+    )
+    roof_scale: bpy.props.FloatVectorProperty(
+        name="Roof Scale",
+        description="Scale multiplier for roof instances",
+        default=(1.0, 1.0, 1.0),
+    )
+
 
     # Post-processing
     single_wall_object: bpy.props.BoolProperty(
@@ -478,6 +599,29 @@ class FireMazeProperties(bpy.types.PropertyGroup):
         description="Whether the interactive maze editor is active",
         default=False,
     )
+    edit_floor_level: bpy.props.IntProperty(
+        name="Edit Floor Level",
+        description="Floor level targeted by the interactive editor raycast",
+        default=0,
+        min=0,
+        max=19,
+        update=_update_edit_floor_level,
+    )
+    edit_roof: bpy.props.BoolProperty(
+        name="Edit Roof",
+        description="Show and edit the roof of the current floor level",
+        default=False,
+        update=_update_edit_floor_level,
+    )
+    edit_tool: bpy.props.EnumProperty(
+        name="Edit Tool",
+        description="Action performed when clicking on the maze during Interactive Edit",
+        items=[
+            ('wall', "Toggle Walls", "Left-click to add/remove walls"),
+            ('stair', "Toggle Stairs", "Left-click to place/remove stairs"),
+        ],
+        default='wall',
+    )
     fire_maze_collection_name: bpy.props.StringProperty(
         name="Collection Name",
         description="The name of the collection containing the active maze",
@@ -491,6 +635,7 @@ classes = (FireMazeProperties,)
 
 
 def register():
+    """Register FireMazeProperties and attach to Scene."""
     for cls in classes:
         bpy.utils.register_class(cls)
     bpy.types.Scene.fire_maze = bpy.props.PointerProperty(
@@ -498,6 +643,7 @@ def register():
 
 
 def unregister():
+    """Unregister FireMazeProperties and detach from Scene."""
     del bpy.types.Scene.fire_maze
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
