@@ -304,6 +304,64 @@ class FireMazeProperties(bpy.types.PropertyGroup):
         max=1.0,
     )
 
+    # Algorithm Bias Settings
+    selection_bias: bpy.props.FloatProperty(
+        name="GT Selection Bias",
+        description="Growing Tree cell selection bias: 0 = always newest (DFS/long corridors), 1 = always random (Prim/stubby branches)",
+        default=0.5,
+        min=0.0,
+        max=1.0,
+    )
+    straightness: bpy.props.FloatProperty(
+        name="Corridor Straightness",
+        description="Probability of continuing in the same direction in DFS and Hunt-and-Kill (higher = straighter corridors)",
+        default=0.5,
+        min=0.0,
+        max=1.0,
+    )
+    direction_bias: bpy.props.FloatProperty(
+        name="Diagonal Bias",
+        description="Binary Tree carving bias: 0 = always North (horizontal lanes), 1 = always East (vertical lanes)",
+        default=0.5,
+        min=0.0,
+        max=1.0,
+    )
+    east_bias: bpy.props.FloatProperty(
+        name="Sidewinder East Bias",
+        description="Sidewinder bias for horizontal run extension vs carving North (higher = longer horizontal runs)",
+        default=0.5,
+        min=0.0,
+        max=1.0,
+    )
+    orientation_bias: bpy.props.FloatProperty(
+        name="Split Orientation Bias",
+        description="Recursive Division split bias for square regions: 0 = always vertical, 1 = always horizontal",
+        default=0.5,
+        min=0.0,
+        max=1.0,
+    )
+    passage_bias: bpy.props.FloatProperty(
+        name="Passage Location Bias",
+        description="Recursive Division gap placement bias: 0 = push toward center, 1 = push toward edges",
+        default=0.5,
+        min=0.0,
+        max=1.0,
+    )
+    eller_merge_prob: bpy.props.FloatProperty(
+        name="Eller Merge Prob",
+        description="Eller's horizontal merge probability",
+        default=0.5,
+        min=0.0,
+        max=1.0,
+    )
+    radial_bias: bpy.props.FloatProperty(
+        name="Radial Bias",
+        description="Polar DFS bias: 0 = prefer tangential (concentric) movements, 1 = prefer radial (in/out) movements",
+        default=0.5,
+        min=0.0,
+        max=1.0,
+    )
+
     # Entrances & Exits
     entrance_side: bpy.props.EnumProperty(
         name="Entrance Side",

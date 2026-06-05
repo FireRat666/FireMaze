@@ -34,6 +34,31 @@ class MazeData:
     stairs: List[dict] = field(default_factory=list)
 
 
+def _biased_choice(length, bias):
+    """Select a randomized index in range(length) biased by the bias parameter.
+
+    bias = 0.5: uniform.
+    bias < 0.5: pushed toward center.
+    bias > 0.5: pushed toward edges.
+    """
+    if length <= 1:
+        return 0
+    u = random.random()
+    if bias == 0.5:
+        pass
+    elif bias < 0.5:
+        p = 0.5 / max(0.01, bias)
+        diff = u - 0.5
+        sign = 1.0 if diff >= 0 else -1.0
+        u = 0.5 + sign * (abs(2.0 * diff) ** p) / 2.0
+    else:
+        p = 2.0 * (1.0 - bias)
+        diff = u - 0.5
+        sign = 1.0 if diff >= 0 else -1.0
+        u = 0.5 + sign * (abs(2.0 * diff) ** p) / 2.0
+    return max(0, min(length - 1, int(u * length)))
+
+
 class UnionFind:
     """Disjoint-set data structure (union-find) with path compression."""
 
@@ -295,6 +320,13 @@ def _generate_cube_maze(
     stair_style: str,
     stair_count: int,
     stair_direction: str = 'random',
+    selection_bias: float = 0.5,
+    straightness: float = 0.5,
+    direction_bias: float = 0.5,
+    east_bias: float = 0.5,
+    orientation_bias: float = 0.5,
+    passage_bias: float = 0.5,
+    eller_merge_prob: float = 0.5,
     wall_mode: str = 'cube',
 ) -> MazeData:
     """Carve a rectangular maze in cube wall mode."""
@@ -379,12 +411,24 @@ def _generate_cube_maze(
             stack.append((sx, sy))
             cells[2 * sy + 1][2 * sx + 1][0] = False
 
+        last_dir = None
         dirs = [(0, 1), (0, -1), (1, 0), (-1, 0)]
         while stack:
             x, y = stack[-1]
-            random.shuffle(dirs)
+            chosen_dir = None
+            if last_dir and last_dir in dirs:
+                ldx, ldy = last_dir
+                nx, ny = x + ldx, y + ldy
+                if 0 <= nx < sub_w and 0 <= ny < sub_h and not visited[ny][nx]:
+                    if random.random() < straightness:
+                        chosen_dir = last_dir
+            if chosen_dir:
+                ordered_dirs = [chosen_dir] + [d for d in dirs if d != chosen_dir]
+            else:
+                random.shuffle(dirs)
+                ordered_dirs = list(dirs)
             carved = False
-            for dx, dy in dirs:
+            for dx, dy in ordered_dirs:
                 nx, ny = x + dx, y + dy
                 if 0 <= nx < sub_w and 0 <= ny < sub_h and not visited[ny][nx]:
                     # Carve neighbor and intermediate wall cell
@@ -400,10 +444,12 @@ def _generate_cube_maze(
                     else:
                         visited[ny][nx] = True
                         stack.append((nx, ny))
+                    last_dir = (dx, dy)
                     carved = True
                     break
             if not carved:
                 stack.pop()
+                last_dir = None
 
     elif algorithm == 'kruskal':
         uf = UnionFind(sub_w * sub_h)
@@ -469,7 +515,7 @@ def _generate_cube_maze(
                 if s1 != s2:
                     same_room = (cell_to_room.get((x, y)) is not None and 
                                  cell_to_room.get((x, y)) == cell_to_room.get((x + 1, y)))
-                    if same_room or random.random() < 0.5:
+                    if same_room or random.random() < eller_merge_prob:
                         for idx in range(sub_w):
                             if row_sets[idx] == s2:
                                 row_sets[idx] = s1
@@ -526,7 +572,7 @@ def _generate_cube_maze(
                 can_east = (x < sub_w - 1)
                 
                 if can_north and can_east:
-                    if random.random() < 0.5:
+                    if random.random() >= direction_bias:
                         cells[2 * y + 2][2 * x + 1][0] = False
                         cells[2 * y + 3][2 * x + 1][0] = False
                     else:
@@ -607,19 +653,33 @@ def _generate_cube_maze(
         while True:
             dirs = [(0, 1), (0, -1), (1, 0), (-1, 0)]
             walk_stuck = False
+            last_dir = None
             while not walk_stuck:
-                random.shuffle(dirs)
+                chosen_dir = None
+                if last_dir and last_dir in dirs:
+                    ldx, ldy = last_dir
+                    nx, ny = cx + ldx, cy + ldy
+                    if 0 <= nx < sub_w and 0 <= ny < sub_h and not visited[ny][nx]:
+                        if random.random() < straightness:
+                            chosen_dir = last_dir
+                if chosen_dir:
+                    ordered_dirs = [chosen_dir] + [d for d in dirs if d != chosen_dir]
+                else:
+                    random.shuffle(dirs)
+                    ordered_dirs = list(dirs)
                 moved = False
-                for dx, dy in dirs:
+                for dx, dy in ordered_dirs:
                     nx, ny = cx + dx, cy + dy
                     if 0 <= nx < sub_w and 0 <= ny < sub_h and not visited[ny][nx]:
                         cells[cy + ny + 1][cx + nx + 1][0] = False
                         mark_visited(nx, ny)
                         cx, cy = nx, ny
+                        last_dir = (dx, dy)
                         moved = True
                         break
                 if not moved:
                     walk_stuck = True
+                    last_dir = None
             
             hunted = False
             for y in range(sub_h):
@@ -657,7 +717,7 @@ def _generate_cube_maze(
                     if r1 is not None and r1 == r2:
                         in_same_room = True
 
-                carve_east = (x < sub_w - 1) and (in_same_room or random.random() < 0.5)
+                carve_east = (x < sub_w - 1) and (in_same_room or random.random() < east_bias)
                 
                 if carve_east:
                     cells[2 * y + 1][2 * x + 2][0] = False
@@ -739,7 +799,7 @@ def _generate_cube_maze(
             if horizontal:
                 wy_sub = ry + random.randrange(rh - 1)
                 wy_actual = 2 * wy_sub + 2
-                px_sub = rx + random.randrange(rw)
+                px_sub = rx + _biased_choice(rw, passage_bias)
                 px_actual = 2 * px_sub + 1
                 
                 for x_sub in range(rx, rx + rw):
@@ -755,7 +815,7 @@ def _generate_cube_maze(
             else:
                 wx_sub = rx + random.randrange(rw - 1)
                 wx_actual = 2 * wx_sub + 2
-                py_sub = ry + random.randrange(rh)
+                py_sub = ry + _biased_choice(rh, passage_bias)
                 py_actual = 2 * py_sub + 1
                 
                 for y_sub in range(ry, ry + rh):
@@ -776,7 +836,7 @@ def _generate_cube_maze(
             elif rh < rw:
                 return False
             else:
-                return random.random() < 0.5
+                return random.random() < orientation_bias
 
         divide(0, 0, sub_w, sub_h, choose_orientation(sub_w, sub_h))
 
@@ -803,10 +863,10 @@ def _generate_cube_maze(
         add_to_active(sx, sy)
         
         while active:
-            if random.random() < 0.5:
-                idx = len(active) - 1
-            else:
+            if random.random() < selection_bias:
                 idx = random.randrange(len(active))
+            else:
+                idx = len(active) - 1
             
             cx, cy = active[idx]
             
@@ -1033,6 +1093,13 @@ def _generate_thin_maze(
     stair_style: str,
     stair_count: int,
     stair_direction: str = 'random',
+    selection_bias: float = 0.5,
+    straightness: float = 0.5,
+    direction_bias: float = 0.5,
+    east_bias: float = 0.5,
+    orientation_bias: float = 0.5,
+    passage_bias: float = 0.5,
+    eller_merge_prob: float = 0.5,
     wall_mode: str = 'thin',
 ) -> MazeData:
     """Carve a rectangular maze in thin wall mode."""
@@ -1108,12 +1175,24 @@ def _generate_thin_maze(
             visited[sy][sx] = True
             stack.append((sx, sy))
 
-        dirs = [('N', (0, 1)), ('S', (0, -1)), ('E', (1, 0)), ('W', (-1, 0))]
+        last_dir = None
+        raw_dirs = [('N', (0, 1)), ('S', (0, -1)), ('E', (1, 0)), ('W', (-1, 0))]
         while stack:
             x, y = stack[-1]
-            random.shuffle(dirs)
+            chosen_dir = None
+            if last_dir and last_dir in raw_dirs:
+                ldname, (ldx, ldy) = last_dir
+                nx, ny = x + ldx, y + ldy
+                if 0 <= nx < width and 0 <= ny < depth and not visited[ny][nx]:
+                    if random.random() < straightness:
+                        chosen_dir = last_dir
+            if chosen_dir:
+                ordered_dirs = [chosen_dir] + [d for d in raw_dirs if d != chosen_dir]
+            else:
+                random.shuffle(raw_dirs)
+                ordered_dirs = list(raw_dirs)
             carved = False
-            for dname, (dx, dy) in dirs:
+            for dname, (dx, dy) in ordered_dirs:
                 nx, ny = x + dx, y + dy
                 if 0 <= nx < width and 0 <= ny < depth and not visited[ny][nx]:
                     cells[y][x][index[dname]] = False
@@ -1127,10 +1206,12 @@ def _generate_thin_maze(
                     else:
                         visited[ny][nx] = True
                         stack.append((nx, ny))
+                    last_dir = (dname, (dx, dy))
                     carved = True
                     break
             if not carved:
                 stack.pop()
+                last_dir = None
 
     elif algorithm == 'kruskal':
         uf = UnionFind(width * depth)
@@ -1194,7 +1275,7 @@ def _generate_thin_maze(
                 if s1 != s2:
                     same_room = (cell_to_room.get((x, y)) is not None and 
                                  cell_to_room.get((x, y)) == cell_to_room.get((x + 1, y)))
-                    if same_room or random.random() < 0.5:
+                    if same_room or random.random() < eller_merge_prob:
                         for idx in range(width):
                             if row_sets[idx] == s2:
                                 row_sets[idx] = s1
@@ -1252,7 +1333,7 @@ def _generate_thin_maze(
                 can_east = (x < width - 1)
                 
                 if can_north and can_east:
-                    if random.random() < 0.5:
+                    if random.random() >= direction_bias:
                         cells[y][x][0] = False
                         cells[y + 1][x][1] = False
                     else:
@@ -1339,18 +1420,31 @@ def _generate_thin_maze(
         mark_visited(cx, cy)
         
         while True:
-            dirs = [('N', (0, 1)), ('S', (0, -1)), ('E', (1, 0)), ('W', (-1, 0))]
             walk_stuck = False
+            last_dir = None
             while not walk_stuck:
-                random.shuffle(dirs)
+                raw_dirs = [('N', (0, 1)), ('S', (0, -1)), ('E', (1, 0)), ('W', (-1, 0))]
+                chosen_dir = None
+                if last_dir and last_dir in raw_dirs:
+                    ldname, (ldx, ldy) = last_dir
+                    nx, ny = cx + ldx, cy + ldy
+                    if 0 <= nx < width and 0 <= ny < depth and not visited[ny][nx]:
+                        if random.random() < straightness:
+                            chosen_dir = last_dir
+                if chosen_dir:
+                    ordered_dirs = [chosen_dir] + [d for d in raw_dirs if d != chosen_dir]
+                else:
+                    random.shuffle(raw_dirs)
+                    ordered_dirs = list(raw_dirs)
                 moved = False
-                for dname, (dx, dy) in dirs:
+                for dname, (dx, dy) in ordered_dirs:
                     nx, ny = cx + dx, cy + dy
                     if 0 <= nx < width and 0 <= ny < depth and not visited[ny][nx]:
                         cells[cy][cx][index[dname]] = False
                         cells[ny][nx][index[opposites[dname]]] = False
                         mark_visited(nx, ny)
                         cx, cy = nx, ny
+                        last_dir = (dname, (dx, dy))
                         moved = True
                         break
                 if not moved:
@@ -1390,7 +1484,7 @@ def _generate_thin_maze(
                     if r1 is not None and r1 == r2:
                         in_same_room = True
 
-                carve_east = (x < width - 1) and (in_same_room or random.random() < 0.5)
+                carve_east = (x < width - 1) and (in_same_room or random.random() < east_bias)
                 
                 if carve_east:
                     cells[y][x][2] = False
@@ -1478,7 +1572,7 @@ def _generate_thin_maze(
             
             if horizontal:
                 wy_sub = ry + random.randrange(rh - 1)
-                px_sub = rx + random.randrange(rw)
+                px_sub = rx + _biased_choice(rw, passage_bias)
                 
                 for x_sub in range(rx, rx + rw):
                     if cell_to_room.get((x_sub, wy_sub)) is None or cell_to_room.get((x_sub, wy_sub + 1)) is None:
@@ -1490,7 +1584,7 @@ def _generate_thin_maze(
                 divide(rx, wy_sub + 1, rw, ry + rh - wy_sub - 1, choose_orientation(rw, ry + rh - wy_sub - 1))
             else:
                 wx_sub = rx + random.randrange(rw - 1)
-                py_sub = ry + random.randrange(rh)
+                py_sub = ry + _biased_choice(rh, passage_bias)
                 
                 for y_sub in range(ry, ry + rh):
                     if cell_to_room.get((wx_sub, y_sub)) is None or cell_to_room.get((wx_sub + 1, y_sub)) is None:
@@ -1508,7 +1602,7 @@ def _generate_thin_maze(
             elif rh < rw:
                 return False
             else:
-                return random.random() < 0.5
+                return random.random() < orientation_bias
 
         divide(0, 0, width, depth, choose_orientation(width, depth))
 
@@ -1533,10 +1627,10 @@ def _generate_thin_maze(
         add_to_active(sx, sy)
         
         while active:
-            if random.random() < 0.5:
-                idx = len(active) - 1
-            else:
+            if random.random() < selection_bias:
                 idx = random.randrange(len(active))
+            else:
+                idx = len(active) - 1
             
             cx, cy = active[idx]
             
@@ -1784,6 +1878,14 @@ def generate_maze(
     stair_style: str = 'stair',
     stair_count: int = 1,
     stair_direction: str = 'random',
+    selection_bias: float = 0.5,
+    straightness: float = 0.5,
+    direction_bias: float = 0.5,
+    east_bias: float = 0.5,
+    orientation_bias: float = 0.5,
+    passage_bias: float = 0.5,
+    eller_merge_prob: float = 0.5,
+    radial_bias: float = 0.5,
 ) -> MazeData:
     """Generate a complete rectangular or polar maze with the selected algorithm."""
     # Disable mask for multilevel mazes
@@ -1805,6 +1907,7 @@ def generate_maze(
             stair_style=stair_style,
             stair_count=stair_count,
             stair_direction=stair_direction,
+            radial_bias=radial_bias,
         )
 
     if seed:
@@ -1822,7 +1925,11 @@ def generate_maze(
             num_wall_meshes=num_wall_meshes, num_floor_meshes=num_floor_meshes,
             num_roof_meshes=num_roof_meshes, mask_image=mask_image,
             mask_invert=mask_invert, floors=floors, stair_footprint=stair_footprint,
-            stair_style=stair_style, stair_count=stair_count, stair_direction=stair_direction
+            stair_style=stair_style, stair_count=stair_count, stair_direction=stair_direction,
+            selection_bias=selection_bias, straightness=straightness,
+            direction_bias=direction_bias, east_bias=east_bias,
+            orientation_bias=orientation_bias, passage_bias=passage_bias,
+            eller_merge_prob=eller_merge_prob
         )
     else:
         return _generate_thin_maze(
@@ -1836,7 +1943,11 @@ def generate_maze(
             num_wall_meshes=num_wall_meshes, num_floor_meshes=num_floor_meshes,
             num_roof_meshes=num_roof_meshes, mask_image=mask_image,
             mask_invert=mask_invert, floors=floors, stair_footprint=stair_footprint,
-            stair_style=stair_style, stair_count=stair_count, stair_direction=stair_direction
+            stair_style=stair_style, stair_count=stair_count, stair_direction=stair_direction,
+            selection_bias=selection_bias, straightness=straightness,
+            direction_bias=direction_bias, east_bias=east_bias,
+            orientation_bias=orientation_bias, passage_bias=passage_bias,
+            eller_merge_prob=eller_merge_prob
         )
 
 
@@ -2234,6 +2345,7 @@ def generate_polar_maze(
     stair_style: str = 'stair',
     stair_count: int = 1,
     stair_direction: str = 'random',
+    radial_bias: float = 0.5,
 ) -> MazeData:
     """Generate a polar (circular) maze.
 
@@ -2253,6 +2365,7 @@ def generate_polar_maze(
         stair_footprint: Stair footprint (polar supports only '1x1').
         stair_style: 'stair' or 'ramp'.
         stair_count: Number of stairs per floor transition.
+        radial_bias: 0 = prefer tangential, 1 = prefer radial movements.
 
     Returns:
         A fully populated MazeData instance for a polar grid.
@@ -2397,7 +2510,17 @@ def generate_polar_maze(
                 neighbors = _get_polar_neighbors(r, theta, rings, ring_sectors)
                 unvisited = [n for n in neighbors if not visited[n[0]][n[1]]]
                 if unvisited:
-                    nr, ntheta = random.choice(unvisited)
+                    radial = [n for n in unvisited if n[0] != r]
+                    angular = [n for n in unvisited if n[0] == r]
+                    if radial and angular:
+                        if random.random() < radial_bias:
+                            nr, ntheta = random.choice(radial)
+                        else:
+                            nr, ntheta = random.choice(angular)
+                    elif radial:
+                        nr, ntheta = random.choice(radial)
+                    else:
+                        nr, ntheta = random.choice(angular)
                     if nr == r:
                         Nr = ring_sectors[r]
                         if ntheta == (theta + 1) % Nr:

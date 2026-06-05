@@ -110,6 +110,24 @@ class VIEW3D_PT_fire_maze_algorithm(bpy.types.Panel):
         props = context.scene.fire_maze
         col = layout.column(align=True)
         col.prop(props, "algorithm")
+        col.separator(factor=0.5)
+        
+        # Draw algorithm-specific parameters
+        if props.algorithm == 'growing_tree':
+            col.prop(props, "selection_bias", slider=True)
+        elif props.algorithm in ('dfs', 'hunt_and_kill'):
+            col.prop(props, "straightness", slider=True)
+            if props.grid_type == 'polar' and props.algorithm == 'dfs':
+                col.prop(props, "radial_bias", slider=True)
+        elif props.algorithm == 'binary_tree':
+            col.prop(props, "direction_bias", slider=True)
+        elif props.algorithm == 'sidewinder':
+            col.prop(props, "east_bias", slider=True)
+        elif props.algorithm == 'recursive_division':
+            col.prop(props, "orientation_bias", slider=True)
+            col.prop(props, "passage_bias", slider=True)
+        elif props.algorithm == 'eller':
+            col.prop(props, "eller_merge_prob", slider=True)
         
         if props.grid_type == 'rect':
             col.separator(factor=0.5)

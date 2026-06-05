@@ -521,6 +521,14 @@ class MAZE_OT_generate(bpy.types.Operator):
             stair_style=props.stair_style,
             stair_count=props.stair_count,
             stair_direction=props.stair_direction,
+            selection_bias=props.selection_bias,
+            straightness=props.straightness,
+            direction_bias=props.direction_bias,
+            east_bias=props.east_bias,
+            orientation_bias=props.orientation_bias,
+            passage_bias=props.passage_bias,
+            eller_merge_prob=props.eller_merge_prob,
+            radial_bias=props.radial_bias,
         )
 
         col = _find_or_create_maze_collection("FireMaze")
