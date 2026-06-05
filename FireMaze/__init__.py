@@ -10,12 +10,12 @@ import logging
 bl_info = {
     "name": "FireMaze",
     "author": "FireRat666",
-    "version": (3, 0, 0),
+    "version": (3, 1, 0),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar > FireRat",
     "description": "Random maze generator with tiled construction",
     "category": "Add Mesh",
-    "wiki_url": "https://github.com/FireRat666/FireMaze/wiki",
+    "wiki_url": "https://github.com/FireRat666/FireMaze/",
     "tracker_url": "https://github.com/FireRat666/FireMaze/issues",
 }
 
