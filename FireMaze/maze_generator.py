@@ -968,19 +968,19 @@ def _generate_cube_maze(
             for x in range(sub_w):
                 if blocked[y][x]:
                     # Center cell is a wall
-                    cells[2 * y + 1][2 * x + 1][0] = True
+                    cells[0][2 * y + 1][2 * x + 1][0] = True
                     for idx in range(1, 7):
-                        cells[2 * y + 1][2 * x + 1][idx] = -1
+                        cells[0][2 * y + 1][2 * x + 1][idx] = -1
                     # Neighbors
                     for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
                         nx, ny = 2 * x + 1 + dx, 2 * y + 1 + dy
                         if 0 <= nx < width and 0 <= ny < depth:
-                            cells[ny][nx][0] = True
+                            cells[0][ny][nx][0] = True
                             for idx in range(1, 7):
-                                cells[ny][nx][idx] = -1
+                                cells[0][ny][nx][idx] = -1
         # Recompute entrance_list/exit_list and set against final cells state
-        entrance_list = [item for item in entrance_list if not cells[item[1]][item[0]][0]]
-        exit_list = [item for item in exit_list if not cells[item[1]][item[0]][0]]
+        entrance_list = [item for item in entrance_list if not cells[0][item[1]][item[0]][0]]
+        exit_list = [item for item in exit_list if not cells[0][item[1]][item[0]][0]]
         maze_data.entrance = entrance_list[0] if entrance_list else (1, 1, 'S')
         maze_data.exits = exit_list
     
@@ -1708,18 +1708,18 @@ def _generate_thin_maze(
         for y in range(depth):
             for x in range(width):
                 if blocked[y][x]:
-                    cells[y][x][8] = -2
-                    cells[y][x][9] = -2
-                    cells[y][x][0] = cells[y][x][1] = cells[y][x][2] = cells[y][x][3] = False
+                    cells[0][y][x][8] = -2
+                    cells[0][y][x][9] = -2
+                    cells[0][y][x][0] = cells[0][y][x][1] = cells[0][y][x][2] = cells[0][y][x][3] = False
                     
                     if y + 1 < depth and not blocked[y+1][x]:
-                        cells[y+1][x][1] = True
+                        cells[0][y+1][x][1] = True
                     if y - 1 >= 0 and not blocked[y-1][x]:
-                        cells[y-1][x][0] = True
+                        cells[0][y-1][x][0] = True
                     if x + 1 < width and not blocked[y][x+1]:
-                        cells[y][x+1][3] = True
+                        cells[0][y][x+1][3] = True
                     if x - 1 >= 0 and not blocked[y][x-1]:
-                        cells[y][x-1][2] = True
+                        cells[0][y][x-1][2] = True
         # Filter entrances and exits to exclude masked cells
         entrance_list = [item for item in entrance_list if not blocked[item[1]][item[0]]]
         exit_list = [item for item in exit_list if not blocked[item[1]][item[0]]]
@@ -2072,7 +2072,7 @@ def _find_shortest_path_3d(maze_data, wall_mode, cells_3d):
 
     queue = deque([(start_z, start_y, start_x)])
     parent = {(start_z, start_y, start_x): None}
-    dirs = [('N', 0, 1, 0), ('S', 0, -1, 1), ('E', 1, 0, 2), ('W', -1, 0, 3)]
+    dirs = [('N', 1, 0, 0), ('S', -1, 0, 1), ('E', 0, 1, 2), ('W', 0, -1, 3)]
 
     while queue:
         cz, cy, cx = queue.popleft()
