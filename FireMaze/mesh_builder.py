@@ -6,93 +6,71 @@ lightmap UV generation, coplanar optimisation, and prop/decor spawning.
 """
 
 import math
-import random
+import random as _real_random
+random = _real_random.Random()
 import bpy
 import bmesh
 import logging
+import threading
 from collections import deque
 from contextlib import contextmanager
 from mathutils import Matrix, Vector
-from .utils import is_valid_ref, _resolve_cells_3d
+from .utils import is_valid_ref, _resolve_cells_3d, _get_stair_footprint_coords
 
 logger = logging.getLogger(__name__)
 
 
-def _build_stair_top_bottom_sets(stairs):
+def _build_stair_top_bottom_sets(maze_data):
     """Return bottom_set (stair start level) and top_set (landing level) sets of (z, y, x).
 
     Args:
-        stairs: List of stair dicts.
+        maze_data: MazeData instance.
 
     Returns:
         Tuple of (bottom_set, top_set) where each is a set of (z, y, x) tuples.
     """
     bottom_set = set()
     top_set = set()
-    for s in stairs:
+    is_polar = (maze_data.grid_type == 'polar')
+    rings = maze_data.polar_rings if is_polar else 0
+    for s in maze_data.stairs:
         z = s.get('z', 0)
         sx, sy = s.get('x', 0), s.get('y', 0)
-        fp = s.get('footprint', '1x1')
-        orient = s.get('orientation', 'N')
-        coords = _get_stair_fp_coords(sx, sy, fp, orient)
-        for cx, cy in coords:
-            bottom_set.add((z, cy, cx))
-            top_set.add((z + 1, cy, cx))
+        if is_polar:
+            stheta, sr = sx, sy
+            if sy >= rings and sx < rings:
+                stheta, sr = sy, sx
+            bottom_set.add((z, sr, stheta))
+            top_set.add((z + 1, sr, stheta))
+        else:
+            fp = s.get('footprint', '1x1')
+            orient = s.get('orientation', 'N')
+            coords = _get_stair_footprint_coords(sx, sy, fp, orient)
+            for cx, cy in coords:
+                bottom_set.add((z, cy, cx))
+                top_set.add((z + 1, cy, cx))
     return bottom_set, top_set
 
 
-def _get_stair_fp_coords(x, y, footprint, orientation):
-    """Return list of (cx, cy) for a stair footprint.
-
-    Identical to maze_generator._get_stair_footprint_coords but duplicated
-    here to avoid circular imports.
-
-    Args:
-        x: Base cell X.
-        y: Base cell Y.
-        footprint: '1x1', '1x2', or '2x2'.
-        orientation: 'N', 'S', 'E', 'W'.
-
-    Returns:
-        Deduplicated list of (cx, cy) tuples.
-    """
-    coords = [(x, y)]
-    if footprint == '1x2':
-        if orientation in ('E', 'W'):
-            coords.append((x + 1, y))
-        else:
-            coords.append((x, y + 1))
-    elif footprint == '2x2':
-        for dy in range(2):
-            for dx in range(2):
-                coords.append((x + dx, y + dy))
-    seen = set()
-    result = []
-    for c in coords:
-        if c not in seen:
-            seen.add(c)
-            result.append(c)
-    return result
-
-
-_current_bmesh_cache = None
+_local_cache = threading.local()
 
 
 @contextmanager
 def _bmesh_cache_context():
     """Context manager for BMesh cache lifecycle."""
-    global _current_bmesh_cache
-    _current_bmesh_cache = {}
+    global _local_cache
+    _local_cache.cache = {}
     try:
         yield
     finally:
-        if _current_bmesh_cache:
-            for bm in _current_bmesh_cache.values():
+        cache = getattr(_local_cache, 'cache', None)
+        if cache:
+            for bm in cache.values():
                 try:
                     bm.free()
                 except Exception as e:
                     logger.warning(f"Failed to free BMesh: {e}")
-        _current_bmesh_cache = None
+        _local_cache.cache = None
 
 
 def _create_bmesh_element(element_type: str, materials_dict: dict):
@@ -165,7 +143,7 @@ def _prepare_maze_building_context(props, maze_data, context, collection, force_
     import copy
     cells_3d = copy.deepcopy(cells_3d_orig)
     z_range = range(props.edit_floor_level, props.edit_floor_level + 1) if props.is_editing else range(floors)
-    stair_bottom_cells, stair_top_cells = _build_stair_top_bottom_sets(maze_data.stairs)
+    stair_bottom_cells, stair_top_cells = _build_stair_top_bottom_sets(maze_data)
     stair_cells = stair_bottom_cells | stair_top_cells
 
     if props.wall_mode == 'cube':
@@ -340,8 +318,8 @@ def _get_bmesh_from_cache(src_mesh):
 
 def _get_bmesh_cache():
     """Return the appropriate BMesh cache (parameter or global module cache)."""
-    global _current_bmesh_cache
-    return _current_bmesh_cache
+    global _local_cache
+    return getattr(_local_cache, 'cache', None)
 
 
 def _add_mesh_at(bm, src_mesh, matrix, uv_layer, final_materials_list=None):
@@ -711,95 +689,145 @@ def _optimize_coplanar_on_obj(obj):
 
 def _compute_grid_distances(maze_data, wall_mode):
     """BFS distance from entrance to every reachable cell (used for distance-gradient vertex paint)."""
+    cells_3d, floors = _resolve_cells_3d(maze_data.cells)
+    
     if maze_data.grid_type == 'polar':
         start_r = maze_data.entrance[0]
         start_theta = maze_data.entrance[1]
+        start_z = 0
         
         distances = {}
-        queue = deque([(start_r, start_theta, 0)])
-        distances[(start_r, start_theta)] = 0
+        queue = deque([(start_z, start_r, start_theta, 0)])
+        distances[(start_z, start_r, start_theta)] = 0
         
         rings = maze_data.polar_rings
         ring_sectors = maze_data.ring_sectors
         
+        # Build stair edge map for polar 3D traversal
+        stair_up = {}
+        stair_down = {}
+        for s in maze_data.stairs:
+            sz = s['z']
+            sx, sy = s['x'], s['y']
+            stheta, sr = sx, sy
+            if sy >= rings and sx < rings:
+                stheta, sr = sy, sx
+            key_up = (sz, sr, stheta)
+            key_down = (sz + 1, sr, stheta)
+            stair_up[key_up] = (sz + 1, sr, stheta)
+            stair_down[key_down] = (sz, sr, stheta)
+            
         while queue:
-            r, theta, d = queue.popleft()
+            cz, r, theta, d = queue.popleft()
             Nr = ring_sectors[r]
             
             accessible = []
-            if r >= 1 and not maze_data.cells[r][theta][0]:
-                accessible.append((r, (theta + 1) % Nr))
-            if r >= 1 and not maze_data.cells[r][(theta - 1) % Nr][0]:
-                accessible.append((r, (theta - 1) % Nr))
-            if r > 0 and not maze_data.cells[r][theta][1]:
+            # Neighbors in current floor cz
+            if r >= 1 and not cells_3d[cz][r][theta][0]:
+                accessible.append((cz, r, (theta + 1) % Nr))
+            if r >= 1 and not cells_3d[cz][r][(theta - 1) % Nr][0]:
+                accessible.append((cz, r, (theta - 1) % Nr))
+            if r > 0 and not cells_3d[cz][r][theta][1]:
                 N_in = ring_sectors[r - 1]
                 if N_in == Nr:
-                    accessible.append((r - 1, theta))
+                    accessible.append((cz, r - 1, theta))
                 elif N_in == 1:
-                    accessible.append((r - 1, 0))
+                    accessible.append((cz, r - 1, 0))
                 else:
-                    accessible.append((r - 1, theta // 2))
+                    accessible.append((cz, r - 1, theta // 2))
             if r < rings - 1:
                 N_out = ring_sectors[r + 1]
                 if N_out == Nr:
-                    if not maze_data.cells[r + 1][theta][1]:
-                        accessible.append((r + 1, theta))
+                    if not cells_3d[cz][r + 1][theta][1]:
+                        accessible.append((cz, r + 1, theta))
                 elif Nr == 1:
                     for t in range(N_out):
-                        if not maze_data.cells[r + 1][t][1]:
-                            accessible.append((r + 1, t))
+                        if not cells_3d[cz][r + 1][t][1]:
+                            accessible.append((cz, r + 1, t))
                 else:
-                    if not maze_data.cells[r + 1][2 * theta][1]:
-                        accessible.append((r + 1, 2 * theta))
-                    if not maze_data.cells[r + 1][2 * theta + 1][1]:
-                        accessible.append((r + 1, 2 * theta + 1))
-            
-            for nr, ntheta in accessible:
-                if (nr, ntheta) not in distances:
-                    distances[(nr, ntheta)] = d + 1
-                    queue.append((nr, ntheta, d + 1))
+                    if not cells_3d[cz][r + 1][2 * theta][1]:
+                        accessible.append((cz, r + 1, 2 * theta))
+                    if not cells_3d[cz][r + 1][2 * theta + 1][1]:
+                        accessible.append((cz, r + 1, 2 * theta + 1))
+                        
+            # Stair connections (cz + 1 and cz - 1)
+            node = (cz, r, theta)
+            if node in stair_up:
+                accessible.append(stair_up[node])
+            if node in stair_down:
+                accessible.append(stair_down[node])
+                
+            for nz, nr, ntheta in accessible:
+                nn = (nz, nr, ntheta)
+                if nn not in distances:
+                    distances[nn] = d + 1
+                    queue.append((nz, nr, ntheta, d + 1))
         return distances
 
     width = maze_data.width
     depth = maze_data.depth
-    # Start at entrance
     start_x = maze_data.entrance[0]
     start_y = maze_data.entrance[1]
+    start_z = 0
     
     distances = {}
-    queue = deque([(start_x, start_y, 0)])
-    distances[(start_x, start_y)] = 0
+    queue = deque([(start_z, start_y, start_x, 0)])
+    distances[(start_z, start_y, start_x)] = 0
     
+    # Build stair edge map for rectangular 3D traversal
+    stair_up = {}
+    stair_down = {}
+    for s in maze_data.stairs:
+        sz = s['z']
+        sx, sy = s['x'], s['y']
+        fp = s.get('footprint', '1x1')
+        orient = s.get('orientation', 'N')
+        coords = _get_stair_footprint_coords(sx, sy, fp, orient)
+        for cx, cy in coords:
+            if 0 <= cy < depth and 0 <= cx < width:
+                key_up = (sz, cy, cx)
+                key_down = (sz + 1, cy, cx)
+                stair_up[key_up] = (sz + 1, cy, cx)
+                stair_down[key_down] = (sz, cy, cx)
+                
     while queue:
-        cx, cy, d = queue.popleft()
+        cz, cy, cx, d = queue.popleft()
         
-        # Determine neighbors
+        # Determine neighbors in current floor cz
         neighbors = []
         if wall_mode == 'thin':
-            c = maze_data.cells[cy][cx]
+            c = cells_3d[cz][cy][cx]
             # North
             if not c[0] and cy + 1 < depth:
-                neighbors.append((cx, cy + 1))
+                neighbors.append((cz, cy + 1, cx))
             # South
             if not c[1] and cy - 1 >= 0:
-                neighbors.append((cx, cy - 1))
+                neighbors.append((cz, cy - 1, cx))
             # East
             if not c[2] and cx + 1 < width:
-                neighbors.append((cx + 1, cy))
+                neighbors.append((cz, cy, cx + 1))
             # West
             if not c[3] and cx - 1 >= 0:
-                neighbors.append((cx - 1, cy))
+                neighbors.append((cz, cy, cx - 1))
         else: # cube
             for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
                 nx, ny = cx + dx, cy + dy
                 if 0 <= nx < width and 0 <= ny < depth:
-                    if not maze_data.cells[ny][nx][0]:
-                        neighbors.append((nx, ny))
+                    if not cells_3d[cz][ny][nx][0]:
+                        neighbors.append((cz, ny, nx))
                         
-        for nx, ny in neighbors:
-            if (nx, ny) not in distances:
-                distances[(nx, ny)] = d + 1
-                queue.append((nx, ny, d + 1))
+        # Stair connections
+        node = (cz, cy, cx)
+        if node in stair_up:
+            neighbors.append(stair_up[node])
+        if node in stair_down:
+            neighbors.append(stair_down[node])
+            
+        for nz, ny, nx in neighbors:
+            nn = (nz, ny, nx)
+            if nn not in distances:
+                distances[nn] = d + 1
+                queue.append((nz, ny, nx, d + 1))
                 
     return distances
 
@@ -821,6 +849,12 @@ def _apply_vertex_painting_on_obj(obj, props, maze_data):
     ts = props.tile_size
     wall_mode = props.wall_mode
     
+    tiled = props.wall_height_tiled
+    tiles_high = props.wall_height_tiles if tiled else 1
+    wh = ts * tiles_high if tiled else props.wall_height
+    if wh <= 0:
+        wh = 2.0
+        
     # Pre-calculate bounding box heights for relative height gradients
     coords_z = [v.co.z for v in bm.verts]
     z_min = min(coords_z) if coords_z else 0.0
@@ -836,78 +870,95 @@ def _apply_vertex_painting_on_obj(obj, props, maze_data):
         if max_d == 0:
             max_d = 1
             
-    # Identify dead ends
+    # Identify dead ends (3D)
     dead_ends = set()
     if mode == 'blend':
+        cells_3d, floors = _resolve_cells_3d(maze_data.cells)
         if maze_data.grid_type == 'polar':
             rings = maze_data.polar_rings
             ring_sectors = maze_data.ring_sectors
-            for r in range(rings):
-                for theta in range(ring_sectors[r]):
-                    Nr = ring_sectors[r]
-                    accessible_count = 0
-                    if r >= 1 and not maze_data.cells[r][theta][0]:
-                        accessible_count += 1
-                    if r >= 1 and not maze_data.cells[r][(theta - 1) % Nr][0]:
-                        accessible_count += 1
-                    if r > 0 and not maze_data.cells[r][theta][1]:
-                        N_in = ring_sectors[r - 1]
-                        if N_in == Nr:
+            for z in range(floors):
+                for r in range(rings):
+                    for theta in range(ring_sectors[r]):
+                        Nr = ring_sectors[r]
+                        accessible_count = 0
+                        if r >= 1 and not cells_3d[z][r][theta][0]:
                             accessible_count += 1
-                        elif N_in == 1:
+                        if r >= 1 and not cells_3d[z][r][(theta - 1) % Nr][0]:
                             accessible_count += 1
-                        else:
-                            accessible_count += 1
-                    if r < rings - 1:
-                        N_out = ring_sectors[r + 1]
-                        if N_out == Nr:
-                            if not maze_data.cells[r + 1][theta][1]:
+                        if r > 0 and not cells_3d[z][r][theta][1]:
+                            N_in = ring_sectors[r - 1]
+                            if N_in == Nr:
                                 accessible_count += 1
-                        elif Nr == 1:
-                            for t in range(N_out):
-                                if not maze_data.cells[r + 1][t][1]:
+                            elif N_in == 1:
+                                accessible_count += 1
+                            else:
+                                accessible_count += 1
+                        if r < rings - 1:
+                            N_out = ring_sectors[r + 1]
+                            if N_out == Nr:
+                                if not cells_3d[z][r + 1][theta][1]:
                                     accessible_count += 1
-                        else:
-                            if not maze_data.cells[r + 1][2 * theta][1]:
-                                accessible_count += 1
-                            if not maze_data.cells[r + 1][2 * theta + 1][1]:
-                                accessible_count += 1
-                    if accessible_count == 1:
-                        # Exclude entrance and exits
-                        is_ent_or_exit = False
-                        if maze_data.entrance and (r, theta) == maze_data.entrance[0:2]:
-                            is_ent_or_exit = True
-                        if maze_data.exits:
-                            for ex_r, ex_theta, _ in maze_data.exits:
-                                if (r, theta) == (ex_r, ex_theta):
+                            elif Nr == 1:
+                                for t in range(N_out):
+                                    if not cells_3d[z][r + 1][t][1]:
+                                        accessible_count += 1
+                            else:
+                                if not cells_3d[z][r + 1][2 * theta][1]:
+                                    accessible_count += 1
+                                if not cells_3d[z][r + 1][2 * theta + 1][1]:
+                                    accessible_count += 1
+                        if accessible_count == 1:
+                            # Exclude entrance and exits (on active floors)
+                            is_ent_or_exit = False
+                            if z == 0 and maze_data.entrance and (r, theta) == maze_data.entrance[0:2]:
                                     is_ent_or_exit = True
-                        if not is_ent_or_exit and r > 0:
-                            dead_ends.add((r, theta))
+                            if z == floors - 1 and maze_data.exits:
+                                for ex_r, ex_theta, _ in maze_data.exits:
+                                    if (r, theta) == (ex_r, ex_theta):
+                                        is_ent_or_exit = True
+                            if not is_ent_or_exit and r > 0:
+                                dead_ends.add((z, r, theta))
         else:
-            for cy in range(maze_data.depth):
-                for cx in range(maze_data.width):
-                    if wall_mode == 'thin':
-                        c = maze_data.cells[cy][cx]
-                        if sum(c[:4]) == 3:
-                            dead_ends.add((cx, cy))
-                    else: # cube
-                        if not maze_data.cells[cy][cx][0]:
-                            open_neighbors = 0
-                            for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
-                                nx, ny = cx + dx, cy + dy
-                                if 0 <= nx < maze_data.width and 0 <= ny < maze_data.depth:
-                                    if not maze_data.cells[ny][nx][0]:
-                                        open_neighbors += 1
-                            if open_neighbors == 1:
-                                dead_ends.add((cx, cy))
+            for z in range(floors):
+                for cy in range(maze_data.depth):
+                    for cx in range(maze_data.width):
+                        is_ent_or_exit = False
+                        if z == 0 and maze_data.entrance and (cx, cy) == (maze_data.entrance[0], maze_data.entrance[1]):
+                            is_ent_or_exit = True
+                        if z == floors - 1 and maze_data.exits:
+                            for ex_val in maze_data.exits:
+                                if (cx, cy) == (ex_val[0], ex_val[1]):
+                                    is_ent_or_exit = True
+                        if is_ent_or_exit:
+                            continue
+
+                        if wall_mode == 'thin':
+                            c = cells_3d[z][cy][cx]
+                            if sum(c[:4]) == 3:
+                                dead_ends.add((z, cy, cx))
+                        else: # cube
+                            if not cells_3d[z][cy][cx][0]:
+                                open_neighbors = 0
+                                for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+                                    nx, ny = cx + dx, cy + dy
+                                    if 0 <= nx < maze_data.width and 0 <= ny < maze_data.depth:
+                                        if not cells_3d[z][ny][nx][0]:
+                                            open_neighbors += 1
+                                if open_neighbors == 1:
+                                    dead_ends.add((z, cy, cx))
 
     # Pre-calculate guide path cell set for faster lookup in path mode
     guide_cells = set(maze_data.guide_path) if maze_data.guide_path else set()
     guide_world_coords = []
     if mode == 'path' and guide_cells:
         for coord in guide_cells:
+            # Handles both 2D and 3D paths
+            if len(coord) == 3:
+                gz_c, gr, gtheta = coord
+            else:
+                gz_c, gr, gtheta = 0, coord[0], coord[1]
             if maze_data.grid_type == 'polar':
-                gr, gtheta = coord
                 if gr == 0:
                     gcx_world, gcy_world = 0.0, 0.0
                 else:
@@ -918,17 +969,20 @@ def _apply_vertex_painting_on_obj(obj, props, maze_data):
                     gcx_world = gr_mid * math.cos(gtheta_mid)
                     gcy_world = gr_mid * math.sin(gtheta_mid)
             else:
-                gcx, gcy = coord
+                # rect coordinate (last two values)
+                gcx, gcy = coord[-2], coord[-1]
                 gcx_world = gcx * ts + ts / 2
                 gcy_world = gcy * ts + ts / 2
-            guide_world_coords.append((gcx_world, gcy_world))
+            guide_world_coords.append((gz_c, gcx_world, gcy_world))
 
     for face in bm.faces:
-
         for loop in face.loops:
             co = loop.vert.co
             px, py, pz = co.x, co.y, co.z
             h_rel = (pz - z_min) / z_range
+            
+            # Map vertex to floor level z
+            z = max(0, min(maze_data.floors - 1, int(pz / wh)))
             
             # Map vertex to cell
             if maze_data.grid_type == 'polar':
@@ -1016,7 +1070,8 @@ def _apply_vertex_painting_on_obj(obj, props, maze_data):
                 elif h_rel < 0.05:
                     b_val = max(0.0, 1.0 - h_rel / 0.05)
                 # Soot (A): dead ends
-                a_val = 1.0 if (cx, cy) in dead_ends else 0.0
+                de_key = (z, cy, cx) if maze_data.grid_type != 'polar' else (z, r, theta)
+                a_val = 1.0 if de_key in dead_ends else 0.0
                 
                 r_col = r_val * intensity
                 g_col = g_val * intensity
@@ -1028,10 +1083,11 @@ def _apply_vertex_painting_on_obj(obj, props, maze_data):
                     r_col, g_col, b_col, a_col = 1.0, 1.0, 1.0, 1.0
                 else:
                     min_d = float('inf')
-                    for gcx_world, gcy_world in guide_world_coords:
-                        d = math.sqrt((px - gcx_world)**2 + (py - gcy_world)**2)
-                        if d < min_d:
-                            min_d = d
+                    for gz_c, gcx_world, gcy_world in guide_world_coords:
+                        if gz_c == z:
+                            d = math.sqrt((px - gcx_world)**2 + (py - gcy_world)**2)
+                            if d < min_d:
+                                min_d = d
                     
                     radius = 0.75 * ts
                     f_path = max(0.0, 1.0 - min_d / radius)
@@ -1039,10 +1095,10 @@ def _apply_vertex_painting_on_obj(obj, props, maze_data):
                     g_col = f_path * intensity
                     b_col = 0.0
                     a_col = 0.0
-
                     
             elif mode == 'distance':
-                d_val = distances.get((cx, cy), 0)
+                d_key = (z, cy, cx) if maze_data.grid_type != 'polar' else (z, r, theta)
+                d_val = distances.get(d_key, 0)
                 norm_d = d_val / max_d
                 val = norm_d * intensity
                 r_col, g_col, b_col, a_col = val, val, val, 1.0
@@ -2319,7 +2375,8 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix):
                                         is_exit = True
                                         break
                                         
-                            if not is_entrance and not is_exit:
+                            is_stair = (z, r, theta) in ctx['stair_cells']
+                            if not is_entrance and not is_exit and not is_stair:
                                 if src_out_wall and alignment != 'procedural':
                                     if alignment == 'trapezoid':
                                         _add_wall_polar_trapezoid(bm_wall, src_out_wall, ctx['mat_wall_offset'], uv_wall, wall_materials, 'OUT', r, theta, Nr, ctx['ts'], z_off, ctx['centered'], flip_out=True)
@@ -2460,12 +2517,13 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix):
                             
                             is_entrance = is_entrance_actual if name_suffix != "_EditHelper" else False
                             is_exit = is_exit_actual if name_suffix != "_EditHelper" else False
+                            is_stair = (z, r, theta) in ctx['stair_cells']
                             
                             sh_out = ctx['seg_h']
-                            if name_suffix == "_EditHelper" and (is_entrance_actual or is_exit_actual):
+                            if name_suffix == "_EditHelper" and (is_entrance_actual or is_exit_actual or is_stair):
                                 sh_out = 0.02 * ctx['ts']
                                 
-                            if not is_entrance and not is_exit:
+                            if not is_entrance and not is_exit and not is_stair:
                                 if src_out_wall and alignment != 'procedural':
                                     if props.thin_wall_double_sided:
                                         if alignment == 'trapezoid':
@@ -2622,6 +2680,10 @@ def _build_polar_stairs(ctx, props, maze_data, created_objects, name_suffix):
                 if s.get('z') != zstair:
                     continue
                 sx, sy = s.get('x', 0), s.get('y', 0)
+                stheta, sr = sx, sy
+                if sy >= maze_data.polar_rings and sx < maze_data.polar_rings:
+                    stheta, sr = sy, sx
+                sx, sy = stheta, sr
                 style = s.get('type', 'stair')
                 
                 # Polar coordinates translation and rotation alignment
@@ -2878,15 +2940,7 @@ def build_maze_objects(props, maze_data, context, collection=None, force_simple=
         return build_maze_objects_impl(props, maze_data, context, collection, force_simple, name_suffix)
 
 
-def build_maze_objects_impl(props, maze_data, context, collection=None, force_simple=False, name_suffix=""):
-    """Build all rectangular maze meshes (floor, walls, roof, stairs, guide path, colliders) into a collection."""
-    if maze_data.grid_type == 'polar':
-        return _build_polar_maze_objects_impl(props, maze_data, context, collection, force_simple, name_suffix)
 
-
-    ctx = _prepare_maze_building_context(props, maze_data, context, collection, force_simple)
-    ts = ctx['ts']
-    tiled = ctx['tiled']
 def _build_rect_cube_floor(ctx, maze_data, created_objects, name_suffix):
     # Floor
     bm_floor, uv_floor, floor_materials = _create_bmesh_element("floor", ctx['materials'])
@@ -3082,9 +3136,9 @@ def _build_rect_thin_floor(ctx, maze_data, created_objects, name_suffix):
                 if (y, x) in stair_top_cells_z:
                     continue
                 if len(level_cells[y][x]) > 8:
-                    floor_idx = level_cells[y][x][8] if len(level_cells[y][x]) > 8 else -1
+                    floor_idx = level_cells[y][x][8]
                 else:
-                    floor_idx = level_cells[y][x][6] if len(level_cells[y][x]) > 6 else -1
+                    floor_idx = -1
                 if floor_idx == -2:
                     continue
                 if ctx['floor_meshes_list'] and isinstance(floor_idx, int) and 0 <= floor_idx < len(ctx['floor_meshes_list']):
@@ -3104,8 +3158,6 @@ def _build_rect_thin_floor(ctx, maze_data, created_objects, name_suffix):
 
 
 def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix):
-    original_cells = maze_data.cells
-
     # Walls and caps
     bm_wall, uv_wall, wall_materials = _create_bmesh_element("wall", ctx['materials'])
     bm_cap, uv_cap, cap_materials = _create_bmesh_element("end_cap", ctx['materials'])
@@ -3115,8 +3167,8 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix):
     tw = ctx['wt'] / 2
 
     for z in ctx['z_range']:
-        maze_data.cells = ctx['cells_3d'][z]
-        actual_segments = _get_wall_segments(maze_data, ctx['cells_3d'][z])
+        level_cells = ctx['cells_3d'][z]
+        actual_segments = _get_wall_segments(maze_data, level_cells)
         if name_suffix == "_EditHelper":
             segments = []
             for y in range(maze_data.depth + 1):
@@ -3149,26 +3201,26 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix):
                 hw = z_off + sh / 2
                 wall_idx = -1
                 if seg_type == 'H':
-                    if len(maze_data.cells[0][0]) > 8:
+                    if len(level_cells[0][0]) > 8:
                         if b < maze_data.depth:
-                            wall_idx = maze_data.cells[b][a][5] if len(maze_data.cells[b][a]) > 5 else -1
+                            wall_idx = level_cells[b][a][5] if len(level_cells[b][a]) > 5 else -1
                         else:
-                            wall_idx = maze_data.cells[b - 1][a][4] if len(maze_data.cells[b - 1][a]) > 4 else -1
+                            wall_idx = level_cells[b - 1][a][4] if len(level_cells[b - 1][a]) > 4 else -1
                     else:
                         if b < maze_data.depth and a < maze_data.width:
-                            wall_idx = maze_data.cells[b][a][4] if len(maze_data.cells[b][a]) > 4 else -1
+                            wall_idx = level_cells[b][a][4] if len(level_cells[b][a]) > 4 else -1
                         else:
                             # Boundary wall fallback for 8-item layout
                             wall_idx = a % len(ctx['wall_meshes_list']) if len(ctx['wall_meshes_list']) > 0 else -1
                 else:
-                    if len(maze_data.cells[0][0]) > 8:
+                    if len(level_cells[0][0]) > 8:
                         if a < maze_data.width:
-                            wall_idx = maze_data.cells[b][a][7] if len(maze_data.cells[b][a]) > 7 else -1
+                            wall_idx = level_cells[b][a][7] if len(level_cells[b][a]) > 7 else -1
                         else:
-                            wall_idx = maze_data.cells[b][a - 1][6] if len(maze_data.cells[b][a - 1]) > 6 else -1
+                            wall_idx = level_cells[b][a - 1][6] if len(level_cells[b][a - 1]) > 6 else -1
                     else:
                         if a < maze_data.width and b < maze_data.depth:
-                            wall_idx = maze_data.cells[b][a][5] if len(maze_data.cells[b][a]) > 5 else -1
+                            wall_idx = level_cells[b][a][5] if len(level_cells[b][a]) > 5 else -1
                         else:
                             # Boundary wall fallback for 8-item layout
                             wall_idx = b % len(ctx['wall_meshes_list']) if len(ctx['wall_meshes_list']) > 0 else -1
@@ -3333,8 +3385,8 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix):
                             # Single centered face at 0.0 offset (and no caps)
                             add_vertical_face('+X', Matrix.Rotation(math.radians(-90), 4, 'Z') @ Matrix.Rotation(math.radians(-90), 4, 'X') @ Matrix.Rotation(math.radians(180), 4, 'Z'), ctx['custom_wall'], 0.0,
                                               [(0,0),(1,0),(1,1),(0,1)],
-                                               [(0.0, -ctx['ts']/2, -sh/2), (0.0, ctx['ts']/2, -sh/2), (0.0, ctx['ts']/2, sh/2), (0.0, -ctx['ts']/2, sh/2)])
-    maze_data.cells = original_cells
+                                              [(0.0, -ctx['ts']/2, -sh/2), (0.0, ctx['ts']/2, -sh/2), (0.0, ctx['ts']/2, sh/2), (0.0, -ctx['ts']/2, sh/2)])
+
 
     # Handle single wall object merge of caps
     if props.single_wall_object and bm_cap.verts:
@@ -3378,9 +3430,8 @@ def _build_rect_thin_roof(ctx, maze_data, created_objects, name_suffix):
     # Roof
     if name_suffix != "_EditHelper":
         bm_roof, uv_roof, roof_materials = _create_bmesh_element("roof", ctx['materials'])
-        original_cells = maze_data.cells
         for z in ctx['z_range']:
-            maze_data.cells = ctx['cells_3d'][z]
+            level_cells = ctx['cells_3d'][z]
             if name_suffix == "_EditHelper":
                 segments = []
                 for y in range(maze_data.depth + 1):
@@ -3390,7 +3441,7 @@ def _build_rect_thin_roof(ctx, maze_data, created_objects, name_suffix):
                     for x in range(maze_data.width + 1):
                         segments.append(('V', x, y))
             else:
-                segments = list(_get_wall_segments(maze_data, ctx['cells_3d'][z]))
+                segments = list(_get_wall_segments(maze_data, level_cells))
             h_positions = set()
             v_positions = set()
             h_endpoints = set()
@@ -3406,24 +3457,18 @@ def _build_rect_thin_roof(ctx, maze_data, created_objects, name_suffix):
                 for seg_type, a, b in segments:
                     if seg_type == 'H':
                         cx, cy = a * ctx['ts'] + ctx['ts'] / 2, b * ctx['ts']
-                        if len(maze_data.cells[0][0]) > 8:
+                        if len(level_cells[0][0]) > 8:
                             target_y = min(b, maze_data.depth - 1)
-                            roof_idx = maze_data.cells[target_y][a][9] if len(maze_data.cells[target_y][a]) > 9 else -1
+                            roof_idx = level_cells[target_y][a][9] if len(level_cells[target_y][a]) > 9 else -1
                         else:
-                            if b < maze_data.depth and a < maze_data.width:
-                                roof_idx = maze_data.cells[b][a][7] if len(maze_data.cells[b][a]) > 7 else -1
-                            else:
-                                roof_idx = a % len(ctx['roof_meshes_list']) if len(ctx['roof_meshes_list']) > 0 else -1
+                            roof_idx = -1
                     else:
                         cx, cy = a * ctx['ts'], b * ctx['ts'] + ctx['ts'] / 2
-                        if len(maze_data.cells[0][0]) > 8:
+                        if len(level_cells[0][0]) > 8:
                             target_x = min(a, maze_data.width - 1)
-                            roof_idx = maze_data.cells[b][target_x][9] if len(maze_data.cells[b][target_x]) > 9 else -1
+                            roof_idx = level_cells[b][target_x][9] if len(level_cells[b][target_x]) > 9 else -1
                         else:
-                            if a < maze_data.width and b < maze_data.depth:
-                                roof_idx = maze_data.cells[b][a][7] if len(maze_data.cells[b][a]) > 7 else -1
-                            else:
-                                roof_idx = b % len(ctx['roof_meshes_list']) if len(ctx['roof_meshes_list']) > 0 else -1
+                            roof_idx = -1
                     
                     if ctx['roof_meshes_list'] and isinstance(roof_idx, int) and 0 <= roof_idx < len(ctx['roof_meshes_list']):
                         mat_base = Matrix.Translation(Vector((cx, cy, sz)))
@@ -3470,8 +3515,6 @@ def _build_rect_thin_roof(ctx, maze_data, created_objects, name_suffix):
                                     else:
                                         hx0_rel, hx1_rel = 0, tw
                                     _add_vertical_roof_filler_transformed(bm_roof, uv_roof, xc, yc, sz, tw, y_lo - yc, y_hi - yc, hx0_rel, hx1_rel, ctx['mat_roof_offset'])
-
-        maze_data.cells = original_cells
 
         if not ctx['custom_roof']:
             bmesh.ops.remove_doubles(bm_roof, verts=bm_roof.verts, dist=0.001)

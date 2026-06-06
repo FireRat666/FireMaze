@@ -5,14 +5,15 @@ Prim, Hunt-and-Kill, Sidewinder, Wilson, Recursive Division, Growing Tree),
 pathfinding (BFS), image mask support, and 3D multilevel expansion.
 """
 
-import random
+import random as _real_random
+random = _real_random.Random()
 import math
 import copy
 import logging
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional
 from collections import deque
-from .utils import _resolve_cells_3d
+from .utils import _resolve_cells_3d, _get_stair_footprint_coords
 
 logger = logging.getLogger(__name__)
 
@@ -145,37 +146,6 @@ def _force_cell_open(cells, z, y, x, wall_mode):
                 cells[z][y][x - 1][2] = False
 
 
-def _get_stair_footprint_coords(x, y, footprint, orientation):
-    """Return list of (cell_x, cell_y) for a stair footprint.
-
-    Args:
-        x: Base cell X.
-        y: Base cell Y.
-        footprint: '1x1', '1x2', or '2x2'.
-        orientation: 'N', 'S', 'E', or 'W'.
-
-    Returns:
-        List of (cx, cy) tuples covering the footprint.
-    """
-    coords = [(x, y)]
-    if footprint == '1x2':
-        if orientation in ('E', 'W'):
-            coords.append((x + 1, y))
-        else:
-            coords.append((x, y + 1))
-    elif footprint == '2x2':
-        for dy in range(2):
-            for dx in range(2):
-                coords.append((x + dx, y + dy))
-    # Deduplicate
-    seen = set()
-    result = []
-    for c in coords:
-        if c not in seen:
-            seen.add(c)
-            result.append(c)
-    return result
-
 
 def _place_stairs(cells_3d, width, depth, floors, wall_mode, stair_count=1, stair_footprint='1x1', stair_style='stair', stair_direction='random'):
     """Place stair footprints in 3D cells and return placed stair records.
@@ -220,6 +190,9 @@ def _place_stairs(cells_3d, width, depth, floors, wall_mode, stair_count=1, stai
             if placed_count >= num_stairs:
                 break
             fp_coords = _get_stair_footprint_coords(sx, sy, footprint, orientation)
+            # Skip if any footprint cell touches the outer boundary of the maze
+            if any(c[0] <= 0 or c[0] >= width - 1 or c[1] <= 0 or c[1] >= depth - 1 for c in fp_coords):
+                continue
             # Skip if any footprint cell overlaps with an already-placed stair on this floor
             if any(c in placed_cells for c in fp_coords):
                 continue
@@ -477,13 +450,11 @@ def _generate_cube_maze(
                 idx2 = wy * sub_w + (wx + 1)
                 if uf.union(idx1, idx2):
                     cells[2 * wy + 1][2 * wx + 2][0] = False
-                    cells[2 * wy + 1][2 * wx + 3][0] = False
             else:
                 idx1 = wy * sub_w + wx
                 idx2 = (wy + 1) * sub_w + wx
                 if uf.union(idx1, idx2):
                     cells[2 * wy + 2][2 * wx + 1][0] = False
-                    cells[2 * wy + 3][2 * wx + 1][0] = False
 
     elif algorithm == 'eller':
         row_sets = list(range(sub_w))
@@ -1346,17 +1317,7 @@ def _generate_thin_maze(
                     cells[y][x][2] = False
                     cells[y][x + 1][3] = False
 
-        if rooms_enable:
-            for y in range(depth):
-                for x in range(width):
-                    r_idx = cell_to_room.get((x, y))
-                    if r_idx is not None:
-                        if y + 1 < depth and cell_to_room.get((x, y + 1)) == r_idx:
-                            cells[y][x][0] = False
-                            cells[y + 1][x][1] = False
-                        if x + 1 < width and cell_to_room.get((x + 1, y)) == r_idx:
-                            cells[y][x][2] = False
-                            cells[y][x + 1][3] = False
+
 
     elif algorithm == 'prims':
         visited = [[False] * width for _ in range(depth)]
@@ -2002,7 +1963,10 @@ def _find_shortest_path_polar_3d(maze_data, wall_mode, cells_3d):
     stair_down = {}
     for s in maze_data.stairs:
         sz = s['z']
-        stheta, sr = s['x'], s['y']
+        sx, sy = s['x'], s['y']
+        stheta, sr = sx, sy
+        if sy >= rings and sx < rings:
+            stheta, sr = sy, sx
         key_up = (sz, sr, stheta)
         key_down = (sz + 1, sr, stheta)
         stair_up[key_up] = (sz + 1, sr, stheta)

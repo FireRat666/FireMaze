@@ -22,3 +22,36 @@ def _resolve_cells_3d(cells):
         return cells, len(cells)
     return [cells], 1
 
+
+def _get_stair_footprint_coords(x, y, footprint, orientation):
+    """Return list of (cell_x, cell_y) for a stair footprint.
+
+    Args:
+        x: Base cell X.
+        y: Base cell Y.
+        footprint: '1x1', '1x2', or '2x2'.
+        orientation: 'N', 'S', 'E', or 'W'.
+
+    Returns:
+        List of (cx, cy) tuples covering the footprint.
+    """
+    coords = [(x, y)]
+    if footprint == '1x2':
+        if orientation in ('E', 'W'):
+            coords.append((x + 1, y))
+        else:
+            coords.append((x, y + 1))
+    elif footprint == '2x2':
+        for dy in range(2):
+            for dx in range(2):
+                coords.append((x + dx, y + dy))
+    # Deduplicate
+    seen = set()
+    result = []
+    for c in coords:
+        if c not in seen:
+            seen.add(c)
+            result.append(c)
+    return result
+
+

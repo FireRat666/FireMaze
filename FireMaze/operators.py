@@ -6,7 +6,8 @@ image export and autosave recovery operators.
 
 import bpy
 import json
-import random
+import random as _real_random
+random = _real_random.Random()
 import math
 import os
 import tempfile
@@ -1577,10 +1578,13 @@ def _generate_maze_image_datablock(context, img_name="FireMaze_Layout"):
     # Buffer size is img_w * img_h * 4 (RGBA channels)
     pixels = [0.0] * (img_w * img_h * 4)
 
+    cells_3d, floors = _resolve_cells_3d(cells)
+    floor_cells = cells_3d[0]
+
     if wall_mode == 'cube':
         for y in range(depth):
             for x in range(width):
-                is_wall = cells[y][x][0]
+                is_wall = floor_cells[y][x][0]
                 val = 0.0 if is_wall else 1.0
                 idx = (y * img_w + x) * 4
                 pixels[idx] = val
@@ -1590,7 +1594,7 @@ def _generate_maze_image_datablock(context, img_name="FireMaze_Layout"):
     else: # thin mode
         for y in range(depth):
             for x in range(width):
-                c = cells[y][x]
+                c = floor_cells[y][x]
                 bx, by = x * 3, y * 3
                 
                 # Center is walkable
