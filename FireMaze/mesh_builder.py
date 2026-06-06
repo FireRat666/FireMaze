@@ -2863,8 +2863,8 @@ def _build_spiral_stair_1x1(bm, uv_layer, cx, cy, ts, wh, z_offset, mat_offset):
 
     # Steps
     for i in range(steps):
-        a_start = i * angle_per_step
-        a_end = (i + 1) * angle_per_step
+        a_start = i * angle_per_step - math.pi / 2
+        a_end = (i + 1) * angle_per_step - math.pi / 2
         z_step = z_offset + i * rise_per_step
         h_step = rise_per_step
 
