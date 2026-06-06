@@ -2804,9 +2804,48 @@ def _build_spiral_stair_1x1(bm, uv_layer, cx, cy, ts, wh, z_offset, mat_offset):
     rise_per_step = wh / steps
     angle_per_step = 2 * math.pi / steps
     post_r = max(0.02, ts * 0.08)
-    step_span = ts * 0.40
+    step_span = ts * 0.48
+    thickness = 0.02 * ts
 
-    # Central post
+    # Top exit landing platform on the +X side (exit side)
+    # Extends from x = 0 to x = ts/2, and y = -ts/2 to y = ts/2 at height z_offset + wh
+    p_plat = [
+        T_base @ Vector((0, -ts/2, z_offset + wh - thickness)),
+        T_base @ Vector((ts/2, -ts/2, z_offset + wh - thickness)),
+        T_base @ Vector((ts/2, ts/2, z_offset + wh - thickness)),
+        T_base @ Vector((0, ts/2, z_offset + wh - thickness)),
+        T_base @ Vector((0, -ts/2, z_offset + wh)),
+        T_base @ Vector((ts/2, -ts/2, z_offset + wh)),
+        T_base @ Vector((ts/2, ts/2, z_offset + wh)),
+        T_base @ Vector((0, ts/2, z_offset + wh)),
+    ]
+
+    # Platform Top Face
+    v_top_plat = [bm.verts.new(p_plat[4]), bm.verts.new(p_plat[5]), bm.verts.new(p_plat[6]), bm.verts.new(p_plat[7])]
+    f_top_plat = bm.faces.new(v_top_plat)
+    for loop in f_top_plat.loops:
+        loop[uv_layer].uv = (0.0, 0.0)
+
+    # Platform Bottom Face
+    v_bot_plat = [bm.verts.new(p_plat[3]), bm.verts.new(p_plat[2]), bm.verts.new(p_plat[1]), bm.verts.new(p_plat[0])]
+    f_bot_plat = bm.faces.new(v_bot_plat)
+    for loop in f_bot_plat.loops:
+        loop[uv_layer].uv = (0.0, 0.0)
+
+    # Platform Side Faces (South, East, North, West)
+    sides = [
+        [p_plat[0], p_plat[1], p_plat[5], p_plat[4]], # South
+        [p_plat[1], p_plat[2], p_plat[6], p_plat[5]], # East
+        [p_plat[2], p_plat[3], p_plat[7], p_plat[6]], # North
+        [p_plat[3], p_plat[0], p_plat[4], p_plat[7]], # West
+    ]
+    for side_verts in sides:
+        v_side = [bm.verts.new(pt) for pt in side_verts]
+        f_side = bm.faces.new(v_side)
+        for loop in f_side.loops:
+            loop[uv_layer].uv = (0.0, 0.0)
+
+    # Central post (starts at z_offset, extends to z_offset + wh)
     posts_verts = []
     segs = 8
     for i in range(segs):
@@ -2843,8 +2882,8 @@ def _build_spiral_stair_1x1(bm, uv_layer, cx, cy, ts, wh, z_offset, mat_offset):
         p6 = T_base @ Vector((r_out * cos_e, r_out * sin_e, z_step + h_step))
         p7 = T_base @ Vector((r_in * cos_e, r_in * sin_e, z_step + h_step))
 
-        # Top face
-        v_top = [bm.verts.new(p4), bm.verts.new(p7), bm.verts.new(p6), bm.verts.new(p5)]
+        # Top face (Winding corrected to point UP)
+        v_top = [bm.verts.new(p4), bm.verts.new(p5), bm.verts.new(p6), bm.verts.new(p7)]
         f_top = bm.faces.new(v_top)
         for loop in f_top.loops:
             loop[uv_layer].uv = ((i % 2), 0.5)
@@ -2861,14 +2900,14 @@ def _build_spiral_stair_1x1(bm, uv_layer, cx, cy, ts, wh, z_offset, mat_offset):
         for loop in f_inner.loops:
             loop[uv_layer].uv = (0, 0)
 
-        # CW side
-        v_cw = [bm.verts.new(p2), bm.verts.new(p1), bm.verts.new(p5), bm.verts.new(p6)]
+        # CW side (Start-angle face / back riser)
+        v_cw = [bm.verts.new(p0), bm.verts.new(p1), bm.verts.new(p5), bm.verts.new(p4)]
         f_cw = bm.faces.new(v_cw)
         for loop in f_cw.loops:
             loop[uv_layer].uv = (0, 0)
 
-        # CCW side
-        v_ccw = [bm.verts.new(p0), bm.verts.new(p3), bm.verts.new(p7), bm.verts.new(p4)]
+        # CCW side (End-angle face / front riser)
+        v_ccw = [bm.verts.new(p2), bm.verts.new(p3), bm.verts.new(p7), bm.verts.new(p6)]
         f_ccw = bm.faces.new(v_ccw)
         for loop in f_ccw.loops:
             loop[uv_layer].uv = (0, 0)
