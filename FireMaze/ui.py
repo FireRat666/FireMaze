@@ -78,6 +78,8 @@ class VIEW3D_PT_fire_maze(bpy.types.Panel):
             alert_box.label(text="Editing Mode Active", icon="ERROR")
             if props.wall_mode == 'thin' and props.grid_type == 'polar' and props.edit_roof:
                 alert_box.label(text="Shift-Click to swap/edit roof mesh")
+            elif props.edit_tool == 'stair':
+                alert_box.label(text="Left-Click to toggle stairs")
             else:
                 alert_box.label(text="Left-Click walls to toggle")
             alert_box.label(text="Press Esc or click Exit to finish")
