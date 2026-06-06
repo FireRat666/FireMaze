@@ -1446,9 +1446,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                         cells = data_dict['cells']
                         original_cells = cells
                         cells_3d, floors = _resolve_cells_3d(cells)
-                        is_3d = (floors > 1)
-                        if is_3d:
-                            cells = cells_3d[z_hit]
+                        cells = cells_3d[z_hit]
                         wall_mode = data_dict.get('wall_mode', props.wall_mode)
                         
                         grid_type = data_dict.get('grid_type', 'rect')

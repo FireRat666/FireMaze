@@ -2473,7 +2473,17 @@ def generate_polar_maze(
                 cell = stack[-1]
                 unvisited = [edge for edge in graph[cell] if not visited[edge[0]]]
                 if unvisited:
-                    neighbor, int_cell = random.choice(unvisited)
+                    radial = [edge for edge in unvisited if edge[0][0] != cell[0]]
+                    tangential = [edge for edge in unvisited if edge[0][0] == cell[0]]
+                    if radial and tangential:
+                        if random.random() < radial_bias:
+                            neighbor, int_cell = random.choice(radial)
+                        else:
+                            neighbor, int_cell = random.choice(tangential)
+                    elif radial:
+                        neighbor, int_cell = random.choice(radial)
+                    else:
+                        neighbor, int_cell = random.choice(tangential)
                     ir, itheta = int_cell
                     cells[ir][itheta][0] = False
                     visited[neighbor] = True
