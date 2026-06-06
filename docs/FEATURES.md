@@ -140,8 +140,8 @@ Replace standard meshes with randomized objects from collections and customize i
 
 Add variety and organic offsets to standard or custom tiles using local matrix transforms:
 
-- **Wall & Floor Transforms**: Control `Translate`, `Rotate`, and `Scale` vectors independently.
-- Transforms are applied relative to each individual tile segment's local center, making it easy to create crumbled walls, tilted floors, and varied block scales.
+- **Wall, Floor & Roof Transforms**: Control `Translate`, `Rotate`, and `Scale` vectors independently.
+- Transforms are applied relative to each individual tile segment's local center, making it easy to create crumbled walls, tilted floors, slanted or displaced roofs, and varied block scales. Roof Translate, Rotate, and Scale vectors are exposed and applied relative to each roof tile segment's local center, matching walls and floors.
 
 ## 11. Image Masking
 
@@ -213,5 +213,5 @@ Configure vertical floor transitions and staircase layouts for multi-floor mazes
   - Rectangular: North (`N`), East (`E`), South (`S`), West (`W`).
   - Polar: CCW (`N`), Outward (`E`), CW (`S`), Inward (`W`).
 - **Custom Stair & Ramp Objects**:
-  - **Staircase Object** (`custom_stair_mesh`) and **Ramp Object** (`custom_ramp_mesh`) pointers allow you to assign custom Blender Objects (meshes, lights, collections) to instantiate at stair/ramp cells instead of the procedurally generated stair/ramp geometry.
-  - For larger footprints (`1x2`, `2x2`), the starting candidate cell receives the custom mesh or procedural stair instance, while the remaining footprint cells are carved open on both floors (no floor or roof tiles are built) to serve as a landing or open vertical shaft.
+  - **Staircase Object** (`custom_stair_mesh`) and **Ramp Object** (`custom_ramp_mesh`) pointers allow you to assign custom Blender Object pointers (meshes or lights, not collections) to instantiate at stair/ramp cells instead of the procedurally generated stair/ramp geometry.
+  - For larger footprints (`1x2`, `2x2`), only the starting candidate cell receives the custom mesh (or procedural stair instance), while the other footprint cells are carved open on both floors (no floor or roof tiles are built) to serve as a landing or open vertical shaft.

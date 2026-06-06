@@ -9,10 +9,10 @@ When generated, the addon creates separate objects based on your merge configura
 | Object Name | Material Slot | Description |
 | :--- | :--- | :--- |
 | `FireMaze_Floor` | `FireMaze_Floor` (Dark gray) | All floor tiles. |
-| `FireMaze_Walls` | `FireMaze_Walls` (Mid gray) | Side faces of walls (optimized to remove hidden internal faces). |
+| `FireMaze_Walls` | `FireMaze_Walls` (Mid-gray) | Side faces of walls (optimized to remove hidden internal faces). |
 | `FireMaze_Roof` | `FireMaze_Roof` (Medium gray) | All roof/ceiling tiles. |
 | `FireMaze_WallEndCaps` | `FireMaze_WallEndCaps` (Reddish) | Caps on endpoints in Thin wall mode (merged if Single Wall is on). |
-| `FireMaze_Stairs` | `FireMaze_Walls` (Mid gray) | Generated staircase or ramp geometry. |
+| `FireMaze_Stairs` | `FireMaze_Walls` (Mid-gray) | Generated staircase or ramp geometry. |
 | `FireMaze_Guide` | `FireMaze_Guide` (Neon green) | Neon emissive path curves/ribbons showing the shortest route. |
 
 ## Collection & Data Management
