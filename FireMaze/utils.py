@@ -40,9 +40,13 @@ def _get_stair_footprint_coords(x, y, footprint, orientation):
         coords.append((x, y))
     elif footprint == '1x2':
         coords.append((x, y))
-        if orientation in ('E', 'W'):
+        if orientation == 'E':
             coords.append((x + 1, y))
-        else:
+        elif orientation == 'W':
+            coords.append((x - 1, y))
+        elif orientation == 'N':
+            coords.append((x, y - 1))
+        elif orientation == 'S':
             coords.append((x, y + 1))
     elif footprint == '2x2':
         for dy in range(2):
