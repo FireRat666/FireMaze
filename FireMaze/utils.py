@@ -35,8 +35,11 @@ def _get_stair_footprint_coords(x, y, footprint, orientation):
     Returns:
         List of (cx, cy) tuples covering the footprint.
     """
-    coords = [(x, y)]
-    if footprint == '1x2':
+    coords = []
+    if footprint == '1x1':
+        coords.append((x, y))
+    elif footprint == '1x2':
+        coords.append((x, y))
         if orientation in ('E', 'W'):
             coords.append((x + 1, y))
         else:
@@ -45,13 +48,6 @@ def _get_stair_footprint_coords(x, y, footprint, orientation):
         for dy in range(2):
             for dx in range(2):
                 coords.append((x + dx, y + dy))
-    # Deduplicate
-    seen = set()
-    result = []
-    for c in coords:
-        if c not in seen:
-            seen.add(c)
-            result.append(c)
-    return result
+    return coords
 
 
