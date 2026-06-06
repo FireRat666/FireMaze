@@ -21,7 +21,7 @@ def _update_edit_floor_level(self, context):
         try:
             data_dict = json.loads(col["fire_maze_data"])
             floors = data_dict.get('floors', 1)
-        except Exception as e:
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
             logger.debug(f"Failed to parse maze data for floor level: {e}")
 
     max_floor = max(0, floors - 1)
