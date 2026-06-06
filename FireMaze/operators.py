@@ -1,13 +1,49 @@
+"""Blender operators for the FireMaze addon.
+
+Provides generate, clear, interactive edit, session save/load,
+image export and autosave recovery operators.
+"""
+
 import bpy
 import json
-import random
+import random as _real_random
+random = _real_random.Random()
 import math
 import os
 import tempfile
+import threading
+import uuid
+import logging
 from bpy_extras import view3d_utils
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 from .maze_generator import generate_maze, find_shortest_path, MazeData
 from .mesh_builder import build_maze_objects
+from .utils import is_valid_ref, _resolve_cells_3d
+
+logger = logging.getLogger(__name__)
+
+def _angle_diff(a, b):
+    """Return the absolute angular difference between two radians."""
+    diff = (a - b) % (2 * math.pi)
+    if diff > math.pi:
+        diff -= 2 * math.pi
+    return abs(diff)
+
+def _get_polar_coords(hit_x, hit_y, ts, ring_sectors):
+    """Convert a world-space hit point to polar (r_idx, theta) cell coordinates."""
+    r_hit = math.sqrt(hit_x**2 + hit_y**2)
+    phi_hit = math.atan2(hit_y, hit_x)
+    if phi_hit < 0:
+        phi_hit += 2 * math.pi
+    rings = len(ring_sectors)
+    r_idx = math.floor(r_hit / ts + 0.5)
+    r_idx = max(0, min(r_idx, rings - 1))
+    Nr = ring_sectors[r_idx]
+    alpha_r = 2 * math.pi / Nr
+    theta = math.floor(phi_hit / alpha_r)
+    theta = max(0, min(theta, Nr - 1))
+    return r_hit, phi_hit, r_idx, alpha_r, theta, Nr
+
 
 PROP_NAMES = [
     "width", "depth", "wall_height", "wall_height_tiled", "wall_height_tiles",
@@ -18,17 +54,22 @@ PROP_NAMES = [
     "num_entrances", "num_exits", "cube_mode_pillar", "generate_guide",
     "guide_type", "guide_width", "guide_height_offset", "guide_wave_amplitude",
     "guide_wave_frequency", "wall_translate", "wall_rotate", "wall_scale",
-    "floor_translate", "floor_rotate", "floor_scale", "single_wall_object",
+    "floor_translate", "floor_rotate", "floor_scale",
+    "roof_translate", "roof_rotate", "roof_scale", "single_wall_object",
+
     "merge_objects", "remove_doubles", "generate_lightmap", "lightmap_method",
     "generate_colliders", "merge_colliders", "optimize_colliders_coplanar", "optimize_coplanar", "vertex_paint_enable",
     "vertex_paint_mode", "vertex_paint_intensity", "prop_torch_density", "prop_chest_density",
-    "mask_invert", "thin_wall_double_sided", "fire_maze_collection_name"
+    "mask_invert", "thin_wall_double_sided", "fire_maze_collection_name",
+    "floors", "stair_footprint", "stair_style", "stair_direction", "edit_floor_level",
+    "stair_count", "edit_tool", "edit_roof"
 ]
 
 POINTER_PROPS = [
     "custom_floor_mesh", "custom_wall_mesh", "custom_roof_mesh",
     "custom_wall_collection", "custom_floor_collection", "custom_roof_collection",
-    "prop_torch_mesh", "prop_chest_mesh", "prop_door_mesh", "mask_image"
+    "prop_torch_mesh", "prop_chest_mesh", "prop_door_mesh", "mask_image",
+    "custom_stair_mesh", "custom_ramp_mesh"
 ]
 
 show_recovery_warning = True
@@ -36,8 +77,7 @@ AUTOSAVE_PATH = os.path.join(tempfile.gettempdir(), "firemaze_autosave.json")
 AUTOSAVE_ACK_PATH = os.path.join(tempfile.gettempdir(), "firemaze_autosave_ack.json")
 
 def check_has_autosave():
-    import os
-    import json
+    """Return True if an autosave file exists that has not been acknowledged."""
     if not os.path.exists(AUTOSAVE_PATH):
         return False
     if os.path.exists(AUTOSAVE_ACK_PATH):
@@ -49,12 +89,13 @@ def check_has_autosave():
             if d1 == d2:
                 return False
         except Exception:
-            pass
+            pass  # Ack file doesn't exist yet or is malformed
     return True
 
 has_autosave = check_has_autosave()
 
 def _get_active_maze_collection(context):
+    """Return the active maze collection from the scene, or None."""
     props = context.scene.fire_maze
     col_name = getattr(props, "fire_maze_collection_name", "")
     col = bpy.data.collections.get(col_name) if col_name else None
@@ -67,17 +108,8 @@ def _get_active_maze_collection(context):
     return col
 
 
-def is_valid_ref(ref):
-    """Check if a Blender RNA pointer is valid and has not been deleted."""
-    if ref is None:
-        return False
-    try:
-        _ = ref.name
-        return True
-    except ReferenceError:
-        return False
-
 def _find_or_create_maze_collection(base_name):
+    """Find an existing maze collection or create a new one with a unique name."""
     col = bpy.data.collections.get(base_name)
     if col:
         has_maze = any(obj.get("fire_maze") for obj in col.objects)
@@ -91,22 +123,25 @@ def _find_or_create_maze_collection(base_name):
     return col
 
 def _remove_maze_collections():
+    """Remove all collections that contain fire_maze_data."""
     for col in list(bpy.data.collections):
-        if col.name.startswith("FireMaze"):
+        if "fire_maze_data" not in col:
+            continue
+        try:
+            bpy.data.collections.remove(col)
+        except RuntimeError:
+            for parent in list(bpy.data.collections):
+                try:
+                    parent.children.unlink(col)
+                except ValueError:
+                    pass
             try:
                 bpy.data.collections.remove(col)
             except RuntimeError:
-                for parent in list(bpy.data.collections):
-                    try:
-                        parent.children.unlink(col)
-                    except ValueError:
-                        pass
-                try:
-                    bpy.data.collections.remove(col)
-                except RuntimeError:
-                    pass
+                pass
 
 def delete_edit_helper():
+    """Remove the _FireMaze_Edit_Helper object and orphaned mesh data."""
     helper = bpy.data.objects.get("_FireMaze_Edit_Helper")
     if helper:
         data = helper.data
@@ -115,6 +150,7 @@ def delete_edit_helper():
             bpy.data.meshes.remove(data)
 
 def _serialize_session_data(context):
+    """Pack all current FireMaze properties and maze JSON into a session dict."""
     props = context.scene.fire_maze
     props_data = {}
     for name in PROP_NAMES:
@@ -139,12 +175,17 @@ def _serialize_session_data(context):
         maze_json = col["fire_maze_data"]
         
     return {
+        "schema_version": 1,
         "properties": props_data,
         "maze_data": maze_json
     }
 
 def _deserialize_session_data(context, data):
+    """Apply a previously serialized session dict to the scene and rebuild the maze."""
+    schema_version = data.get("schema_version", 0)
+    logger.info(f"Deserializing session data (Schema Version: {schema_version})")
     props = context.scene.fire_maze
+
     properties = data.get("properties", {})
     maze_json = data.get("maze_data")
     
@@ -156,7 +197,7 @@ def _deserialize_session_data(context, data):
             try:
                 setattr(props, name, val)
             except Exception as ex:
-                print(f"Failed to set property {name}: {ex}")
+                logger.warning(f"Failed to set property {name}: {ex}")
                 
     for name in POINTER_PROPS:
         if name in properties:
@@ -171,6 +212,9 @@ def _deserialize_session_data(context, data):
                 ref = bpy.data.collections.get(val)
             elif name in {"custom_floor_mesh", "custom_wall_mesh", "custom_roof_mesh"}:
                 ref = bpy.data.meshes.get(val)
+            elif name in {"custom_stair_mesh", "custom_ramp_mesh"}:
+                # These are Object pointers (need full transform/origin info), not bare Mesh datablocks
+                ref = bpy.data.objects.get(val)
             else:
                 ref = bpy.data.objects.get(val)
             setattr(props, name, ref)
@@ -189,44 +233,71 @@ def _deserialize_session_data(context, data):
         rebuild_maze_from_collection(context, col)
 
 def save_autosave(context):
-    import os
-    import tempfile
-    import json
-    import threading
+    """Serialize current session and write it to a temporary autosave file in a background thread."""
+    global has_autosave
     try:
         payload = _serialize_session_data(context)
         autosave_path = os.path.join(tempfile.gettempdir(), "firemaze_autosave.json")
         payload_str = json.dumps(payload, indent=2)
-        
-        def write_worker(path, data_str):
-            import uuid
+
+        # Thread-safe status sharing: None = running, 'success' = completed, 'error' = failed
+        autosave_status = [None]
+
+        def write_worker(path, data_str, status_flag):
+            """Write serialized data to a temp file then atomically replace the target."""
             temp_path = path + "." + uuid.uuid4().hex + ".tmp"
+
             try:
                 with open(temp_path, 'w') as f:
                     f.write(data_str)
                 try:
                     os.replace(temp_path, path)
-                    global has_autosave
-                    has_autosave = check_has_autosave()
-                except PermissionError:
-                    pass
-                except Exception as ex:
+                    status_flag[0] = 'success'
+                except PermissionError as pe:
+                    logger.warning(f"Autosave blocked by OS/antivirus ({pe}); cleaning up temp file.")
+                    status_flag[0] = 'error'
                     try:
                         os.remove(temp_path)
-                    except Exception:
-                        pass
+                    except Exception as cleanup_err:
+                        logger.debug(f"Failed to remove temp autosave file: {cleanup_err}")
+                except Exception as ex:
+                    logger.warning(f"Autosave replace failed ({ex}); cleaning up temp file.")
+                    status_flag[0] = 'error'
+                    try:
+                        os.remove(temp_path)
+                    except Exception as cleanup_err:
+                        logger.debug(f"Failed to remove temp autosave file: {cleanup_err}")
             except Exception as e:
-                print("FireMaze: Background autosave write failed:", e)
+                logger.error(f"Background autosave write failed: {e}")
+                status_flag[0] = 'error'
                 try:
                     os.remove(temp_path)
-                except Exception:
-                    pass
-                
-        threading.Thread(target=write_worker, args=(autosave_path, payload_str), daemon=True).start()
+                except Exception as cleanup_err:
+                    logger.debug(f"Failed to remove temp autosave file: {cleanup_err}")
+
+        def poll_autosave_timer():
+            """Unregister timer once autosave completes (success or error)."""
+            if autosave_status[0] is not None:
+                return None
+            return 0.1
+
+        has_autosave = True
+        bpy.app.timers.register(poll_autosave_timer)
+        threading.Thread(target=write_worker, args=(autosave_path, payload_str, autosave_status), daemon=True).start()
     except Exception as e:
-        print("FireMaze: Failed to initiate autosave:", e)
+        logger.error(f"Failed to initiate autosave: {e}")
+
+def set_other_mazes_visibility(context, visible):
+    """Hide or show all maze objects that do not belong to the active editing collection."""
+    props = context.scene.fire_maze
+    active_col_name = props.fire_maze_collection_name
+    for col in bpy.data.collections:
+        if "fire_maze_data" in col and col.name != active_col_name:
+            for obj in col.objects:
+                obj.hide_viewport = not visible
 
 def rebuild_maze_from_collection(context, col):
+    """Rebuild all maze objects from the JSON data stored on a collection."""
     if "fire_maze_data" not in col:
         return
         
@@ -254,18 +325,29 @@ def rebuild_maze_from_collection(context, col):
     polar_rings = data_dict.get('polar_rings', 0)
     ring_sectors = data_dict.get('ring_sectors', [])
 
-    maze_data = MazeData(
-        width=data_dict['width'],
-        depth=data_dict['depth'],
-        cells=data_dict['cells'],
-        entrance=tuple(data_dict['entrance']) if data_dict['entrance'] else None,
-        exits=[tuple(e) for e in data_dict['exits']],
-        center=tuple(data_dict['center']),
-        guide_path=[tuple(gp) for gp in data_dict.get('guide_path', [])],
-        grid_type=grid_type,
-        polar_rings=polar_rings,
-        ring_sectors=ring_sectors
-    )
+    floors = data_dict.get('floors', 1)
+    stairs = data_dict.get('stairs', [])
+    stair_count = data_dict.get('stair_count', props.stair_count)
+    props.stair_count = stair_count
+
+    try:
+        maze_data = MazeData(
+            width=data_dict['width'],
+            depth=data_dict['depth'],
+            cells=data_dict['cells'],
+            entrance=tuple(data_dict['entrance']) if data_dict.get('entrance') else None,
+            exits=[tuple(e) for e in data_dict.get('exits', [])],
+            center=tuple(data_dict['center']),
+            guide_path=[tuple(gp) for gp in data_dict.get('guide_path', [])],
+            grid_type=grid_type,
+            polar_rings=polar_rings,
+            ring_sectors=ring_sectors,
+            floors=floors,
+            stairs=stairs,
+        )
+    except KeyError as e:
+        logger.error(f"rebuild_maze_from_collection: missing key {e} in stored JSON — aborting rebuild")
+        return
 
     # Recompute guide path
     maze_data.guide_path = find_shortest_path(maze_data, wall_mode=wall_mode)
@@ -286,7 +368,12 @@ def rebuild_maze_from_collection(context, col):
         'grid_type': grid_type,
         'polar_rings': polar_rings,
         'ring_sectors': ring_sectors,
+        'floors': floors,
+        'stairs': stairs,
+        'stair_count': stair_count,
+        'schema_version': 1,
     })
+
 
     save_autosave(context)
 
@@ -300,27 +387,27 @@ def rebuild_maze_from_collection(context, col):
                 if obj_type == 'MESH':
                     try:
                         bpy.data.meshes.remove(data)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"Failed to remove mesh data: {e}")
                 elif obj_type == 'CURVE':
                     try:
                         bpy.data.curves.remove(data)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"Failed to remove curve data: {e}")
 
     # Sweep any orphaned FireMaze meshes/curves left over in the database
     for m in list(bpy.data.meshes):
         if m.name.startswith("FireMaze") and m.users == 0:
             try:
                 bpy.data.meshes.remove(m)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to remove orphaned FireMaze mesh: {e}")
     for c in list(bpy.data.curves):
         if c.name.startswith("FireMaze") and c.users == 0:
             try:
                 bpy.data.curves.remove(c)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to remove orphaned FireMaze curve: {e}")
 
     # Rebuild
     props = context.scene.fire_maze
@@ -335,6 +422,7 @@ def rebuild_maze_from_collection(context, col):
         build_maze_objects(props, maze_data, context, collection=col, force_simple=True, name_suffix="_EditHelper")
 
 def _raycast_from_mouse(context, event):
+    """Cast a ray from the mouse cursor into the scene and return (object, location, normal)."""
     scene = context.scene
     region = context.region
     rv3d = context.region_data
@@ -345,7 +433,8 @@ def _raycast_from_mouse(context, event):
     try:
         view_vector = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
         ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Failed to compute ray from screen coordinates: {e}")
         return None, None, None
     
     depsgraph = context.evaluated_depsgraph_get()
@@ -356,12 +445,15 @@ def _raycast_from_mouse(context, event):
     return None, None, None
 
 class MAZE_OT_generate(bpy.types.Operator):
+    """Generate a new maze from current settings and build its mesh objects."""
+
     bl_idname = "fire_maze.generate"
     bl_label = "Generate Maze"
     bl_description = "Generate a new maze from current settings"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
+        """Generate the maze data, create a collection, build meshes, and save autosave."""
         global show_recovery_warning
         show_recovery_warning = False
         props = context.scene.fire_maze
@@ -389,6 +481,10 @@ class MAZE_OT_generate(bpy.types.Operator):
             num_roof_meshes = len([o for o in props.custom_roof_collection.objects if o.type == 'MESH'])
 
         mask_image = props.mask_image if is_valid_ref(props.mask_image) else None
+
+        if props.floors > 1 and mask_image:
+            mask_image = None
+            self.report({'WARNING'}, "Mask image ignored when Floors > 1")
 
         effective_rings = props.polar_rings
         if props.grid_type == 'polar' and props.wall_mode == 'cube' and effective_rings % 2 == 1:
@@ -421,6 +517,19 @@ class MAZE_OT_generate(bpy.types.Operator):
             mask_invert=props.mask_invert,
             grid_type=props.grid_type,
             polar_rings=effective_rings,
+            floors=props.floors,
+            stair_footprint=props.stair_footprint,
+            stair_style=props.stair_style,
+            stair_count=props.stair_count,
+            stair_direction=props.stair_direction,
+            selection_bias=props.selection_bias,
+            straightness=props.straightness,
+            direction_bias=props.direction_bias,
+            east_bias=props.east_bias,
+            orientation_bias=props.orientation_bias,
+            passage_bias=props.passage_bias,
+            eller_merge_prob=props.eller_merge_prob,
+            radial_bias=props.radial_bias,
         )
 
         col = _find_or_create_maze_collection("FireMaze")
@@ -442,8 +551,14 @@ class MAZE_OT_generate(bpy.types.Operator):
             'grid_type': maze_data.grid_type,
             'polar_rings': maze_data.polar_rings,
             'ring_sectors': maze_data.ring_sectors,
+            'floors': maze_data.floors,
+            'stairs': maze_data.stairs,
+            'stair_count': props.stair_count,
+            'schema_version': 1,
         })
 
+
+        props.edit_floor_level = props.floors - 1
         build_maze_objects(props, maze_data, context, collection=col)
         if props.generate_colliders:
             build_maze_objects(props, maze_data, context, collection=col, force_simple=True, name_suffix="_Collider")
@@ -457,12 +572,15 @@ class MAZE_OT_generate(bpy.types.Operator):
         return {'FINISHED'}
 
 class MAZE_OT_clear(bpy.types.Operator):
+    """Delete all generated maze objects and collections from the scene."""
+
     bl_idname = "fire_maze.clear"
     bl_label = "Clear Maze"
     bl_description = "Delete all generated maze objects from the scene"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
+        """Remove all fire_maze objects, sweep orphaned datablocks, and clear the collection reference."""
         count = 0
         for obj in list(bpy.data.objects):
             if obj.get("fire_maze"):
@@ -483,20 +601,22 @@ class MAZE_OT_clear(bpy.types.Operator):
             if m.name.startswith("FireMaze") and m.users == 0:
                 try:
                     bpy.data.meshes.remove(m)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Failed to remove orphaned FireMaze mesh: {e}")
         for c in list(bpy.data.curves):
             if c.name.startswith("FireMaze") and c.users == 0:
                 try:
                     bpy.data.curves.remove(c)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Failed to remove orphaned FireMaze curve: {e}")
 
         context.scene.fire_maze.fire_maze_collection_name = ""
         self.report({'INFO'}, f"Removed {count} maze object(s)")
         return {'FINISHED'}
 
 class MAZE_OT_interactive_edit(bpy.types.Operator):
+    """Modal operator for interactive wall toggling and mesh cycling in the 3D viewport."""
+
     bl_idname = "fire_maze.interactive_edit"
     bl_label = "Interactive Maze Editor"
     bl_description = "Left-click on walls in the 3D viewport to toggle them on/off"
@@ -504,19 +624,20 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
+        """Return True when a rect or polar grid is selected."""
         props = context.scene.fire_maze
         return props.grid_type in {'rect', 'polar'}
-
-    def modal(self, context, event):
+    def _check_modal_early_exit_and_bounds(self, context, event, props):
+        """Perform early checks for modal loop. Return tuple (action_taken, result_value)."""
         if context.area:
             context.area.tag_redraw()
 
-        props = context.scene.fire_maze
         # Clean exit if toggled off by another button click
         if not props.is_editing:
             context.workspace.status_text_set(None)
+            set_other_mazes_visibility(context, True)
             self.report({'INFO'}, "Interactive Edit finished")
-            return {'FINISHED'}
+            return True, {'FINISHED'}
 
         # Auto-exit interactive edit mode if the workspace/tab changed or active area is not 3D viewport
         if (getattr(self, "init_workspace", None) and context.workspace.name != self.init_workspace) or \
@@ -524,25 +645,23 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
             context.workspace.status_text_set(None)
             props.is_editing = False
             delete_edit_helper()
+            set_other_mazes_visibility(context, True)
             col = _get_active_maze_collection(context)
             if col:
                 rebuild_maze_from_collection(context, col)
             self.report({'INFO'}, "Interactive Edit finished (auto-exited)")
-            return {'FINISHED'}
+            return True, {'FINISHED'}
 
         # Check if the mouse is within the main 3D viewport WINDOW region coordinates.
-        # If the mouse is outside (e.g., in the Menus, Header, or File/Edit menus),
-        # we pass the event through so the user can interact with the Blender UI normally.
         if context.region:
             rx_min = context.region.x
             rx_max = rx_min + context.region.width
             ry_min = context.region.y
             ry_max = ry_min + context.region.height
             if not (rx_min <= event.mouse_x <= rx_max and ry_min <= event.mouse_y <= ry_max):
-                return {'PASS_THROUGH'}
+                return True, {'PASS_THROUGH'}
 
         # Check if the mouse is inside overlay regions within the viewport area
-        # (e.g., the UI/Sidebar N-panel or the Tools shelf T-panel)
         if context.area:
             for region in context.area.regions:
                 if region.type != 'WINDOW':
@@ -551,47 +670,739 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                     ry_min = region.y
                     ry_max = ry_min + region.height
                     if rx_min <= event.mouse_x <= rx_max and ry_min <= event.mouse_y <= ry_max:
-                        return {'PASS_THROUGH'}
+                        return True, {'PASS_THROUGH'}
 
         if event.type in {'RET', 'NUMPAD_ENTER', 'ESC'}:
             context.workspace.status_text_set(None)
             props.is_editing = False
             delete_edit_helper()
+            set_other_mazes_visibility(context, True)
             col = _get_active_maze_collection(context)
             if col:
                 rebuild_maze_from_collection(context, col)
             self.report({'INFO'}, "Interactive Edit finished")
-            return {'FINISHED'}
+            return True, {'FINISHED'}
+
+        return False, None
+
+    def _do_raycast(self, context, event):
+        """Temporarily unhide helper, hide other maze objects, perform raycast, restore state."""
+        helper = bpy.data.objects.get("_FireMaze_Edit_Helper")
+        hidden_objs = []
+        try:
+            if helper:
+                helper.hide_viewport = False
+            
+            for col in bpy.data.collections:
+                if "fire_maze_data" in col:
+                    for o in col.objects:
+                        if o.name != "_FireMaze_Edit_Helper" and not o.hide_viewport:
+                            o.hide_viewport = True
+                            hidden_objs.append(o)
+            
+            context.view_layer.update()
+            obj, loc, normal = _raycast_from_mouse(context, event)
+            return obj, loc, normal
+        finally:
+            if helper:
+                helper.hide_viewport = True
+            for o in hidden_objs:
+                o.hide_viewport = False
+            context.view_layer.update()
+
+    def _handle_stair_tool(self, context, event, props, col, data_dict, z_hit, cx_clamped, cy_clamped, grid_type, original_cells, wall_mode):
+        """Handle stair placement, rotation, and removal."""
+        stairs = data_dict.get('stairs', [])
+        existing_idx = -1
+        for idx, s in enumerate(stairs):
+            if s.get('z') == z_hit and s.get('x') == cx_clamped and s.get('y') == cy_clamped:
+                existing_idx = idx
+                break
+        
+        if existing_idx != -1:
+            if event.shift:
+                current_orient = stairs[existing_idx].get('orientation', 'N' if grid_type == 'rect' else 'IN')
+                if grid_type == 'rect':
+                    cycle_map = {'N': 'E', 'E': 'S', 'S': 'W', 'W': 'N'}
+                    new_orient = cycle_map.get(current_orient, 'N')
+                else:
+                    cycle_map = {'CCW': 'OUT', 'OUT': 'CW', 'CW': 'IN', 'IN': 'CCW'}
+                    new_orient = cycle_map.get(current_orient, 'IN')
+                stairs[existing_idx]['orientation'] = new_orient
+                self.report({'INFO'}, f"Rotated stair at cell ({cx_clamped}, {cy_clamped}) to {new_orient}")
+            else:
+                stairs.pop(existing_idx)
+                self.report({'INFO'}, f"Removed stair at floor {z_hit}, cell ({cx_clamped}, {cy_clamped})")
+        else:
+            if z_hit < props.floors - 1:
+                from .maze_generator import _force_cell_open
+                _force_cell_open(original_cells, z_hit, cy_clamped, cx_clamped, wall_mode)
+                _force_cell_open(original_cells, z_hit + 1, cy_clamped, cx_clamped, wall_mode)
+                
+                if grid_type == 'rect':
+                    stair_orient = props.stair_direction
+                else:
+                    polar_orient_map = {'N': 'CCW', 'E': 'OUT', 'S': 'CW', 'W': 'IN'}
+                    stair_orient = polar_orient_map.get(props.stair_direction, 'IN')
+                
+                new_stair = {
+                    'z': z_hit,
+                    'x': cx_clamped,
+                    'y': cy_clamped,
+                    'type': props.stair_style,
+                    'footprint': '1x1' if grid_type == 'polar' else props.stair_footprint,
+                    'orientation': stair_orient,
+                }
+                stairs.append(new_stair)
+                self.report({'INFO'}, f"Placed stair at floor {z_hit}, cell ({cx_clamped}, {cy_clamped}) with orientation {stair_orient}")
+            else:
+                self.report({'WARNING'}, "Cannot place stair on the top floor")
+                return
+        
+        data_dict['stairs'] = stairs
+        data_dict['cells'] = original_cells
+        col["fire_maze_data"] = json.dumps(data_dict)
+        rebuild_maze_from_collection(context, col)
+
+    def _handle_polar_mesh_cycle(self, context, event, props, col, data_dict, cells, wall_mode, ring_sectors, rings, hit_x, hit_y, ts, r_hit, phi_hit, r_idx, alpha_r, theta, Nr, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells):
+        modified = False
+        rebuilt_text = ""
+        
+        if face_dir == 'ROOF':
+            roof_idx_pos = 5
+            if num_roof_meshes > 0 and len(cells[r_idx][theta]) > roof_idx_pos:
+                current_idx = cells[r_idx][theta][roof_idx_pos] if isinstance(cells[r_idx][theta][roof_idx_pos], int) else -1
+                cells[r_idx][theta][roof_idx_pos] = (current_idx + 1) % num_roof_meshes
+                modified = True
+                rebuilt_text = "roof"
+        elif face_dir == 'FLOOR':
+            floor_idx_pos = 4
+            if num_floor_meshes > 0 and len(cells[r_idx][theta]) > floor_idx_pos:
+                current_idx = cells[r_idx][theta][floor_idx_pos] if isinstance(cells[r_idx][theta][floor_idx_pos], int) else -1
+                cells[r_idx][theta][floor_idx_pos] = (current_idx + 1) % num_floor_meshes
+                modified = True
+                rebuilt_text = "floor"
+        else:
+            # Clicked a wall face
+            if wall_mode == 'cube':
+                if num_wall_meshes > 0:
+                    if props.cube_mode_pillar:
+                        current_idx = cells[r_idx][theta][2] if isinstance(cells[r_idx][theta][2], int) else -1
+                        cells[r_idx][theta][2] = (current_idx + 1) % num_wall_meshes
+                        modified = True
+                        rebuilt_text = "pillar"
+                    else:
+                        d_in = abs(r_hit - (r_idx - 0.5) * ts)
+                        d_out = abs(r_hit - (r_idx + 0.5) * ts)
+                        
+                        d_cw = r_hit * _angle_diff(phi_hit, (theta + 1) * alpha_r)
+                        d_ccw = r_hit * _angle_diff(phi_hit, theta * alpha_r)
+
+                        if r_idx == 0:
+                            min_d = d_out
+                        else:
+                            min_d = min(d_in, d_out, d_cw, d_ccw)
+                            
+                        owner_cell = None
+                        owner_idx_pos = -1
+                        boundary_name = ""
+                        
+                        if min_d == d_cw:
+                            A = (r_idx, theta)
+                            B = (r_idx, (theta + 1) % Nr)
+                            if not cells[A[0]][A[1]][0]:
+                                owner_cell = A
+                                owner_idx_pos = 2
+                                boundary_name = "clockwise radial boundary wall"
+                            elif not cells[B[0]][B[1]][0]:
+                                owner_cell = B
+                                owner_idx_pos = 3
+                                boundary_name = "counter-clockwise radial boundary wall"
+                            else:
+                                owner_cell = A
+                                owner_idx_pos = 2
+                                boundary_name = "clockwise radial boundary wall (fallback)"
+                        elif min_d == d_ccw:
+                            A = (r_idx, theta)
+                            B = (r_idx, (theta - 1) % Nr)
+                            if not cells[A[0]][A[1]][0]:
+                                owner_cell = A
+                                owner_idx_pos = 3
+                                boundary_name = "counter-clockwise radial boundary wall"
+                            elif not cells[B[0]][B[1]][0]:
+                                owner_cell = B
+                                owner_idx_pos = 2
+                                boundary_name = "clockwise radial boundary wall"
+                            else:
+                                owner_cell = A
+                                owner_idx_pos = 3
+                                boundary_name = "counter-clockwise radial boundary wall (fallback)"
+                        elif min_d == d_in:
+                            if r_idx > 0:
+                                N_in = ring_sectors[r_idx - 1]
+                                theta_in = 0 if N_in == 1 else (theta if N_in == Nr else theta // 2)
+                                A = (r_idx, theta)
+                                B = (r_idx - 1, theta_in)
+                                if not cells[A[0]][A[1]][0]:
+                                    owner_cell = A
+                                    owner_idx_pos = 7
+                                    boundary_name = "inward angular boundary wall"
+                                elif not cells[B[0]][B[1]][0]:
+                                    owner_cell = B
+                                    owner_idx_pos = 8
+                                    boundary_name = "outward angular boundary wall"
+                                else:
+                                    owner_cell = A
+                                    owner_idx_pos = 7
+                                    boundary_name = "inward angular boundary wall (fallback)"
+                        else: # d_out
+                            if r_idx < rings - 1:
+                                N_out = ring_sectors[r_idx + 1]
+                                theta_out = math.floor(phi_hit / (2 * math.pi / N_out))
+                                theta_out = max(0, min(theta_out, N_out - 1))
+                                A = (r_idx, theta)
+                                B = (r_idx + 1, theta_out)
+                                if not cells[A[0]][A[1]][0]:
+                                    owner_cell = A
+                                    owner_idx_pos = 8
+                                    boundary_name = "outward angular boundary wall"
+                                elif not cells[B[0]][B[1]][0]:
+                                    owner_cell = B
+                                    owner_idx_pos = 7
+                                    boundary_name = "inward angular boundary wall"
+                                else:
+                                    owner_cell = A
+                                    owner_idx_pos = 8
+                                    boundary_name = "outward angular boundary wall (fallback)"
+                            else:
+                                owner_cell = (r_idx, theta)
+                                owner_idx_pos = 6
+                                boundary_name = "outermost outward angular boundary wall"
+                        
+                        if owner_cell is not None:
+                            r_own, theta_own = owner_cell
+                            if len(cells[r_own][theta_own]) < 8:
+                                if owner_idx_pos in {2, 3}:
+                                    owner_idx_pos = 2
+                                elif owner_idx_pos in {6, 7, 8}:
+                                    owner_idx_pos = 3
+                            
+                            current_idx = cells[r_own][theta_own][owner_idx_pos] if isinstance(cells[r_own][theta_own][owner_idx_pos], int) else -1
+                            cells[r_own][theta_own][owner_idx_pos] = (current_idx + 1) % num_wall_meshes
+                            modified = True
+                            rebuilt_text = boundary_name
+                            r_idx, theta = r_own, theta_own
+            else:
+                # Thin wall mode
+                d_in = abs(r_hit - (r_idx - 0.5) * ts)
+                d_out = abs(r_hit - (r_idx + 0.5) * ts)
+                
+                d_cw = r_hit * _angle_diff(phi_hit, (theta + 1) * alpha_r)
+                d_ccw = r_hit * _angle_diff(phi_hit, theta * alpha_r)
+                
+                if r_idx == 0:
+                    min_d = d_out
+                else:
+                    min_d = min(d_in, d_out, d_cw, d_ccw)
+                    
+                if min_d == d_cw:
+                    if num_wall_meshes > 0:
+                        current_idx = cells[r_idx][theta][2] if isinstance(cells[r_idx][theta][2], int) else -1
+                        cells[r_idx][theta][2] = (current_idx + 1) % num_wall_meshes
+                        modified = True
+                        rebuilt_text = "clockwise wall"
+                elif min_d == d_ccw:
+                    if num_wall_meshes > 0:
+                        prev_theta = (theta - 1) % Nr
+                        current_idx = cells[r_idx][prev_theta][2] if isinstance(cells[r_idx][prev_theta][2], int) else -1
+                        cells[r_idx][prev_theta][2] = (current_idx + 1) % num_wall_meshes
+                        modified = True
+                        rebuilt_text = "counter-clockwise wall"
+                elif min_d == d_in:
+                    if num_wall_meshes > 0:
+                        current_idx = cells[r_idx][theta][3] if isinstance(cells[r_idx][theta][3], int) else -1
+                        cells[r_idx][theta][3] = (current_idx + 1) % num_wall_meshes
+                        modified = True
+                        rebuilt_text = "inward wall"
+                elif min_d == d_out:
+                    if num_wall_meshes > 0:
+                        if r_idx + 1 < rings:
+                            N_out = ring_sectors[r_idx + 1]
+                            theta_out = math.floor(phi_hit / (2 * math.pi / N_out))
+                            theta_out = max(0, min(theta_out, N_out - 1))
+                            current_idx = cells[r_idx + 1][theta_out][3] if isinstance(cells[r_idx + 1][theta_out][3], int) else -1
+                            cells[r_idx + 1][theta_out][3] = (current_idx + 1) % num_wall_meshes
+                            modified = True
+                            rebuilt_text = "outward wall"
+                        else:
+                            current_idx = cells[r_idx][theta][6] if len(cells[r_idx][theta]) > 6 else (cells[r_idx][theta][3] if isinstance(cells[r_idx][theta][3], int) else -1)
+                            if len(cells[r_idx][theta]) > 6:
+                                cells[r_idx][theta][6] = (current_idx + 1) % num_wall_meshes
+                            else:
+                                cells[r_idx][theta][3] = (current_idx + 1) % num_wall_meshes
+                            modified = True
+                            rebuilt_text = "outermost outward wall"
+                    
+        if modified:
+            data_dict['cells'] = original_cells
+            col["fire_maze_data"] = json.dumps(data_dict)
+            rebuild_maze_from_collection(context, col)
+            self.report({'INFO'}, f"Swapped {rebuilt_text} mesh at cell ({r_idx}, {theta})")
+
+    def _handle_polar_wall_toggle(self, context, event, props, col, data_dict, cells, wall_mode, ring_sectors, rings, hit_x, hit_y, ts, r_hit, phi_hit, r_idx, alpha_r, theta, Nr, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells, z_hit):
+        modified = False
+        rebuilt_text = ""
+        
+        if wall_mode == 'cube':
+            target_cell = (r_idx, theta)
+            if face_dir == 'WALL':
+                d_in = abs(r_hit - (r_idx - 0.5) * ts)
+                d_out = abs(r_hit - (r_idx + 0.5) * ts)
+                
+                d_cw = r_hit * _angle_diff(phi_hit, (theta + 1) * alpha_r)
+                d_ccw = r_hit * _angle_diff(phi_hit, theta * alpha_r)
+
+                if r_idx == 0:
+                    min_d = d_out
+                else:
+                    min_d = min(d_in, d_out, d_cw, d_ccw)
+                    
+                if min_d == d_cw:
+                    A = (r_idx, theta)
+                    B = (r_idx, (theta + 1) % Nr)
+                    if cells[A[0]][A[1]][0]:
+                        target_cell = A
+                    elif cells[B[0]][B[1]][0]:
+                        target_cell = B
+                elif min_d == d_ccw:
+                    A = (r_idx, theta)
+                    B = (r_idx, (theta - 1) % Nr)
+                    if cells[A[0]][A[1]][0]:
+                        target_cell = A
+                    elif cells[B[0]][B[1]][0]:
+                        target_cell = B
+                elif min_d == d_in:
+                    if r_idx > 0:
+                        N_in = ring_sectors[r_idx - 1]
+                        theta_in = 0 if N_in == 1 else (theta if N_in == Nr else theta // 2)
+                        A = (r_idx, theta)
+                        B = (r_idx - 1, theta_in)
+                        if cells[A[0]][A[1]][0]:
+                            target_cell = A
+                        elif cells[B[0]][B[1]][0]:
+                            target_cell = B
+                else: # d_out
+                    if r_idx < rings - 1:
+                        N_out = ring_sectors[r_idx + 1]
+                        theta_out = math.floor(phi_hit / (2 * math.pi / N_out))
+                        theta_out = max(0, min(theta_out, N_out - 1))
+                        A = (r_idx, theta)
+                        B = (r_idx + 1, theta_out)
+                        if cells[A[0]][A[1]][0]:
+                            target_cell = A
+                        elif cells[B[0]][B[1]][0]:
+                            target_cell = B
+                        
+            tr, tt = target_cell
+            is_perimeter = (tr == rings - 1)
+            was_wall = cells[tr][tt][0]
+            floors = data_dict.get('floors', props.floors)
+            
+            cells[tr][tt][0] = not was_wall
+            if cells[tr][tt][0]:
+                if num_wall_meshes > 0:
+                    cells[tr][tt][2] = random.randrange(num_wall_meshes)
+                    cells[tr][tt][3] = random.randrange(num_wall_meshes)
+                    if len(cells[tr][tt]) > 7:
+                        cells[tr][tt][7] = random.randrange(num_wall_meshes)
+                    if len(cells[tr][tt]) > 8:
+                        cells[tr][tt][8] = random.randrange(num_wall_meshes)
+                if num_roof_meshes > 0 and len(cells[tr][tt]) > 5:
+                    cells[tr][tt][5] = random.randrange(num_roof_meshes)
+            else:
+                if num_floor_meshes > 0 and len(cells[tr][tt]) > 4:
+                    cells[tr][tt][4] = random.randrange(num_floor_meshes)
+            
+            if is_perimeter:
+                if was_wall: # Now floor cell (was wall)
+                    if z_hit == 0:
+                        # Move entrance here
+                        # Close the old entrance cell if one exists
+                        entrance_val = data_dict.get('entrance')
+                        if entrance_val and len(entrance_val) >= 2:
+                            old_r, old_tt = entrance_val[0], entrance_val[1]
+                            if 0 <= old_r < len(cells) and 0 <= old_tt < len(cells[old_r]):
+                                cells[old_r][old_tt][0] = True # Make it wall again
+                        
+                        data_dict['entrance'] = [tr, tt, 'OUT']
+                        rebuilt_text = "entrance floor tile (moved)"
+                    elif z_hit == floors - 1:
+                        # Add to exits
+                        if 'exits' not in data_dict or data_dict['exits'] is None:
+                            data_dict['exits'] = []
+                        if not any(ex[0] == tr and ex[1] == tt and ex[2] == 'OUT' for ex in data_dict['exits']):
+                            data_dict['exits'].append([tr, tt, 'OUT'])
+                        rebuilt_text = "exit floor tile"
+                    else:
+                        rebuilt_text = "floor tile (middle floor)"
+                else: # Now wall cell (was floor)
+                    if z_hit == 0:
+                        # Close entrance
+                        entrance_val = data_dict.get('entrance')
+                        if entrance_val and len(entrance_val) >= 2 and entrance_val[0] == tr and entrance_val[1] == tt:
+                            data_dict['entrance'] = None
+                        rebuilt_text = "entrance wall tile (closed)"
+                    elif z_hit == floors - 1:
+                        # Remove from exits
+                        if 'exits' in data_dict and data_dict['exits'] is not None:
+                            data_dict['exits'] = [ex for ex in data_dict['exits'] if not (ex[0] == tr and ex[1] == tt and ex[2] == 'OUT')]
+                        rebuilt_text = "exit wall tile (closed)"
+                    else:
+                        rebuilt_text = "wall tile (middle floor)"
+            else:
+                rebuilt_text = "wall tile"
+
+            modified = True
+            r_idx, theta = tr, tt
+        else:
+            d_in = abs(r_hit - (r_idx - 0.5) * ts)
+            d_out = abs(r_hit - (r_idx + 0.5) * ts)
+            
+            d_cw = r_hit * _angle_diff(phi_hit, (theta + 1) * alpha_r)
+            d_ccw = r_hit * _angle_diff(phi_hit, theta * alpha_r)
+            
+            if r_idx == 0:
+                min_d = d_out
+            else:
+                min_d = min(d_in, d_out, d_cw, d_ccw)
+                
+            if min_d == d_cw:
+                cells[r_idx][theta][0] = not cells[r_idx][theta][0]
+                modified = True
+                rebuilt_text = "clockwise wall"
+            elif min_d == d_ccw:
+                prev_theta = (theta - 1) % Nr
+                cells[r_idx][prev_theta][0] = not cells[r_idx][prev_theta][0]
+                modified = True
+                rebuilt_text = "counter-clockwise wall"
+            elif min_d == d_in:
+                cells[r_idx][theta][1] = not cells[r_idx][theta][1]
+                modified = True
+                rebuilt_text = "inward wall"
+            elif min_d == d_out:
+                if r_idx + 1 < rings:
+                    N_out = ring_sectors[r_idx + 1]
+                    theta_out = math.floor(phi_hit / (2 * math.pi / N_out))
+                    theta_out = max(0, min(theta_out, N_out - 1))
+                    cells[r_idx + 1][theta_out][1] = not cells[r_idx + 1][theta_out][1]
+                    modified = True
+                    rebuilt_text = "outward wall"
+                else:
+                    theta_out = theta
+                    floors = data_dict.get('floors', props.floors)
+                    if z_hit == 0:
+                        # Floor 0: Edit entrance
+                        entrance_val = data_dict.get('entrance')
+                        is_current_entrance = False
+                        if entrance_val and len(entrance_val) >= 2 and entrance_val[0] == r_idx and entrance_val[1] == theta_out:
+                            is_current_entrance = True
+                        
+                        if is_current_entrance:
+                            data_dict['entrance'] = None
+                            rebuilt_text = "entrance wall (closed)"
+                            modified = True
+                        else:
+                            data_dict['entrance'] = [r_idx, theta_out, 'OUT']
+                            rebuilt_text = "entrance wall (moved)"
+                            modified = True
+                    elif z_hit == floors - 1:
+                        # Top floor: Edit exits
+                        if 'exits' not in data_dict or data_dict['exits'] is None:
+                            data_dict['exits'] = []
+                        found_idx = -1
+                        for idx, ex in enumerate(data_dict['exits']):
+                            if len(ex) >= 3 and ex[0] == r_idx and ex[1] == theta_out and ex[2] == 'OUT':
+                                found_idx = idx
+                                break
+                        if found_idx != -1:
+                            data_dict['exits'].pop(found_idx)
+                            rebuilt_text = "outward wall (exit closed)"
+                        else:
+                            data_dict['exits'].append([r_idx, theta_out, 'OUT'])
+                            rebuilt_text = "outward wall (exit opened)"
+                        modified = True
+                    else:
+                        self.report({'WARNING'}, "Cannot place entrance/exit on middle floors")
+                        modified = False
+
+
+                    
+        if modified:
+            data_dict['cells'] = original_cells
+            col["fire_maze_data"] = json.dumps(data_dict)
+            rebuild_maze_from_collection(context, col)
+            self.report({'INFO'}, f"Toggled {rebuilt_text} at cell ({r_idx}, {theta})")
+
+    def _handle_rect_mesh_cycle(self, context, event, props, col, data_dict, cells, wall_mode, hit_x, hit_y, ts, width, depth, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells):
+        cx = math.floor(hit_x / ts)
+        cy = math.floor(hit_y / ts)
+        if -1 <= cx <= width and -1 <= cy <= depth:
+            cx_clamped = max(0, min(cx, width - 1))
+            cy_clamped = max(0, min(cy, depth - 1))
+
+            if wall_mode == 'cube':
+                is_wall = cells[cy_clamped][cx_clamped][0]
+                modified = False
+                rebuilt_text = ""
+                
+                is_pillar_mode = props.cube_mode_pillar
+                
+                if face_dir == 'ROOF':
+                    if is_pillar_mode and is_wall:
+                        if num_wall_meshes > 0:
+                            current_idx = cells[cy_clamped][cx_clamped][1] if isinstance(cells[cy_clamped][cx_clamped][1], int) else -1
+                            next_idx = (current_idx + 1) % num_wall_meshes
+                            cells[cy_clamped][cx_clamped][1] = next_idx
+                            cells[cy_clamped][cx_clamped][2] = next_idx
+                            cells[cy_clamped][cx_clamped][3] = next_idx
+                            cells[cy_clamped][cx_clamped][4] = next_idx
+                            modified = True
+                            rebuilt_text = "pillar"
+                    else:
+                        if num_roof_meshes > 0 and len(cells[cy_clamped][cx_clamped]) > 6:
+                            current_idx = cells[cy_clamped][cx_clamped][6] if isinstance(cells[cy_clamped][cx_clamped][6], int) else -1
+                            cells[cy_clamped][cx_clamped][6] = (current_idx + 1) % num_roof_meshes
+                            modified = True
+                            rebuilt_text = "roof"
+                elif face_dir == 'FLOOR':
+                    if num_floor_meshes > 0 and len(cells[cy_clamped][cx_clamped]) > 5:
+                        current_idx = cells[cy_clamped][cx_clamped][5] if isinstance(cells[cy_clamped][cx_clamped][5], int) else -1
+                        cells[cy_clamped][cx_clamped][5] = (current_idx + 1) % num_floor_meshes
+                        modified = True
+                        rebuilt_text = "floor"
+                else:
+                    # Clicked a wall face
+                    if is_wall and num_wall_meshes > 0:
+                        if is_pillar_mode:
+                            current_idx = cells[cy_clamped][cx_clamped][1] if isinstance(cells[cy_clamped][cx_clamped][1], int) else -1
+                            next_idx = (current_idx + 1) % num_wall_meshes
+                            cells[cy_clamped][cx_clamped][1] = next_idx
+                            cells[cy_clamped][cx_clamped][2] = next_idx
+                            cells[cy_clamped][cx_clamped][3] = next_idx
+                            cells[cy_clamped][cx_clamped][4] = next_idx
+                            modified = True
+                            rebuilt_text = "pillar"
+                        else:
+                            idx_map = {'N': 1, 'S': 2, 'E': 3, 'W': 4}
+                            face_idx = idx_map.get(face_dir, 1)
+                            current_idx = cells[cy_clamped][cx_clamped][face_idx] if isinstance(cells[cy_clamped][cx_clamped][face_idx], int) else -1
+                            cells[cy_clamped][cx_clamped][face_idx] = (current_idx + 1) % num_wall_meshes
+                            modified = True
+                            rebuilt_text = f"wall ({face_dir} face)"
+                            
+                if modified:
+                    data_dict['cells'] = original_cells
+                    col["fire_maze_data"] = json.dumps(data_dict)
+                    rebuild_maze_from_collection(context, col)
+                    self.report({'INFO'}, f"Swapped {rebuilt_text} mesh at ({cx_clamped}, {cy_clamped})")
+                else:
+                    if not is_wall:
+                        if num_floor_meshes > 0:
+                            current_idx = cells[cy_clamped][cx_clamped][5] if isinstance(cells[cy_clamped][cx_clamped][5], int) else -1
+                            cells[cy_clamped][cx_clamped][5] = (current_idx + 1) % num_floor_meshes
+                            data_dict['cells'] = original_cells
+                            col["fire_maze_data"] = json.dumps(data_dict)
+                            rebuild_maze_from_collection(context, col)
+                            self.report({'INFO'}, f"Swapped floor mesh at ({cx_clamped}, {cy_clamped})")
+            else:
+                # Thin wall mode
+                modified = False
+                rebuilt_text = ""
+                if face_dir == 'ROOF':
+                    if num_roof_meshes > 0:
+                        if len(cells[cy_clamped][cx_clamped]) > 8:
+                            idx_pos = 9
+                        elif len(cells[cy_clamped][cx_clamped]) > 7:
+                            idx_pos = 7
+                        else:
+                            idx_pos = None
+                        
+                        if idx_pos is not None:
+                            current_idx = cells[cy_clamped][cx_clamped][idx_pos] if isinstance(cells[cy_clamped][cx_clamped][idx_pos], int) else -1
+                            cells[cy_clamped][cx_clamped][idx_pos] = (current_idx + 1) % num_roof_meshes
+                            modified = True
+                            rebuilt_text = "roof"
+                elif face_dir == 'FLOOR':
+                    if num_floor_meshes > 0:
+                        if len(cells[cy_clamped][cx_clamped]) > 8:
+                            idx_pos = 8
+                        elif len(cells[cy_clamped][cx_clamped]) > 6:
+                            idx_pos = 6
+                        else:
+                            idx_pos = None
+                            
+                        if idx_pos is not None:
+                            current_idx = cells[cy_clamped][cx_clamped][idx_pos] if isinstance(cells[cy_clamped][cx_clamped][idx_pos], int) else -1
+                            cells[cy_clamped][cx_clamped][idx_pos] = (current_idx + 1) % num_floor_meshes
+                            modified = True
+                            rebuilt_text = "floor"
+                else:
+                    if num_wall_meshes > 0:
+                        d_N = abs(hit_y - (cy_clamped + 1) * ts)
+                        d_S = abs(hit_y - cy_clamped * ts)
+                        d_E = abs(hit_x - (cx_clamped + 1) * ts)
+                        d_W = abs(hit_x - cx_clamped * ts)
+                        
+                        min_d = min(d_N, d_S, d_E, d_W)
+                        
+                        if len(cells[cy_clamped][cx_clamped]) > 8:
+                            if min_d == d_N:
+                                 current_idx = cells[cy_clamped][cx_clamped][4] if isinstance(cells[cy_clamped][cx_clamped][4], int) else -1
+                                 next_idx = (current_idx + 1) % num_wall_meshes
+                                 cells[cy_clamped][cx_clamped][4] = next_idx
+                                 if cy_clamped + 1 < depth:
+                                     cells[cy_clamped + 1][cx_clamped][5] = next_idx
+                                 modified = True
+                                 rebuilt_text = "horizontal wall (North)"
+                            elif min_d == d_S:
+                                 current_idx = cells[cy_clamped][cx_clamped][5] if isinstance(cells[cy_clamped][cx_clamped][5], int) else -1
+                                 next_idx = (current_idx + 1) % num_wall_meshes
+                                 cells[cy_clamped][cx_clamped][5] = next_idx
+                                 if cy_clamped - 1 >= 0:
+                                     cells[cy_clamped - 1][cx_clamped][4] = next_idx
+                                 modified = True
+                                 rebuilt_text = "horizontal wall (South)"
+                            elif min_d == d_E:
+                                 current_idx = cells[cy_clamped][cx_clamped][6] if isinstance(cells[cy_clamped][cx_clamped][6], int) else -1
+                                 next_idx = (current_idx + 1) % num_wall_meshes
+                                 cells[cy_clamped][cx_clamped][6] = next_idx
+                                 if cx_clamped + 1 < width:
+                                     cells[cy_clamped][cx_clamped + 1][7] = next_idx
+                                 modified = True
+                                 rebuilt_text = "vertical wall (East)"
+                            else:
+                                 current_idx = cells[cy_clamped][cx_clamped][7] if isinstance(cells[cy_clamped][cx_clamped][7], int) else -1
+                                 next_idx = (current_idx + 1) % num_wall_meshes
+                                 cells[cy_clamped][cx_clamped][7] = next_idx
+                                 if cx_clamped - 1 >= 0:
+                                     cells[cy_clamped - 1][cx_clamped][6] = next_idx
+                                 modified = True
+                                 rebuilt_text = "vertical wall (West)"
+                        else:
+                            if min_d == d_N or min_d == d_S:
+                                target_y = cy_clamped + 1 if min_d == d_N else cy_clamped
+                                target_y = min(target_y, depth - 1)
+                                current_idx = cells[target_y][cx_clamped][4] if isinstance(cells[target_y][cx_clamped][4], int) else -1
+                                cells[target_y][cx_clamped][4] = (current_idx + 1) % num_wall_meshes
+                                modified = True
+                                rebuilt_text = "horizontal wall"
+                            else:
+                                target_x = cx_clamped + 1 if min_d == d_E else cx_clamped
+                                target_x = min(target_x, width - 1)
+                                current_idx = cells[cy_clamped][target_x][5] if isinstance(cells[cy_clamped][target_x][5], int) else -1
+                                cells[cy_clamped][target_x][5] = (current_idx + 1) % num_wall_meshes
+                                modified = True
+                                rebuilt_text = "vertical wall"
+                    
+                if modified:
+                    data_dict['cells'] = original_cells
+                    col["fire_maze_data"] = json.dumps(data_dict)
+                    rebuild_maze_from_collection(context, col)
+                    self.report({'INFO'}, f"Swapped {rebuilt_text} mesh at ({cx_clamped}, {cy_clamped})")
+
+    def _handle_rect_wall_toggle(self, context, event, props, col, data_dict, cells, wall_mode, hit_x, hit_y, ts, width, depth, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells):
+        if wall_mode == 'cube':
+            cx = math.floor(hit_x / ts)
+            cy = math.floor(hit_y / ts)
+            cx_clamped = max(0, min(cx, width - 1))
+            cy_clamped = max(0, min(cy, depth - 1))
+            
+            target_cell = (cx_clamped, cy_clamped)
+            if face_dir in {'N', 'S', 'E', 'W'}:
+                A = (cx_clamped, cy_clamped)
+                if face_dir == 'N':
+                    B = (cx_clamped, cy_clamped + 1)
+                elif face_dir == 'S':
+                    B = (cx_clamped, cy_clamped - 1)
+                elif face_dir == 'E':
+                    B = (cx_clamped + 1, cy_clamped)
+                else:
+                    B = (cx_clamped - 1, cy_clamped)
+                    
+                if 0 <= B[0] < width and 0 <= B[1] < depth:
+                    if cells[A[1]][A[0]][0]:
+                        target_cell = A
+                    elif cells[B[1]][B[0]][0]:
+                        target_cell = B
+                        
+            tx, ty = target_cell
+            if 0 <= tx < width and 0 <= ty < depth:
+                cells[ty][tx][0] = not cells[ty][tx][0]
+                if cells[ty][tx][0]:
+                    if num_wall_meshes > 0:
+                        cells[ty][tx][1] = random.randrange(num_wall_meshes)
+                        cells[ty][tx][2] = random.randrange(num_wall_meshes)
+                        cells[ty][tx][3] = random.randrange(num_wall_meshes)
+                        cells[ty][tx][4] = random.randrange(num_wall_meshes)
+                    if num_roof_meshes > 0:
+                        cells[ty][tx][6] = random.randrange(num_roof_meshes)
+                else:
+                    if num_floor_meshes > 0:
+                        cells[ty][tx][5] = random.randrange(num_floor_meshes)
+                data_dict['cells'] = original_cells
+                col["fire_maze_data"] = json.dumps(data_dict)
+                rebuild_maze_from_collection(context, col)
+                self.report({'INFO'}, f"Toggled wall tile at ({tx}, {ty})")
+        else:
+            # Thin wall mode
+            cx = math.floor(hit_x / ts)
+            cy = math.floor(hit_y / ts)
+            if -1 <= cx <= width and -1 <= cy <= depth:
+                cx_clamped = max(0, min(cx, width - 1))
+                cy_clamped = max(0, min(cy, depth - 1))
+                
+                d_N = abs(hit_y - (cy_clamped + 1) * ts)
+                d_S = abs(hit_y - cy_clamped * ts)
+                d_E = abs(hit_x - (cx_clamped + 1) * ts)
+                d_W = abs(hit_x - cx_clamped * ts)
+                
+                min_d = min(d_N, d_S, d_E, d_W)
+                
+                if min_d == d_N:
+                    cells[cy_clamped][cx_clamped][0] = not cells[cy_clamped][cx_clamped][0]
+                    if cy_clamped + 1 < depth:
+                        cells[cy_clamped + 1][cx_clamped][1] = cells[cy_clamped][cx_clamped][0]
+                elif min_d == d_S:
+                    cells[cy_clamped][cx_clamped][1] = not cells[cy_clamped][cx_clamped][1]
+                    if cy_clamped - 1 >= 0:
+                        cells[cy_clamped - 1][cx_clamped][0] = cells[cy_clamped][cx_clamped][1]
+                elif min_d == d_E:
+                    cells[cy_clamped][cx_clamped][2] = not cells[cy_clamped][cx_clamped][2]
+                    if cx_clamped + 1 < width:
+                        cells[cy_clamped][cx_clamped + 1][3] = cells[cy_clamped][cx_clamped][2]
+                else:
+                    cells[cy_clamped][cx_clamped][3] = not cells[cy_clamped][cx_clamped][3]
+                    if cx_clamped - 1 >= 0:
+                        cells[cy_clamped][cx_clamped - 1][2] = cells[cy_clamped][cx_clamped][3]
+                        
+                data_dict['cells'] = original_cells
+                col["fire_maze_data"] = json.dumps(data_dict)
+                rebuild_maze_from_collection(context, col)
+                self.report({'INFO'}, f"Toggled wall at cell ({cx_clamped}, {cy_clamped})")
+
+    def modal(self, context, event):
+        """Handle viewport events: wall toggle on click, mesh cycle on shift+click, exit on Esc/Enter."""
+        props = context.scene.fire_maze
+        
+        # Check early exit / mouse boundary conditions
+        should_exit, exit_value = self._check_modal_early_exit_and_bounds(context, event, props)
+        if should_exit:
+            return exit_value
 
         if event.type == 'LEFTMOUSE':
             if event.value == 'PRESS':
-                # Unhide the helper object temporarily
-                helper = bpy.data.objects.get("_FireMaze_Edit_Helper")
-                if helper:
-                    helper.hide_viewport = False
-                
-                # Temporarily hide all non-helper maze objects to ensure we raycast against the simple helper mesh
-                hidden_objs = []
-                for o in list(bpy.data.objects):
-                    if o.get("fire_maze") and o.name != "_FireMaze_Edit_Helper":
-                        if not o.hide_viewport:
-                            o.hide_viewport = True
-                            hidden_objs.append(o)
-                
-                # Force view_layer update so the depsgraph evaluates the visibility changes before raycasting!
-                context.view_layer.update()
-                
                 # Perform the raycast
-                obj, loc, normal = _raycast_from_mouse(context, event)
-                
-                # Immediately restore visibility
-                if helper:
-                    helper.hide_viewport = True
-                for o in hidden_objs:
-                    o.hide_viewport = False
-                
-                # Force view_layer update to restore viewport state
-                context.view_layer.update()
+                obj, loc, normal = self._do_raycast(context, event)
                 
                 if obj:
                     col_name = getattr(props, "fire_maze_collection_name", "")
@@ -610,29 +1421,57 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                             col = None
                             
                     if col:
-                        if props.fire_maze_collection_name != col.name:
-                            props.fire_maze_collection_name = col.name
-                        ts = props.tile_size
                         # Offset hit coordinates slightly inward along normal to prevent floating-point boundary issues
                         if normal:
                             offset_loc = loc - normal * 0.01
                         else:
                             offset_loc = loc
+                        
+                        ts = props.tile_size
+                        tiled = props.wall_height_tiled
+                        tiles_high = props.wall_height_tiles if tiled else 1
+                        wh = ts * tiles_high if tiled else props.wall_height
+                        if props.is_editing:
+                            z_hit = props.edit_floor_level
+                        else:
+                            if normal and abs(normal.z) > 0.5:
+                                z_val = loc.z - 0.01 if normal.z < 0 else loc.z + 0.01
+                                z_hit = max(0, min(props.floors - 1, int(z_val / wh))) if wh > 0 and props.floors > 0 else 0
+                            else:
+                                z_hit = max(0, min(props.floors - 1, int(offset_loc.z / wh))) if wh > 0 and props.floors > 0 else 0
                         hit_x, hit_y = offset_loc.x, offset_loc.y
                         
                         data_dict = json.loads(col["fire_maze_data"])
                         width = data_dict['width']
                         depth = data_dict['depth']
                         cells = data_dict['cells']
+                        original_cells = cells
+                        cells_3d, floors = _resolve_cells_3d(cells)
+                        z_hit = max(0, min(floors - 1, z_hit))
+                        cells = cells_3d[z_hit]
                         wall_mode = data_dict.get('wall_mode', props.wall_mode)
+                        
+                        grid_type = data_dict.get('grid_type', 'rect')
+                        ring_sectors = data_dict.get('ring_sectors')
+                        rings = data_dict.get('polar_rings', 5)
+
+                        # Cell coordinates calculation
+                        if grid_type == 'polar':
+                            r_hit, phi_hit, r_idx, alpha_r, theta, Nr = _get_polar_coords(hit_x, hit_y, ts, ring_sectors)
+                            cx_clamped = theta
+                            cy_clamped = r_idx
+                        else:
+                            cx_clamped = max(0, min(math.floor(hit_x / ts), width - 1))
+                            cy_clamped = max(0, min(math.floor(hit_y / ts), depth - 1))
+
+                        # If tool is stair, handle stair toggling!
+                        if props.edit_tool == 'stair' and props.floors > 1:
+                            self._handle_stair_tool(context, event, props, col, data_dict, z_hit, cx_clamped, cy_clamped, grid_type, original_cells, wall_mode)
+                            return {'RUNNING_MODAL'}
                         
                         num_wall_meshes = data_dict.get('num_wall_meshes', 0)
                         num_floor_meshes = data_dict.get('num_floor_meshes', 0)
                         num_roof_meshes = data_dict.get('num_roof_meshes', 0)
-
-                        grid_type = data_dict.get('grid_type', 'rect')
-                        ring_sectors = data_dict.get('ring_sectors')
-                        rings = data_dict.get('polar_rings', 5)
 
                         face_dir = 'WALL'
                         if normal:
@@ -641,7 +1480,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                                 tiled = props.wall_height_tiled
                                 tiles_high = props.wall_height_tiles if tiled else 1
                                 wh = ts * tiles_high if tiled else props.wall_height
-                                face_dir = 'ROOF' if loc.z > (wh * 0.5) else 'FLOOR'
+                                face_dir = 'ROOF' if loc.z > (z_hit * wh + wh * 0.5) else 'FLOOR'
                             elif grid_type == 'rect':
                                 if ny > nx and ny > nz:
                                     face_dir = 'N' if normal.y > 0 else 'S'
@@ -650,635 +1489,21 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
 
                         if event.shift:
                             if grid_type == 'polar':
-                                r_hit = math.sqrt(hit_x**2 + hit_y**2)
-                                phi_hit = math.atan2(hit_y, hit_x)
-                                if phi_hit < 0:
-                                    phi_hit += 2 * math.pi
-                                    
-                                r_idx = math.floor(r_hit / ts + 0.5)
-                                r_idx = max(0, min(r_idx, rings - 1))
-                                
-                                Nr = ring_sectors[r_idx]
-                                alpha_r = 2 * math.pi / Nr
-                                theta = math.floor(phi_hit / alpha_r)
-                                theta = max(0, min(theta, Nr - 1))
-                                
-                                modified = False
-                                rebuilt_text = ""
-                                
-                                if face_dir == 'ROOF':
-                                    roof_idx_pos = 5
-                                    if num_roof_meshes > 0 and len(cells[r_idx][theta]) > roof_idx_pos:
-                                        current_idx = cells[r_idx][theta][roof_idx_pos] if isinstance(cells[r_idx][theta][roof_idx_pos], int) else -1
-                                        cells[r_idx][theta][roof_idx_pos] = (current_idx + 1) % num_roof_meshes
-                                        modified = True
-                                        rebuilt_text = "roof"
-                                elif face_dir == 'FLOOR':
-                                    floor_idx_pos = 4
-                                    if num_floor_meshes > 0 and len(cells[r_idx][theta]) > floor_idx_pos:
-                                        current_idx = cells[r_idx][theta][floor_idx_pos] if isinstance(cells[r_idx][theta][floor_idx_pos], int) else -1
-                                        cells[r_idx][theta][floor_idx_pos] = (current_idx + 1) % num_floor_meshes
-                                        modified = True
-                                        rebuilt_text = "floor"
-                                else:
-                                    # Clicked a wall face
-                                    if wall_mode == 'cube':
-                                        if num_wall_meshes > 0:
-                                            if props.cube_mode_pillar:
-                                                current_idx = cells[r_idx][theta][2] if isinstance(cells[r_idx][theta][2], int) else -1
-                                                cells[r_idx][theta][2] = (current_idx + 1) % num_wall_meshes
-                                                modified = True
-                                                rebuilt_text = "pillar"
-                                            else:
-                                                d_in = abs(r_hit - (r_idx - 0.5) * ts)
-                                                d_out = abs(r_hit - (r_idx + 0.5) * ts)
-                                                
-                                                def angle_diff(a, b):
-                                                    diff = (a - b) % (2 * math.pi)
-                                                    if diff > math.pi:
-                                                        diff -= 2 * math.pi
-                                                    return abs(diff)
-                                                    
-                                                d_cw = r_hit * angle_diff(phi_hit, (theta + 1) * alpha_r)
-                                                d_ccw = r_hit * angle_diff(phi_hit, theta * alpha_r)
-                                                
-                                                if r_idx == 0:
-                                                    min_d = d_out
-                                                else:
-                                                    min_d = min(d_in, d_out, d_cw, d_ccw)
-                                                    
-                                                # Cube mode: find the owner path cell (is_wall == False) of the clicked boundary
-                                                # Cells on each side of the boundary: A = (r_idx, theta)
-                                                # We determine B (the neighbor cell) and the boundary type
-                                                owner_cell = None
-                                                owner_idx_pos = -1
-                                                boundary_name = ""
-                                                
-                                                if min_d == d_cw:
-                                                    # Clockwise boundary
-                                                    A = (r_idx, theta)
-                                                    B = (r_idx, (theta + 1) % Nr)
-                                                    # A is CW boundary, B is CCW boundary
-                                                    if not cells[A[0]][A[1]][0]: # A is path
-                                                        owner_cell = A
-                                                        owner_idx_pos = 2 # CW index
-                                                        boundary_name = "clockwise radial boundary wall"
-                                                    elif not cells[B[0]][B[1]][0]: # B is path
-                                                        owner_cell = B
-                                                        owner_idx_pos = 3 # CCW index
-                                                        boundary_name = "counter-clockwise radial boundary wall"
-                                                    else:
-                                                        owner_cell = A
-                                                        owner_idx_pos = 2
-                                                        boundary_name = "clockwise radial boundary wall (fallback)"
-                                                elif min_d == d_ccw:
-                                                    # Counter-clockwise boundary
-                                                    A = (r_idx, theta)
-                                                    B = (r_idx, (theta - 1) % Nr)
-                                                    # A is CCW boundary, B is CW boundary
-                                                    if not cells[A[0]][A[1]][0]: # A is path
-                                                        owner_cell = A
-                                                        owner_idx_pos = 3 # CCW index
-                                                        boundary_name = "counter-clockwise radial boundary wall"
-                                                    elif not cells[B[0]][B[1]][0]: # B is path
-                                                        owner_cell = B
-                                                        owner_idx_pos = 2 # CW index
-                                                        boundary_name = "clockwise radial boundary wall"
-                                                    else:
-                                                        owner_cell = A
-                                                        owner_idx_pos = 3
-                                                        boundary_name = "counter-clockwise radial boundary wall (fallback)"
-                                                elif min_d == d_in:
-                                                    # Inward boundary
-                                                    if r_idx > 0:
-                                                        N_in = ring_sectors[r_idx - 1]
-                                                        theta_in = 0 if N_in == 1 else (theta if N_in == Nr else theta // 2)
-                                                        A = (r_idx, theta)
-                                                        B = (r_idx - 1, theta_in)
-                                                        # A is IN boundary, B is OUT boundary
-                                                        if not cells[A[0]][A[1]][0]: # A is path
-                                                            owner_cell = A
-                                                            owner_idx_pos = 7 # IN index
-                                                            boundary_name = "inward angular boundary wall"
-                                                        elif not cells[B[0]][B[1]][0]: # B is path
-                                                            owner_cell = B
-                                                            owner_idx_pos = 8 # OUT index (from inner ring's perspective)
-                                                            boundary_name = "outward angular boundary wall"
-                                                        else:
-                                                            owner_cell = A
-                                                            owner_idx_pos = 7
-                                                            boundary_name = "inward angular boundary wall (fallback)"
-                                                else: # d_out
-                                                    # Outward boundary
-                                                    if r_idx < rings - 1:
-                                                        N_out = ring_sectors[r_idx + 1]
-                                                        theta_out = math.floor(phi_hit / (2 * math.pi / N_out))
-                                                        theta_out = max(0, min(theta_out, N_out - 1))
-                                                        A = (r_idx, theta)
-                                                        B = (r_idx + 1, theta_out)
-                                                        # A is OUT boundary, B is IN boundary
-                                                        if not cells[A[0]][A[1]][0]: # A is path
-                                                            owner_cell = A
-                                                            owner_idx_pos = 8 # OUT index
-                                                            boundary_name = "outward angular boundary wall"
-                                                        elif not cells[B[0]][B[1]][0]: # B is path
-                                                            owner_cell = B
-                                                            owner_idx_pos = 7 # IN index
-                                                            boundary_name = "inward angular boundary wall"
-                                                        else:
-                                                            owner_cell = A
-                                                            owner_idx_pos = 8
-                                                            boundary_name = "outward angular boundary wall (fallback)"
-                                                    else:
-                                                        # Outermost boundary: only cell A exists
-                                                        owner_cell = (r_idx, theta)
-                                                        owner_idx_pos = 6 # Outermost OUT index
-                                                        boundary_name = "outermost outward angular boundary wall"
-                                                
-                                                if owner_cell is not None:
-                                                    r_own, theta_own = owner_cell
-                                                    # Map indices for backward compatibility (cells of length < 8)
-                                                    if len(cells[r_own][theta_own]) < 8:
-                                                        if owner_idx_pos in {2, 3}:
-                                                            owner_idx_pos = 2 # CW and CCW map to index 2
-                                                        elif owner_idx_pos in {6, 7, 8}:
-                                                            owner_idx_pos = 3 # IN, OUT, and outermost map to index 3
-                                                    
-                                                    current_idx = cells[r_own][theta_own][owner_idx_pos] if isinstance(cells[r_own][theta_own][owner_idx_pos], int) else -1
-                                                    cells[r_own][theta_own][owner_idx_pos] = (current_idx + 1) % num_wall_meshes
-                                                    modified = True
-                                                    rebuilt_text = boundary_name
-                                                    # Set coordinates for correct console logging
-                                                    r_idx, theta = r_own, theta_own
-                                    else:
-                                        # Thin wall mode
-                                        d_in = abs(r_hit - (r_idx - 0.5) * ts)
-                                        d_out = abs(r_hit - (r_idx + 0.5) * ts)
-                                        
-                                        def angle_diff(a, b):
-                                            diff = (a - b) % (2 * math.pi)
-                                            if diff > math.pi:
-                                                diff -= 2 * math.pi
-                                            return abs(diff)
-                                            
-                                        d_cw = r_hit * angle_diff(phi_hit, (theta + 1) * alpha_r)
-                                        d_ccw = r_hit * angle_diff(phi_hit, theta * alpha_r)
-                                        
-                                        if r_idx == 0:
-                                            min_d = d_out
-                                        else:
-                                            min_d = min(d_in, d_out, d_cw, d_ccw)
-                                            
-                                        if min_d == d_cw:
-                                            if num_wall_meshes > 0:
-                                                current_idx = cells[r_idx][theta][2] if isinstance(cells[r_idx][theta][2], int) else -1
-                                                cells[r_idx][theta][2] = (current_idx + 1) % num_wall_meshes
-                                                modified = True
-                                                rebuilt_text = "clockwise wall"
-                                        elif min_d == d_ccw:
-                                            if num_wall_meshes > 0:
-                                                prev_theta = (theta - 1) % Nr
-                                                current_idx = cells[r_idx][prev_theta][2] if isinstance(cells[r_idx][prev_theta][2], int) else -1
-                                                cells[r_idx][prev_theta][2] = (current_idx + 1) % num_wall_meshes
-                                                modified = True
-                                                rebuilt_text = "counter-clockwise wall"
-                                        elif min_d == d_in:
-                                            if num_wall_meshes > 0:
-                                                current_idx = cells[r_idx][theta][3] if isinstance(cells[r_idx][theta][3], int) else -1
-                                                cells[r_idx][theta][3] = (current_idx + 1) % num_wall_meshes
-                                                modified = True
-                                                rebuilt_text = "inward wall"
-                                        elif min_d == d_out:
-                                            if num_wall_meshes > 0:
-                                                if r_idx + 1 < rings:
-                                                    N_out = ring_sectors[r_idx + 1]
-                                                    theta_out = math.floor(phi_hit / (2 * math.pi / N_out))
-                                                    theta_out = max(0, min(theta_out, N_out - 1))
-                                                    current_idx = cells[r_idx + 1][theta_out][3] if isinstance(cells[r_idx + 1][theta_out][3], int) else -1
-                                                    cells[r_idx + 1][theta_out][3] = (current_idx + 1) % num_wall_meshes
-                                                    modified = True
-                                                    rebuilt_text = "outward wall"
-                                                else:
-                                                    # Outermost boundary wall is stored in the cell itself at index 6
-                                                    current_idx = cells[r_idx][theta][6] if len(cells[r_idx][theta]) > 6 else (cells[r_idx][theta][3] if isinstance(cells[r_idx][theta][3], int) else -1)
-                                                    if len(cells[r_idx][theta]) > 6:
-                                                        cells[r_idx][theta][6] = (current_idx + 1) % num_wall_meshes
-                                                    else:
-                                                        cells[r_idx][theta][3] = (current_idx + 1) % num_wall_meshes
-                                                    modified = True
-                                                    rebuilt_text = "outermost outward wall"
-                                            
-                                if modified:
-                                    data_dict['cells'] = cells
-                                    col["fire_maze_data"] = json.dumps(data_dict)
-                                    rebuild_maze_from_collection(context, col)
-                                    self.report({'INFO'}, f"Swapped {rebuilt_text} mesh at cell ({r_idx}, {theta})")
+                                self._handle_polar_mesh_cycle(context, event, props, col, data_dict, cells, wall_mode, ring_sectors, rings, hit_x, hit_y, ts, r_hit, phi_hit, r_idx, alpha_r, theta, Nr, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells)
                             else:
-                                # Rectangular grid mesh swapping
-                                cx = math.floor(hit_x / ts)
-                                cy = math.floor(hit_y / ts)
-                                if -1 <= cx <= width and -1 <= cy <= depth:
-                                    # Determine clicked face direction
-                                    face_dir = 'WALL'
-                                    if normal:
-                                        nx, ny, nz = abs(normal.x), abs(normal.y), abs(normal.z)
-                                        if nz > nx and nz > ny:
-                                            tiled = props.wall_height_tiled
-                                            tiles_high = props.wall_height_tiles if tiled else 1
-                                            wh = ts * tiles_high if tiled else props.wall_height
-                                            face_dir = 'ROOF' if loc.z > (wh * 0.5) else 'FLOOR'
-                                        elif ny > nx and ny > nz:
-                                            face_dir = 'N' if normal.y > 0 else 'S'
-                                        else:
-                                            face_dir = 'E' if normal.x > 0 else 'W'
-    
-                                    cx_clamped = max(0, min(cx, width - 1))
-                                    cy_clamped = max(0, min(cy, depth - 1))
-    
-                                    if wall_mode == 'cube':
-                                        is_wall = cells[cy_clamped][cx_clamped][0]
-                                        modified = False
-                                        rebuilt_text = ""
-                                        
-                                        is_pillar_mode = props.cube_mode_pillar
-                                        
-                                        if face_dir == 'ROOF':
-                                            if is_pillar_mode and is_wall:
-                                                if num_wall_meshes > 0:
-                                                    current_idx = cells[cy_clamped][cx_clamped][1] if isinstance(cells[cy_clamped][cx_clamped][1], int) else -1
-                                                    next_idx = (current_idx + 1) % num_wall_meshes
-                                                    cells[cy_clamped][cx_clamped][1] = next_idx
-                                                    cells[cy_clamped][cx_clamped][2] = next_idx
-                                                    cells[cy_clamped][cx_clamped][3] = next_idx
-                                                    cells[cy_clamped][cx_clamped][4] = next_idx
-                                                    modified = True
-                                                    rebuilt_text = "pillar"
-                                            else:
-                                                if num_roof_meshes > 0 and len(cells[cy_clamped][cx_clamped]) > 6:
-                                                    current_idx = cells[cy_clamped][cx_clamped][6] if isinstance(cells[cy_clamped][cx_clamped][6], int) else -1
-                                                    cells[cy_clamped][cx_clamped][6] = (current_idx + 1) % num_roof_meshes
-                                                    modified = True
-                                                    rebuilt_text = "roof"
-                                        elif face_dir == 'FLOOR':
-                                            if num_floor_meshes > 0 and len(cells[cy_clamped][cx_clamped]) > 5:
-                                                current_idx = cells[cy_clamped][cx_clamped][5] if isinstance(cells[cy_clamped][cx_clamped][5], int) else -1
-                                                cells[cy_clamped][cx_clamped][5] = (current_idx + 1) % num_floor_meshes
-                                                modified = True
-                                                rebuilt_text = "floor"
-                                        else:
-                                            # Clicked a wall face
-                                            if is_wall and num_wall_meshes > 0:
-                                                if is_pillar_mode:
-                                                    current_idx = cells[cy_clamped][cx_clamped][1] if isinstance(cells[cy_clamped][cx_clamped][1], int) else -1
-                                                    next_idx = (current_idx + 1) % num_wall_meshes
-                                                    cells[cy_clamped][cx_clamped][1] = next_idx
-                                                    cells[cy_clamped][cx_clamped][2] = next_idx
-                                                    cells[cy_clamped][cx_clamped][3] = next_idx
-                                                    cells[cy_clamped][cx_clamped][4] = next_idx
-                                                    modified = True
-                                                    rebuilt_text = "pillar"
-                                                else:
-                                                    idx_map = {'N': 1, 'S': 2, 'E': 3, 'W': 4}
-                                                    face_idx = idx_map.get(face_dir, 1)
-                                                    current_idx = cells[cy_clamped][cx_clamped][face_idx] if isinstance(cells[cy_clamped][cx_clamped][face_idx], int) else -1
-                                                    cells[cy_clamped][cx_clamped][face_idx] = (current_idx + 1) % num_wall_meshes
-                                                    modified = True
-                                                    rebuilt_text = f"wall ({face_dir} face)"
-                                                    
-                                        if modified:
-                                            data_dict['cells'] = cells
-                                            col["fire_maze_data"] = json.dumps(data_dict)
-                                            rebuild_maze_from_collection(context, col)
-                                            self.report({'INFO'}, f"Swapped {rebuilt_text} mesh at ({cx_clamped}, {cy_clamped})")
-                                        else:
-                                            if not is_wall:
-                                                if num_floor_meshes > 0:
-                                                    current_idx = cells[cy_clamped][cx_clamped][5] if isinstance(cells[cy_clamped][cx_clamped][5], int) else -1
-                                                    cells[cy_clamped][cx_clamped][5] = (current_idx + 1) % num_floor_meshes
-                                                    data_dict['cells'] = cells
-                                                    col["fire_maze_data"] = json.dumps(data_dict)
-                                                    rebuild_maze_from_collection(context, col)
-                                                    self.report({'INFO'}, f"Swapped floor mesh at ({cx_clamped}, {cy_clamped})")
-                                    else:
-                                        # Thin wall mode
-                                        modified = False
-                                        rebuilt_text = ""
-                                        if face_dir == 'ROOF':
-                                            if num_roof_meshes > 0:
-                                                if len(cells[cy_clamped][cx_clamped]) > 8:
-                                                    idx_pos = 9
-                                                elif len(cells[cy_clamped][cx_clamped]) > 7:
-                                                    idx_pos = 7
-                                                else:
-                                                    idx_pos = None
-                                                
-                                                if idx_pos is not None:
-                                                    current_idx = cells[cy_clamped][cx_clamped][idx_pos] if isinstance(cells[cy_clamped][cx_clamped][idx_pos], int) else -1
-                                                    cells[cy_clamped][cx_clamped][idx_pos] = (current_idx + 1) % num_roof_meshes
-                                                    modified = True
-                                                    rebuilt_text = "roof"
-                                        elif face_dir == 'FLOOR':
-                                            if num_floor_meshes > 0:
-                                                if len(cells[cy_clamped][cx_clamped]) > 8:
-                                                    idx_pos = 8
-                                                elif len(cells[cy_clamped][cx_clamped]) > 6:
-                                                    idx_pos = 6
-                                                else:
-                                                    idx_pos = None
-                                                    
-                                                if idx_pos is not None:
-                                                    current_idx = cells[cy_clamped][cx_clamped][idx_pos] if isinstance(cells[cy_clamped][cx_clamped][idx_pos], int) else -1
-                                                    cells[cy_clamped][cx_clamped][idx_pos] = (current_idx + 1) % num_floor_meshes
-                                                    modified = True
-                                                    rebuilt_text = "floor"
-                                        else:
-                                            if num_wall_meshes > 0:
-                                                d_N = abs(hit_y - (cy_clamped + 1) * ts)
-                                                d_S = abs(hit_y - cy_clamped * ts)
-                                                d_E = abs(hit_x - (cx_clamped + 1) * ts)
-                                                d_W = abs(hit_x - cx_clamped * ts)
-                                                
-                                                min_d = min(d_N, d_S, d_E, d_W)
-                                                
-                                                if len(cells[cy_clamped][cx_clamped]) > 8:
-                                                    if min_d == d_N:
-                                                         current_idx = cells[cy_clamped][cx_clamped][4] if isinstance(cells[cy_clamped][cx_clamped][4], int) else -1
-                                                         next_idx = (current_idx + 1) % num_wall_meshes
-                                                         cells[cy_clamped][cx_clamped][4] = next_idx
-                                                         if cy_clamped + 1 < depth:
-                                                             cells[cy_clamped + 1][cx_clamped][5] = next_idx
-                                                         modified = True
-                                                         rebuilt_text = "horizontal wall (North)"
-                                                    elif min_d == d_S:
-                                                         current_idx = cells[cy_clamped][cx_clamped][5] if isinstance(cells[cy_clamped][cx_clamped][5], int) else -1
-                                                         next_idx = (current_idx + 1) % num_wall_meshes
-                                                         cells[cy_clamped][cx_clamped][5] = next_idx
-                                                         if cy_clamped - 1 >= 0:
-                                                             cells[cy_clamped - 1][cx_clamped][4] = next_idx
-                                                         modified = True
-                                                         rebuilt_text = "horizontal wall (South)"
-                                                    elif min_d == d_E:
-                                                         current_idx = cells[cy_clamped][cx_clamped][6] if isinstance(cells[cy_clamped][cx_clamped][6], int) else -1
-                                                         next_idx = (current_idx + 1) % num_wall_meshes
-                                                         cells[cy_clamped][cx_clamped][6] = next_idx
-                                                         if cx_clamped + 1 < width:
-                                                             cells[cy_clamped][cx_clamped + 1][7] = next_idx
-                                                         modified = True
-                                                         rebuilt_text = "vertical wall (East)"
-                                                    else:
-                                                         current_idx = cells[cy_clamped][cx_clamped][7] if isinstance(cells[cy_clamped][cx_clamped][7], int) else -1
-                                                         next_idx = (current_idx + 1) % num_wall_meshes
-                                                         cells[cy_clamped][cx_clamped][7] = next_idx
-                                                         if cx_clamped - 1 >= 0:
-                                                             cells[cy_clamped][cx_clamped - 1][6] = next_idx
-                                                         modified = True
-                                                         rebuilt_text = "vertical wall (West)"
-                                                else:
-                                                    if min_d == d_N or min_d == d_S:
-                                                        target_y = cy_clamped + 1 if min_d == d_N else cy_clamped
-                                                        target_y = min(target_y, depth - 1)
-                                                        current_idx = cells[target_y][cx_clamped][4] if isinstance(cells[target_y][cx_clamped][4], int) else -1
-                                                        cells[target_y][cx_clamped][4] = (current_idx + 1) % num_wall_meshes
-                                                        modified = True
-                                                        rebuilt_text = "horizontal wall"
-                                                    else:
-                                                        target_x = cx_clamped + 1 if min_d == d_E else cx_clamped
-                                                        target_x = min(target_x, width - 1)
-                                                        current_idx = cells[cy_clamped][target_x][5] if isinstance(cells[cy_clamped][target_x][5], int) else -1
-                                                        cells[cy_clamped][target_x][5] = (current_idx + 1) % num_wall_meshes
-                                                        modified = True
-                                                        rebuilt_text = "vertical wall"
-                                                
-                                        if modified:
-                                            data_dict['cells'] = cells
-                                            col["fire_maze_data"] = json.dumps(data_dict)
-                                            rebuild_maze_from_collection(context, col)
-                                            self.report({'INFO'}, f"Swapped {rebuilt_text} mesh at ({cx_clamped}, {cy_clamped})")
+                                self._handle_rect_mesh_cycle(context, event, props, col, data_dict, cells, wall_mode, hit_x, hit_y, ts, width, depth, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells)
                         else:
                             if grid_type == 'polar':
-                                r_hit = math.sqrt(hit_x**2 + hit_y**2)
-                                phi_hit = math.atan2(hit_y, hit_x)
-                                if phi_hit < 0:
-                                    phi_hit += 2 * math.pi
-                                    
-                                rings = len(ring_sectors)
-                                r_idx = math.floor(r_hit / ts + 0.5)
-                                r_idx = max(0, min(r_idx, rings - 1))
-                                
-                                Nr = ring_sectors[r_idx]
-                                alpha_r = 2 * math.pi / Nr
-                                theta = math.floor(phi_hit / alpha_r)
-                                theta = max(0, min(theta, Nr - 1))
-                                
-                                modified = False
-                                rebuilt_text = ""
-                                
-                                d_in = abs(r_hit - (r_idx - 0.5) * ts)
-                                d_out = abs(r_hit - (r_idx + 0.5) * ts)
-                                
-                                def angle_diff(a, b):
-                                    diff = (a - b) % (2 * math.pi)
-                                    if diff > math.pi:
-                                        diff -= 2 * math.pi
-                                    return abs(diff)
-                                    
-                                d_cw = r_hit * angle_diff(phi_hit, (theta + 1) * alpha_r)
-                                d_ccw = r_hit * angle_diff(phi_hit, theta * alpha_r)
-                                
-                                if r_idx == 0:
-                                    min_d = d_out
-                                else:
-                                    min_d = min(d_in, d_out, d_cw, d_ccw)
-                                
-                                if wall_mode == 'cube':
-                                    target_cell = (r_idx, theta)
-                                    if face_dir == 'WALL':
-                                        if min_d == d_cw:
-                                            A = (r_idx, theta)
-                                            B = (r_idx, (theta + 1) % Nr)
-                                            if cells[A[0]][A[1]][0]:
-                                                target_cell = A
-                                            elif cells[B[0]][B[1]][0]:
-                                                target_cell = B
-                                        elif min_d == d_ccw:
-                                            A = (r_idx, theta)
-                                            B = (r_idx, (theta - 1) % Nr)
-                                            if cells[A[0]][A[1]][0]:
-                                                target_cell = A
-                                            elif cells[B[0]][B[1]][0]:
-                                                target_cell = B
-                                        elif min_d == d_in:
-                                            if r_idx > 0:
-                                                N_in = ring_sectors[r_idx - 1]
-                                                theta_in = 0 if N_in == 1 else (theta if N_in == Nr else theta // 2)
-                                                A = (r_idx, theta)
-                                                B = (r_idx - 1, theta_in)
-                                                if cells[A[0]][A[1]][0]:
-                                                    target_cell = A
-                                                elif cells[B[0]][B[1]][0]:
-                                                    target_cell = B
-                                        elif min_d == d_out:
-                                            if r_idx < rings - 1:
-                                                N_out = ring_sectors[r_idx + 1]
-                                                theta_out = math.floor(phi_hit / (2 * math.pi / N_out))
-                                                theta_out = max(0, min(theta_out, N_out - 1))
-                                                A = (r_idx, theta)
-                                                B = (r_idx + 1, theta_out)
-                                                if cells[A[0]][A[1]][0]:
-                                                    target_cell = A
-                                                elif cells[B[0]][B[1]][0]:
-                                                    target_cell = B
-                                                    
-                                    tr, ttheta = target_cell
-                                    cells[tr][ttheta][0] = not cells[tr][ttheta][0]
-                                    roof_pos = 5
-                                    floor_pos = 4
-                                    if cells[tr][ttheta][0]:
-                                        if num_wall_meshes > 0:
-                                            cells[tr][ttheta][2] = random.randrange(num_wall_meshes)
-                                            cells[tr][ttheta][3] = random.randrange(num_wall_meshes)
-                                            if len(cells[tr][ttheta]) > 7:
-                                                cells[tr][ttheta][7] = random.randrange(num_wall_meshes)
-                                            if len(cells[tr][ttheta]) > 8:
-                                                cells[tr][ttheta][8] = random.randrange(num_wall_meshes)
-                                        if num_roof_meshes > 0:
-                                            cells[tr][ttheta][roof_pos] = random.randrange(num_roof_meshes)
-                                    else:
-                                        if num_floor_meshes > 0:
-                                            cells[tr][ttheta][floor_pos] = random.randrange(num_floor_meshes)
-                                    modified = True
-                                    rebuilt_text = "wall tile"
-                                    r_idx, theta = tr, ttheta
-                                else:
-                                    # Thin wall mode
-                                    if min_d == d_cw:
-                                        cells[r_idx][theta][0] = not cells[r_idx][theta][0]
-                                        modified = True
-                                        rebuilt_text = "clockwise wall"
-                                    elif min_d == d_ccw:
-                                        prev_theta = (theta - 1) % Nr
-                                        cells[r_idx][prev_theta][0] = not cells[r_idx][prev_theta][0]
-                                        modified = True
-                                        rebuilt_text = "counter-clockwise wall"
-                                    elif min_d == d_in:
-                                        cells[r_idx][theta][1] = not cells[r_idx][theta][1]
-                                        modified = True
-                                        rebuilt_text = "inward wall"
-                                    elif min_d == d_out:
-                                        if r_idx + 1 < rings:
-                                            N_out = ring_sectors[r_idx + 1]
-                                            theta_out = math.floor(phi_hit / (2 * math.pi / N_out))
-                                            theta_out = max(0, min(theta_out, N_out - 1))
-                                            cells[r_idx + 1][theta_out][1] = not cells[r_idx + 1][theta_out][1]
-                                            modified = True
-                                            rebuilt_text = "outward wall"
-                                        else:
-                                            theta_out = theta
-                                            if 'exits' not in data_dict or data_dict['exits'] is None:
-                                                data_dict['exits'] = []
-                                            found_idx = -1
-                                            for idx, ex in enumerate(data_dict['exits']):
-                                                if len(ex) >= 3 and ex[0] == r_idx and ex[1] == theta_out and ex[2] == 'OUT':
-                                                    found_idx = idx
-                                                    break
-                                            if found_idx != -1:
-                                                data_dict['exits'].pop(found_idx)
-                                            else:
-                                                data_dict['exits'].append([r_idx, theta_out, 'OUT'])
-                                            modified = True
-                                            rebuilt_text = "outward wall"
-                                            
-                                if modified:
-                                    data_dict['cells'] = cells
-                                    col["fire_maze_data"] = json.dumps(data_dict)
-                                    rebuild_maze_from_collection(context, col)
-                                    self.report({'INFO'}, f"Toggled {rebuilt_text} at cell ({r_idx}, {theta})")
+                                self._handle_polar_wall_toggle(context, event, props, col, data_dict, cells, wall_mode, ring_sectors, rings, hit_x, hit_y, ts, r_hit, phi_hit, r_idx, alpha_r, theta, Nr, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells, z_hit)
                             else:
-                                # Rectangular grid toggle logic
-                                if wall_mode == 'cube':
-                                    cx = math.floor(hit_x / ts)
-                                    cy = math.floor(hit_y / ts)
-                                    cx_clamped = max(0, min(cx, width - 1))
-                                    cy_clamped = max(0, min(cy, depth - 1))
-                                    
-                                    target_cell = (cx_clamped, cy_clamped)
-                                    if face_dir in {'N', 'S', 'E', 'W'}:
-                                        A = (cx_clamped, cy_clamped)
-                                        if face_dir == 'N':
-                                            B = (cx_clamped, cy_clamped + 1)
-                                        elif face_dir == 'S':
-                                            B = (cx_clamped, cy_clamped - 1)
-                                        elif face_dir == 'E':
-                                            B = (cx_clamped + 1, cy_clamped)
-                                        else:
-                                            B = (cx_clamped - 1, cy_clamped)
-                                            
-                                        if 0 <= B[0] < width and 0 <= B[1] < depth:
-                                            if cells[A[1]][A[0]][0]:
-                                                target_cell = A
-                                            elif cells[B[1]][B[0]][0]:
-                                                target_cell = B
-                                                
-                                    tx, ty = target_cell
-                                    if 0 <= tx < width and 0 <= ty < depth:
-                                        cells[ty][tx][0] = not cells[ty][tx][0]
-                                        if cells[ty][tx][0]:
-                                            if num_wall_meshes > 0:
-                                                cells[ty][tx][1] = random.randrange(num_wall_meshes)
-                                                cells[ty][tx][2] = random.randrange(num_wall_meshes)
-                                                cells[ty][tx][3] = random.randrange(num_wall_meshes)
-                                                cells[ty][tx][4] = random.randrange(num_wall_meshes)
-                                            if num_roof_meshes > 0:
-                                                cells[ty][tx][6] = random.randrange(num_roof_meshes)
-                                        else:
-                                            if num_floor_meshes > 0:
-                                                cells[ty][tx][5] = random.randrange(num_floor_meshes)
-                                        data_dict['cells'] = cells
-                                        col["fire_maze_data"] = json.dumps(data_dict)
-                                        rebuild_maze_from_collection(context, col)
-                                        self.report({'INFO'}, f"Toggled wall tile at ({tx}, {ty})")
-                                else:
-                                    # Thin wall mode
-                                    cx = math.floor(hit_x / ts)
-                                    cy = math.floor(hit_y / ts)
-                                    if -1 <= cx <= width and -1 <= cy <= depth:
-                                        cx_clamped = max(0, min(cx, width - 1))
-                                        cy_clamped = max(0, min(cy, depth - 1))
-                                        
-                                        d_N = abs(hit_y - (cy_clamped + 1) * ts)
-                                        d_S = abs(hit_y - cy_clamped * ts)
-                                        d_E = abs(hit_x - (cx_clamped + 1) * ts)
-                                        d_W = abs(hit_x - cx_clamped * ts)
-                                        
-                                        min_d = min(d_N, d_S, d_E, d_W)
-                                        
-                                        if min_d == d_N:
-                                            cells[cy_clamped][cx_clamped][0] = not cells[cy_clamped][cx_clamped][0]
-                                            if cy_clamped + 1 < depth:
-                                                cells[cy_clamped + 1][cx_clamped][1] = cells[cy_clamped][cx_clamped][0]
-                                        elif min_d == d_S:
-                                            cells[cy_clamped][cx_clamped][1] = not cells[cy_clamped][cx_clamped][1]
-                                            if cy_clamped - 1 >= 0:
-                                                cells[cy_clamped - 1][cx_clamped][0] = cells[cy_clamped][cx_clamped][1]
-                                        elif min_d == d_E:
-                                            cells[cy_clamped][cx_clamped][2] = not cells[cy_clamped][cx_clamped][2]
-                                            if cx_clamped + 1 < width:
-                                                cells[cy_clamped][cx_clamped + 1][3] = cells[cy_clamped][cx_clamped][2]
-                                        else:
-                                            cells[cy_clamped][cx_clamped][3] = not cells[cy_clamped][cx_clamped][3]
-                                            if cx_clamped - 1 >= 0:
-                                                cells[cy_clamped][cx_clamped - 1][2] = cells[cy_clamped][cx_clamped][3]
-                                                
-                                        data_dict['cells'] = cells
-                                        col["fire_maze_data"] = json.dumps(data_dict)
-                                        rebuild_maze_from_collection(context, col)
-                                        self.report({'INFO'}, f"Toggled wall at cell ({cx_clamped}, {cy_clamped})")
+                                self._handle_rect_wall_toggle(context, event, props, col, data_dict, cells, wall_mode, hit_x, hit_y, ts, width, depth, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells)
             return {'RUNNING_MODAL'}
 
 
         return {'PASS_THROUGH'}
 
     def invoke(self, context, event):
+        """Enter interactive edit mode: rebuild helper, register modal handler, or exit if already editing."""
         props = context.scene.fire_maze
         
         # If already editing, act as a toggle off
@@ -1286,6 +1511,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
             props.is_editing = False
             context.workspace.status_text_set(None)
             delete_edit_helper()
+            set_other_mazes_visibility(context, True)
             col = _get_active_maze_collection(context)
             if col:
                 rebuild_maze_from_collection(context, col)
@@ -1300,21 +1526,34 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
             
         props.is_editing = True
         props.fire_maze_collection_name = col.name
+        set_other_mazes_visibility(context, False)
+
+        try:
+            data_dict = json.loads(col["fire_maze_data"])
+            col_floors = data_dict.get('floors', 1)
+            props.edit_floor_level = max(0, min(props.edit_floor_level, col_floors - 1))
+        except Exception as e:
+            logger.debug(f"Failed to validate floor level: {e}")
+
         rebuild_maze_from_collection(context, col)
-        context.workspace.status_text_set("FireMaze Editor: Left-click walls to toggle. Shift+Left-click to cycle mesh. Enter/Esc to exit.")
+        if props.floors > 1:
+            context.workspace.status_text_set(f"FireMaze Editor ({props.floors} floors): Left-click walls to toggle. Shift+click to cycle mesh. Enter/Esc to exit.")
+        else:
+            context.workspace.status_text_set("FireMaze Editor: Left-click walls to toggle. Shift+Left-click to cycle mesh. Enter/Esc to exit.")
         self.init_workspace = context.workspace.name
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
 
 
 def _generate_maze_image_datablock(context, img_name="FireMaze_Layout"):
+    """Create a Blender Image datablock from the current maze layout (rectangular grids only)."""
     col = _get_active_maze_collection(context)
     if not col or "fire_maze_data" not in col:
         return None, "No active maze layout found. Please generate a maze first."
 
-    import json
     try:
         data = json.loads(col["fire_maze_data"])
+
         if data.get('grid_type', 'rect') == 'polar':
             return None, "Save Maze as Image is currently only supported for Rectangular mazes."
         width = data["width"]
@@ -1340,10 +1579,13 @@ def _generate_maze_image_datablock(context, img_name="FireMaze_Layout"):
     # Buffer size is img_w * img_h * 4 (RGBA channels)
     pixels = [0.0] * (img_w * img_h * 4)
 
+    cells_3d, floors = _resolve_cells_3d(cells)
+    floor_cells = cells_3d[0]
+
     if wall_mode == 'cube':
         for y in range(depth):
             for x in range(width):
-                is_wall = cells[y][x][0]
+                is_wall = floor_cells[y][x][0]
                 val = 0.0 if is_wall else 1.0
                 idx = (y * img_w + x) * 4
                 pixels[idx] = val
@@ -1353,7 +1595,7 @@ def _generate_maze_image_datablock(context, img_name="FireMaze_Layout"):
     else: # thin mode
         for y in range(depth):
             for x in range(width):
-                c = cells[y][x]
+                c = floor_cells[y][x]
                 bx, by = x * 3, y * 3
                 
                 # Center is walkable
@@ -1386,18 +1628,22 @@ def _generate_maze_image_datablock(context, img_name="FireMaze_Layout"):
                     pixels[w_idx+3] = 1.0
 
     # Set pixel data
-    img.pixels = pixels
+    img.pixels.foreach_set(pixels)
     img.update()
     return img, None
 
 
+
 class MAZE_OT_save_as_image(bpy.types.Operator):
+    """Export the current maze layout as a black-and-white Blender Image datablock."""
+
     bl_idname = "fire_maze.save_as_image"
     bl_label = "Save Maze as Image"
     bl_description = "Export the current maze layout as a black-and-white image in the Blender database"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
+        """Generate the image datablock and report its name."""
         img, err = _generate_maze_image_datablock(context)
         if err:
             self.report({'ERROR'}, err)
@@ -1407,6 +1653,8 @@ class MAZE_OT_save_as_image(bpy.types.Operator):
 
 
 class MAZE_OT_save_image_file(bpy.types.Operator, ExportHelper):
+    """Save the current maze layout as a PNG file on disk via a file dialog."""
+
     bl_idname = "fire_maze.save_image_file"
     bl_label = "Save Maze Image to Disk"
     bl_description = "Save the current maze layout as a PNG image file on disk"
@@ -1420,6 +1668,7 @@ class MAZE_OT_save_image_file(bpy.types.Operator, ExportHelper):
     )
 
     def execute(self, context):
+        """Generate a temp image, save to the chosen file path, and clean up."""
         img, err = _generate_maze_image_datablock(context, img_name="FireMaze_Export_Temp")
         if err:
             self.report({'ERROR'}, err)
@@ -1442,6 +1691,8 @@ class MAZE_OT_save_image_file(bpy.types.Operator, ExportHelper):
 
 
 class MAZE_OT_load_mask_image(bpy.types.Operator, ImportHelper):
+    """Load a black-and-white image from disk to use as a maze shape mask."""
+
     bl_idname = "fire_maze.load_mask_image"
     bl_label = "Load Mask Image"
     bl_description = "Load a black-and-white image from disk to use as a maze mask"
@@ -1455,7 +1706,7 @@ class MAZE_OT_load_mask_image(bpy.types.Operator, ImportHelper):
     )
     
     def execute(self, context):
-        import os
+        """Load the selected image file and assign it to the mask_image property."""
         if not os.path.exists(self.filepath):
             self.report({'ERROR'}, f"File not found: {self.filepath}")
             return {'CANCELLED'}
@@ -1470,16 +1721,16 @@ class MAZE_OT_load_mask_image(bpy.types.Operator, ImportHelper):
 
 
 class MAZE_OT_restore_autosave(bpy.types.Operator):
+    """Restore maze settings and layout from the temporary autosave file."""
+
     bl_idname = "fire_maze.restore_autosave"
     bl_label = "Restore Last Session"
     bl_description = "Restore maze settings and layout from the last session's autosave"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
+        """Read the autosave JSON, deserialize it, and acknowledge the recovery."""
         global show_recovery_warning, has_autosave
-        import os
-        import tempfile
-        import json
         
         autosave_path = os.path.join(tempfile.gettempdir(), "firemaze_autosave.json")
         if not os.path.exists(autosave_path):
@@ -1497,7 +1748,7 @@ class MAZE_OT_restore_autosave(bpy.types.Operator):
                 with open(AUTOSAVE_ACK_PATH, 'w') as f:
                     json.dump(data, f, indent=2)
             except Exception as ack_err:
-                print("Failed to write autosave ack:", ack_err)
+                self.report({'WARNING'}, f"Failed to write autosave ack: {ack_err}")
             
             show_recovery_warning = False
             has_autosave = False
@@ -1517,17 +1768,19 @@ class MAZE_OT_restore_autosave(bpy.types.Operator):
 
 
 class MAZE_OT_discard_autosave(bpy.types.Operator):
+    """Delete the temporary autosave and acknowledgement files from disk."""
+
     bl_idname = "fire_maze.discard_autosave"
     bl_label = "Discard Recovery Data"
     bl_description = "Delete the temporary autosave recovery file from disk"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
+        """Remove autosave files, clear global flags, and report the result."""
         global show_recovery_warning, has_autosave
-        import os
-        import tempfile
         autosave_path = os.path.join(tempfile.gettempdir(), "firemaze_autosave.json")
         ack_path = os.path.join(tempfile.gettempdir(), "firemaze_autosave_ack.json")
+
         
         file_removed = False
         try:
@@ -1550,6 +1803,8 @@ class MAZE_OT_discard_autosave(bpy.types.Operator):
             return {'CANCELLED'}
 
 class MAZE_OT_save_session(bpy.types.Operator, ExportHelper):
+    """Save current maze settings and layout to a JSON file via a file dialog."""
+
     bl_idname = "fire_maze.save_session"
     bl_label = "Save Session"
     bl_description = "Save current maze settings and layout to a JSON file"
@@ -1563,7 +1818,7 @@ class MAZE_OT_save_session(bpy.types.Operator, ExportHelper):
     )
     
     def execute(self, context):
-        import json
+        """Serialize session data and write to the chosen file path."""
         try:
             payload = _serialize_session_data(context)
             payload_str = json.dumps(payload, indent=2)
@@ -1576,6 +1831,8 @@ class MAZE_OT_save_session(bpy.types.Operator, ExportHelper):
             return {'CANCELLED'}
 
 class MAZE_OT_load_session(bpy.types.Operator, ImportHelper):
+    """Load maze settings and layout from a JSON file via a file dialog."""
+
     bl_idname = "fire_maze.load_session"
     bl_label = "Load Session"
     bl_description = "Load maze settings and layout from a JSON file"
@@ -1589,9 +1846,8 @@ class MAZE_OT_load_session(bpy.types.Operator, ImportHelper):
     )
     
     def execute(self, context):
+        """Read the selected JSON file, deserialize it, and rebuild the maze."""
         global show_recovery_warning
-        import json
-        import os
         if not os.path.exists(self.filepath):
             self.report({'ERROR'}, f"File not found: {self.filepath}")
             return {'CANCELLED'}
@@ -1609,9 +1865,11 @@ class MAZE_OT_load_session(bpy.types.Operator, ImportHelper):
 classes = (MAZE_OT_generate, MAZE_OT_clear, MAZE_OT_interactive_edit, MAZE_OT_save_as_image, MAZE_OT_save_image_file, MAZE_OT_load_mask_image, MAZE_OT_restore_autosave, MAZE_OT_discard_autosave, MAZE_OT_save_session, MAZE_OT_load_session)
 
 def register():
+    """Register all FireMaze operator classes."""
     for cls in classes:
         bpy.utils.register_class(cls)
 
 def unregister():
+    """Unregister all FireMaze operator classes."""
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

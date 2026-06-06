@@ -1,29 +1,75 @@
-import random
+"""Maze generation algorithms and data structures for FireMaze.
+
+Provides 10 maze generation algorithms (DFS, Kruskal, Eller, Binary Tree,
+Prim, Hunt-and-Kill, Sidewinder, Wilson, Recursive Division, Growing Tree),
+pathfinding (BFS), image mask support, and 3D multilevel expansion.
+"""
+
+import random as _real_random
+random = _real_random.Random()
 import math
+import copy
+import logging
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional
 from collections import deque
+from .utils import _resolve_cells_3d, _get_stair_footprint_coords
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class MazeData:
+    """Container for all maze data: dimensions, cells, entrance/exits, guide path, grid type, stairs."""
+
     width: int
     depth: int
-    cells: List[List[List[bool]]]  # cells[y][x] = [N, S, E, W] or [is_wall, True, True, True]
+    cells: List  # cells[z][y][x] = [...] (3D for multilevel, 2D for single-floor back-compat)
     entrance: Tuple[int, int, str]
     exits: List[Tuple[int, int, str]] = field(default_factory=list)
     center: Tuple[int, int] = (0, 0)
-    guide_path: List[Tuple[int, int]] = field(default_factory=list)
+    guide_path: List = field(default_factory=list)  # (z, y, x) 3-tuples or (y, x) 2-tuples back-compat
     grid_type: str = 'rect'
     polar_rings: int = 0
     ring_sectors: List[int] = field(default_factory=list)
+    floors: int = 1
+    stairs: List[dict] = field(default_factory=list)
+
+
+def _biased_choice(length, bias):
+    """Select a randomized index in range(length) biased by the bias parameter.
+
+    bias = 0.5: uniform.
+    bias < 0.5: pushed toward center.
+    bias > 0.5: pushed toward edges.
+    """
+    if length <= 1:
+        return 0
+    u = random.random()
+    if bias == 0.5:
+        pass
+    elif bias < 0.5:
+        p = 0.5 / max(0.01, bias)
+        diff = u - 0.5
+        sign = 1.0 if diff >= 0 else -1.0
+        u = 0.5 + sign * (abs(2.0 * diff) ** p) / 2.0
+    else:
+        p = 2.0 * (1.0 - bias)
+        diff = u - 0.5
+        sign = 1.0 if diff >= 0 else -1.0
+        u = 0.5 + sign * (abs(2.0 * diff) ** p) / 2.0
+    return max(0, min(length - 1, int(u * length)))
 
 
 class UnionFind:
+    """Disjoint-set data structure (union-find) with path compression."""
+
     def __init__(self, size):
+        """Initialize parent array with each element pointing to itself."""
         self.parent = list(range(size))
 
     def find(self, i):
         path = []
+        """Find the root representative of element i with path compression."""
         while self.parent[i] != i:
             path.append(i)
             i = self.parent[i]
@@ -32,6 +78,7 @@ class UnionFind:
         return i
 
     def union(self, i, j):
+        """Union the sets containing i and j. Return True if a merge occurred."""
         root_i = self.find(i)
         root_j = self.find(j)
         if root_i != root_j:
@@ -40,7 +87,146 @@ class UnionFind:
         return False
 
 
+def _expand_cells_to_3d(cells_2d, width, depth, floors, wall_mode, stair_count=1, stair_footprint='1x1', stair_style='stair', stair_direction='random'):
+    """Clone 2D cells to 3D [floors][depth][width] and carve stair footprints.
+
+    Args:
+        cells_2d: 2D cell list for a single floor.
+        width: Number of cells along X.
+        depth: Number of cells along Y.
+        floors: Number of vertical levels.
+        wall_mode: 'thin' or 'cube'.
+        stair_count: Number of staircases per floor transition.
+        stair_footprint: Footprint size ('1x1', '1x2', '2x2').
+        stair_style: Stair style ('stair' or 'ramp').
+        stair_direction: Stair direction.
+
+    Returns:
+        Tuple of (cells_3d, stairs_placed).
+    """
+    if floors <= 1:
+        return [cells_2d], []
+    cells_3d = [cells_2d]
+    for _ in range(1, floors):
+        cells_3d.append(copy.deepcopy(cells_2d))
+    stairs_placed = _place_stairs(
+        cells_3d, width, depth, floors, wall_mode,
+        stair_count=stair_count, stair_footprint=stair_footprint,
+        stair_style=stair_style, stair_direction=stair_direction
+    )
+    return cells_3d, stairs_placed
+
+
+def _force_cell_open(cells, z, y, x, wall_mode):
+    """Force a cell (and its shared wall neighbors) to be fully walkable.
+
+    Args:
+        cells: 3D cell list [z][y][x].
+        z: Floor index.
+        y: Row index.
+        x: Column index.
+        wall_mode: 'thin' or 'cube'.
+    """
+    depth = len(cells[z])
+    width = len(cells[z][0])
+    if 0 <= y < depth and 0 <= x < width:
+        if wall_mode == 'cube':
+            cells[z][y][x][0] = False
+        else:
+            for i in range(4):
+                cells[z][y][x][i] = False
+            # Open shared walls with neighbors
+            if y + 1 < depth:
+                cells[z][y + 1][x][1] = False
+            if y - 1 >= 0:
+                cells[z][y - 1][x][0] = False
+            if x + 1 < width:
+                cells[z][y][x + 1][3] = False
+            if x - 1 >= 0:
+                cells[z][y][x - 1][2] = False
+
+
+
+def _place_stairs(cells_3d, width, depth, floors, wall_mode, stair_count=1, stair_footprint='1x1', stair_style='stair', stair_direction='random'):
+    """Place stair footprints in 3D cells and return placed stair records.
+
+    Args:
+        cells_3d: 3D cell list [z][y][x].
+        width: Number of cells along X.
+        depth: Number of cells along Y.
+        floors: Number of vertical levels.
+        wall_mode: 'thin' or 'cube'.
+        stair_count: Number of stairs per floor transition.
+        stair_footprint: Footprint size ('1x1', '1x2', '2x2').
+        stair_style: Stair style ('stair' or 'ramp').
+        stair_direction: Stair direction.
+
+    Returns:
+        List of stair dicts with keys z, x, y, type, footprint, orientation.
+    """
+    placed = []
+    for z in range(floors - 1):
+        candidates = []
+        for y in range(1, depth - 1):
+            for x in range(1, width - 1):
+                src_ok = not cells_3d[z][y][x][0] if wall_mode == 'cube' else True
+                dst_ok = not cells_3d[z + 1][y][x][0] if wall_mode == 'cube' else True
+                if src_ok and dst_ok:
+                    candidates.append((x, y))
+        if not candidates:
+            continue
+
+        footprint = stair_footprint
+        if stair_direction == 'random':
+            orientation = random.choice(['N', 'S', 'E', 'W'])
+        else:
+            orientation = stair_direction
+        num_stairs = max(1, min(stair_count, len(candidates)))
+
+        random.shuffle(candidates)
+        placed_cells = set()  # track footprint cells already used by stairs on this floor
+        placed_count = 0
+        for sx, sy in candidates:
+            if placed_count >= num_stairs:
+                break
+            fp_coords = _get_stair_footprint_coords(sx, sy, footprint, orientation)
+            # Skip if any footprint cell touches the outer boundary of the maze
+            if any(c[0] <= 0 or c[0] >= width - 1 or c[1] <= 0 or c[1] >= depth - 1 for c in fp_coords):
+                continue
+            # Skip if any footprint cell overlaps with an already-placed stair on this floor
+            if any(c in placed_cells for c in fp_coords):
+                continue
+            for c in fp_coords:
+                placed_cells.add(c)
+                _force_cell_open(cells_3d, z, c[1], c[0], wall_mode)
+                _force_cell_open(cells_3d, z + 1, c[1], c[0], wall_mode)
+
+            rec_type = 'ramp' if stair_style in ('ramp', 'rectangular') else 'stair'
+            rec = {
+                'z': z,
+                'x': sx,
+                'y': sy,
+                'type': rec_type,
+                'footprint': footprint,
+                'orientation': orientation,
+            }
+            placed.append(rec)
+            placed_count += 1
+    return placed
+
+
 def _get_image_mask_data(mask_image, invert, width, depth):
+    """Sample a mask image at cell centres and return a 2D blocked boolean grid.
+
+    Args:
+        mask_image: Blender Image datablock or None.
+        invert: If True, invert brightness threshold.
+        width: Grid width in cells.
+        depth: Grid depth in cells.
+
+    Returns:
+        2D list [y][x] of bool, True where the cell is blocked.
+    """
     blocked = [[False] * width for _ in range(depth)]
     if not mask_image:
         return blocked
@@ -72,6 +258,7 @@ def _get_image_mask_data(mask_image, invert, width, depth):
 
 
 def _get_start_cell(blocked, w, h):
+    """Return a random (x, y) walkable cell from the blocked grid, falling back to a random cell."""
     walkable = [(x, y) for y in range(h) for x in range(w) if not blocked[y][x]]
     if walkable:
         return random.choice(walkable)
@@ -79,641 +266,689 @@ def _get_start_cell(blocked, w, h):
 
 
 
-def generate_maze(
+def _generate_cube_maze(
     width: int,
     depth: int,
-    seed: int = 0,
-    mode: str = 'center',
-    emergency_exits: bool = False,
-    algorithm: str = 'dfs',
-    rooms_enable: bool = False,
-    rooms_count: int = 3,
-    min_room_size: int = 2,
-    max_room_size: int = 4,
-    loop_probability: float = 0.0,
-    isolated_wall_prob: float = 0.0,
-    entrance_side: str = 'ANY',
-    exit_side: str = 'ANY',
-    num_entrances: int = 1,
-    num_exits: int = 1,
-    wall_mode: str = 'thin',
-    num_wall_meshes: int = 0,
-    num_floor_meshes: int = 0,
-    num_roof_meshes: int = 0,
-    mask_image = None,
-    mask_invert: bool = False,
-    grid_type: str = 'rect',
-    polar_rings: int = 5,
+    seed: int,
+    mode: str,
+    emergency_exits: bool,
+    algorithm: str,
+    rooms_enable: bool,
+    rooms_count: int,
+    min_room_size: int,
+    max_room_size: int,
+    loop_probability: float,
+    isolated_wall_prob: float,
+    entrance_side: str,
+    exit_side: str,
+    num_entrances: int,
+    num_exits: int,
+    num_wall_meshes: int,
+    num_floor_meshes: int,
+    num_roof_meshes: int,
+    mask_image,
+    mask_invert: bool,
+    floors: int,
+    stair_footprint: str,
+    stair_style: str,
+    stair_count: int,
+    stair_direction: str = 'random',
+    selection_bias: float = 0.5,
+    straightness: float = 0.5,
+    direction_bias: float = 0.5,
+    east_bias: float = 0.5,
+    orientation_bias: float = 0.5,
+    passage_bias: float = 0.5,
+    eller_merge_prob: float = 0.5,
+    wall_mode: str = 'cube',
 ) -> MazeData:
-    if grid_type == 'polar':
-        return generate_polar_maze(
-            rings=polar_rings,
-            seed=seed,
-            algorithm=algorithm,
-            mode=mode,
-            wall_mode=wall_mode,
-            num_wall_meshes=num_wall_meshes,
-            num_floor_meshes=num_floor_meshes,
-            num_roof_meshes=num_roof_meshes,
-        )
+    """Carve a rectangular maze in cube wall mode."""
+    # Grid dimensions for path cells (must be odd coordinates)
+    # We partition the grid into cell centers at odd positions
+    sub_w = max(1, (width - 1) // 2)
+    sub_h = max(1, (depth - 1) // 2)
 
-    if seed:
-        random.seed(seed)
+    # Initialize all cells to walls (True)
+    # cells[y][x] = [is_wall, wall_n_index, wall_s_index, wall_e_index, wall_w_index, floor_index, roof_index]
+    cells = [[[True, -1, -1, -1, -1, -1, -1] for _ in range(width)] for _ in range(depth)]
+    blocked = _get_image_mask_data(mask_image, mask_invert, sub_w, sub_h)
 
-    # If Cube Wall Mode, we generate directly on the width x depth grid of blocks
-    if wall_mode == 'cube':
-        # Grid dimensions for path cells (must be odd coordinates)
-        # We partition the grid into cell centers at odd positions
-        sub_w = max(1, (width - 1) // 2)
-        sub_h = max(1, (depth - 1) // 2)
+    # Determine Rooms on the W x H sub-grid
+    rooms = []
+    cell_to_room = {}
+    if rooms_enable:
+        for _ in range(rooms_count * 5):
+            if len(rooms) >= rooms_count:
+                break
+            rw = random.randint(min(min_room_size, sub_w), min(max_room_size, sub_w))
+            rh = random.randint(min(min_room_size, sub_h), min(max_room_size, sub_h))
+            rx = random.randint(0, sub_w - rw)
+            ry = random.randint(0, sub_h - rh)
 
-        # Initialize all cells to walls (True)
-        # cells[y][x] = [is_wall, wall_n_index, wall_s_index, wall_e_index, wall_w_index, floor_index, roof_index]
-        cells = [[[True, -1, -1, -1, -1, -1, -1] for _ in range(width)] for _ in range(depth)]
-        blocked = _get_image_mask_data(mask_image, mask_invert, sub_w, sub_h)
-
-        # Determine Rooms on the W x H sub-grid
-        rooms = []
-        cell_to_room = {}
-        if rooms_enable:
-            for _ in range(rooms_count * 5):
-                if len(rooms) >= rooms_count:
+            # Check overlap
+            overlap = False
+            for r in rooms:
+                rx_min = min(c[0] for c in r)
+                rx_max = max(c[0] for c in r)
+                ry_min = min(c[1] for c in r)
+                ry_max = max(c[1] for c in r)
+                if not (rx + rw - 1 < rx_min - 1 or rx > rx_max + 1 or
+                        ry + rh - 1 < ry_min - 1 or ry > ry_max + 1):
+                    overlap = True
                     break
-                rw = random.randint(min(min_room_size, sub_w), min(max_room_size, sub_w))
-                rh = random.randint(min(min_room_size, sub_h), min(max_room_size, sub_h))
-                rx = random.randint(0, sub_w - rw)
-                ry = random.randint(0, sub_h - rh)
 
-                # Check overlap
-                overlap = False
-                for r in rooms:
-                    rx_min = min(c[0] for c in r)
-                    rx_max = max(c[0] for c in r)
-                    ry_min = min(c[1] for c in r)
-                    ry_max = max(c[1] for c in r)
-                    if not (rx + rw - 1 < rx_min - 1 or rx > rx_max + 1 or
-                            ry + rh - 1 < ry_min - 1 or ry > ry_max + 1):
-                        overlap = True
-                        break
+            if not overlap:
+                room_cells = []
+                r_idx = len(rooms)
+                for y in range(ry, ry + rh):
+                    for x in range(rx, rx + rw):
+                        room_cells.append((x, y))
+                        cell_to_room[(x, y)] = r_idx
+                rooms.append(room_cells)
 
-                if not overlap:
-                    room_cells = []
-                    r_idx = len(rooms)
-                    for y in range(ry, ry + rh):
-                        for x in range(rx, rx + rw):
-                            room_cells.append((x, y))
-                            cell_to_room[(x, y)] = r_idx
-                    rooms.append(room_cells)
-
-            # Carve room regions on the actual grid (make them completely floor/False)
-            for r_idx, room_cells in enumerate(rooms):
-                rx_coords = [c[0] for c in room_cells]
-                ry_coords = [c[1] for c in room_cells]
-                x_min, x_max = min(rx_coords), max(rx_coords)
-                y_min, y_max = min(ry_coords), max(ry_coords)
-                
-                # Room bounds on the actual block grid
-                gx_start = 2 * x_min + 1
-                gx_end = 2 * x_max + 1
-                gy_start = 2 * y_min + 1
-                gy_end = 2 * y_max + 1
-                
-                for gy in range(gy_start, gy_end + 1):
-                    for gx in range(gx_start, gx_end + 1):
-                        if gx < width and gy < depth:
-                            cells[gy][gx][0] = False
-
-        # Run maze carving algorithms directly on the path cells
-        if algorithm == 'dfs':
-            visited = [[blocked[y][x] for x in range(sub_w)] for y in range(sub_h)]
-            stack = []
+        # Carve room regions on the actual grid (make them completely floor/False)
+        for r_idx, room_cells in enumerate(rooms):
+            rx_coords = [c[0] for c in room_cells]
+            ry_coords = [c[1] for c in room_cells]
+            x_min, x_max = min(rx_coords), max(rx_coords)
+            y_min, y_max = min(ry_coords), max(ry_coords)
             
-            # Start cell
-            sx, sy = _get_start_cell(blocked, sub_w, sub_h)
+            # Room bounds on the actual block grid
+            gx_start = 2 * x_min + 1
+            gx_end = 2 * x_max + 1
+            gy_start = 2 * y_min + 1
+            gy_end = 2 * y_max + 1
             
-            r_start = cell_to_room.get((sx, sy))
-            if r_start is not None:
-                for rx, ry in rooms[r_start]:
-                    visited[ry][rx] = True
-                    stack.append((rx, ry))
-                    # Carve cell center
-                    cells[2 * ry + 1][2 * rx + 1][0] = False
+            for gy in range(gy_start, gy_end + 1):
+                for gx in range(gx_start, gx_end + 1):
+                    if gx < width and gy < depth:
+                        cells[gy][gx][0] = False
+
+    # Run maze carving algorithms directly on the path cells
+    if algorithm == 'dfs':
+        visited = [[blocked[y][x] for x in range(sub_w)] for y in range(sub_h)]
+        stack = []
+        
+        # Start cell
+        sx, sy = _get_start_cell(blocked, sub_w, sub_h)
+        
+        r_start = cell_to_room.get((sx, sy))
+        if r_start is not None:
+            for rx, ry in rooms[r_start]:
+                visited[ry][rx] = True
+                stack.append((rx, ry))
+                # Carve cell center
+                cells[2 * ry + 1][2 * rx + 1][0] = False
+        else:
+            visited[sy][sx] = True
+            stack.append((sx, sy))
+            cells[2 * sy + 1][2 * sx + 1][0] = False
+
+        last_dir = None
+        dirs = [(0, 1), (0, -1), (1, 0), (-1, 0)]
+        while stack:
+            x, y = stack[-1]
+            chosen_dir = None
+            if last_dir and last_dir in dirs:
+                ldx, ldy = last_dir
+                nx, ny = x + ldx, y + ldy
+                if 0 <= nx < sub_w and 0 <= ny < sub_h and not visited[ny][nx]:
+                    if random.random() < straightness:
+                        chosen_dir = last_dir
+            if chosen_dir:
+                ordered_dirs = [chosen_dir] + [d for d in dirs if d != chosen_dir]
             else:
-                visited[sy][sx] = True
-                stack.append((sx, sy))
-                cells[2 * sy + 1][2 * sx + 1][0] = False
-
-            dirs = [(0, 1), (0, -1), (1, 0), (-1, 0)]
-            while stack:
-                x, y = stack[-1]
                 random.shuffle(dirs)
-                carved = False
-                for dx, dy in dirs:
-                    nx, ny = x + dx, y + dy
-                    if 0 <= nx < sub_w and 0 <= ny < sub_h and not visited[ny][nx]:
-                        # Carve neighbor and intermediate wall cell
-                        cells[2 * y + 1 + dy][2 * x + 1 + dx][0] = False
-                        cells[2 * ny + 1][2 * nx + 1][0] = False
-                        
-                        r_next = cell_to_room.get((nx, ny))
-                        if r_next is not None:
-                            for rx, ry in rooms[r_next]:
-                                visited[ry][rx] = True
-                                stack.append((rx, ry))
-                                cells[2 * ry + 1][2 * rx + 1][0] = False
-                        else:
-                            visited[ny][nx] = True
-                            stack.append((nx, ny))
-                        carved = True
-                        break
-                if not carved:
-                    stack.pop()
+                ordered_dirs = list(dirs)
+            carved = False
+            for dx, dy in ordered_dirs:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < sub_w and 0 <= ny < sub_h and not visited[ny][nx]:
+                    # Carve neighbor and intermediate wall cell
+                    cells[2 * y + 1 + dy][2 * x + 1 + dx][0] = False
+                    cells[2 * ny + 1][2 * nx + 1][0] = False
+                    
+                    r_next = cell_to_room.get((nx, ny))
+                    if r_next is not None:
+                        for rx, ry in rooms[r_next]:
+                            visited[ry][rx] = True
+                            stack.append((rx, ry))
+                            cells[2 * ry + 1][2 * rx + 1][0] = False
+                    else:
+                        visited[ny][nx] = True
+                        stack.append((nx, ny))
+                    last_dir = (dx, dy)
+                    carved = True
+                    break
+            if not carved:
+                stack.pop()
+                last_dir = None
 
-        elif algorithm == 'kruskal':
-            uf = UnionFind(sub_w * sub_h)
-            for room_cells in rooms:
-                if len(room_cells) > 1:
-                    f_cell = room_cells[0]
-                    idx1 = f_cell[1] * sub_w + f_cell[0]
-                    for x, y in room_cells[1:]:
-                        idx2 = y * sub_w + x
-                        uf.union(idx1, idx2)
+    elif algorithm == 'kruskal':
+        uf = UnionFind(sub_w * sub_h)
+        for room_cells in rooms:
+            if len(room_cells) > 1:
+                f_cell = room_cells[0]
+                idx1 = f_cell[1] * sub_w + f_cell[0]
+                for x, y in room_cells[1:]:
+                    idx2 = y * sub_w + x
+                    uf.union(idx1, idx2)
 
-            walls = []
-            for y in range(sub_h):
-                for x in range(sub_w):
-                    cells[2 * y + 1][2 * x + 1][0] = False  # Ensure cell center is floor
-                    if x + 1 < sub_w:
-                        walls.append(('V', x, y))
-                    if y + 1 < sub_h:
-                        walls.append(('H', x, y))
+        walls = []
+        for y in range(sub_h):
+            for x in range(sub_w):
+                cells[2 * y + 1][2 * x + 1][0] = False  # Ensure cell center is floor
+                if x + 1 < sub_w:
+                    walls.append(('V', x, y))
+                if y + 1 < sub_h:
+                    walls.append(('H', x, y))
 
-            random.shuffle(walls)
-            for wtype, wx, wy in walls:
-                if wtype == 'V':
-                    idx1 = wy * sub_w + wx
-                    idx2 = wy * sub_w + (wx + 1)
-                    if uf.union(idx1, idx2):
-                        cells[2 * wy + 1][2 * wx + 2][0] = False
-                        cells[2 * wy + 1][2 * wx + 3][0] = False
-                else:
-                    idx1 = wy * sub_w + wx
-                    idx2 = (wy + 1) * sub_w + wx
-                    if uf.union(idx1, idx2):
-                        cells[2 * wy + 2][2 * wx + 1][0] = False
-                        cells[2 * wy + 3][2 * wx + 1][0] = False
+        random.shuffle(walls)
+        for wtype, wx, wy in walls:
+            if wtype == 'V':
+                idx1 = wy * sub_w + wx
+                idx2 = wy * sub_w + (wx + 1)
+                if uf.union(idx1, idx2):
+                    cells[2 * wy + 1][2 * wx + 2][0] = False
+            else:
+                idx1 = wy * sub_w + wx
+                idx2 = (wy + 1) * sub_w + wx
+                if uf.union(idx1, idx2):
+                    cells[2 * wy + 2][2 * wx + 1][0] = False
 
-        elif algorithm == 'eller':
-            row_sets = list(range(sub_w))
-            next_set_id = sub_w
+    elif algorithm == 'eller':
+        row_sets = list(range(sub_w))
+        next_set_id = sub_w
 
-            for y in range(sub_h):
-                # Ensure all row cell centers are floor
-                for x in range(sub_w):
-                    cells[2 * y + 1][2 * x + 1][0] = False
+        for y in range(sub_h):
+            # Ensure all row cell centers are floor
+            for x in range(sub_w):
+                cells[2 * y + 1][2 * x + 1][0] = False
 
-                for x in range(sub_w - 1):
-                    if cell_to_room.get((x, y)) is not None and cell_to_room.get((x, y)) == cell_to_room.get((x + 1, y)):
-                        s1 = row_sets[x]
-                        s2 = row_sets[x + 1]
-                        if s1 != s2:
-                            for idx in range(sub_w):
-                                if row_sets[idx] == s2:
-                                    row_sets[idx] = s1
-                            cells[2 * y + 1][2 * x + 2][0] = False
-
-                if y > 0:
-                    for x in range(sub_w):
-                        if cell_to_room.get((x, y)) is not None and cell_to_room.get((x, y)) == cell_to_room.get((x, y - 1)):
-                            cells[2 * y][2 * x + 1][0] = False
-
-                for x in range(sub_w - 1):
+            for x in range(sub_w - 1):
+                if cell_to_room.get((x, y)) is not None and cell_to_room.get((x, y)) == cell_to_room.get((x + 1, y)):
                     s1 = row_sets[x]
                     s2 = row_sets[x + 1]
                     if s1 != s2:
-                        same_room = (cell_to_room.get((x, y)) is not None and 
-                                     cell_to_room.get((x, y)) == cell_to_room.get((x + 1, y)))
-                        if same_room or random.random() < 0.5:
-                            for idx in range(sub_w):
-                                if row_sets[idx] == s2:
-                                    row_sets[idx] = s1
-                            cells[2 * y + 1][2 * x + 2][0] = False
+                        for idx in range(sub_w):
+                            if row_sets[idx] == s2:
+                                row_sets[idx] = s1
+                        cells[2 * y + 1][2 * x + 2][0] = False
 
-                if y < sub_h - 1:
-                    next_row_sets = [None] * sub_w
-                    set_groups = {}
-                    for x, s in enumerate(row_sets):
-                        set_groups.setdefault(s, []).append(x)
+            if y > 0:
+                for x in range(sub_w):
+                    if cell_to_room.get((x, y)) is not None and cell_to_room.get((x, y)) == cell_to_room.get((x, y - 1)):
+                        cells[2 * y][2 * x + 1][0] = False
 
-                    for s, group in set_groups.items():
-                        room_up_cols = []
-                        for col in group:
-                            if (cell_to_room.get((col, y)) is not None and 
-                                cell_to_room.get((col, y)) == cell_to_room.get((col, y + 1))):
-                                room_up_cols.append(col)
-
-                        if room_up_cols:
-                            for col in room_up_cols:
-                                cells[2 * y + 2][2 * col + 1][0] = False
-                                cells[2 * y + 3][2 * col + 1][0] = False
-                                next_row_sets[col] = s
-                        else:
-                            random.shuffle(group)
-                            num_carves = random.randint(1, len(group))
-                            for i in range(num_carves):
-                                col = group[i]
-                                cells[2 * y + 2][2 * col + 1][0] = False
-                                cells[2 * y + 3][2 * col + 1][0] = False
-                                next_row_sets[col] = s
-
-                    for x in range(sub_w):
-                        if next_row_sets[x] is None:
-                            next_row_sets[x] = next_set_id
-                            next_set_id += 1
-                    row_sets = next_row_sets
-
-            y = sub_h - 1
             for x in range(sub_w - 1):
                 s1 = row_sets[x]
                 s2 = row_sets[x + 1]
                 if s1 != s2:
-                    for idx in range(sub_w):
-                        if row_sets[idx] == s2:
-                            row_sets[idx] = s1
-                    cells[2 * y + 1][2 * x + 2][0] = False
+                    same_room = (cell_to_room.get((x, y)) is not None and 
+                                 cell_to_room.get((x, y)) == cell_to_room.get((x + 1, y)))
+                    if same_room or random.random() < eller_merge_prob:
+                        for idx in range(sub_w):
+                            if row_sets[idx] == s2:
+                                row_sets[idx] = s1
+                        cells[2 * y + 1][2 * x + 2][0] = False
 
-        elif algorithm == 'binary_tree':
-            for y in range(sub_h):
+            if y < sub_h - 1:
+                next_row_sets = [None] * sub_w
+                set_groups = {}
+                for x, s in enumerate(row_sets):
+                    set_groups.setdefault(s, []).append(x)
+
+                for s, group in set_groups.items():
+                    room_up_cols = []
+                    for col in group:
+                        if (cell_to_room.get((col, y)) is not None and 
+                            cell_to_room.get((col, y)) == cell_to_room.get((col, y + 1))):
+                            room_up_cols.append(col)
+
+                    if room_up_cols:
+                        for col in room_up_cols:
+                            cells[2 * y + 2][2 * col + 1][0] = False
+                            cells[2 * y + 3][2 * col + 1][0] = False
+                            next_row_sets[col] = s
+                    else:
+                        random.shuffle(group)
+                        num_carves = random.randint(1, len(group))
+                        for i in range(num_carves):
+                            col = group[i]
+                            cells[2 * y + 2][2 * col + 1][0] = False
+                            cells[2 * y + 3][2 * col + 1][0] = False
+                            next_row_sets[col] = s
+
                 for x in range(sub_w):
-                    cells[2 * y + 1][2 * x + 1][0] = False
-                    can_north = (y < sub_h - 1)
-                    can_east = (x < sub_w - 1)
-                    
-                    if can_north and can_east:
-                        if random.random() < 0.5:
-                            cells[2 * y + 2][2 * x + 1][0] = False
-                            cells[2 * y + 3][2 * x + 1][0] = False
-                        else:
-                            cells[2 * y + 1][2 * x + 2][0] = False
-                            cells[2 * y + 1][2 * x + 3][0] = False
-                    elif can_north:
+                    if next_row_sets[x] is None:
+                        next_row_sets[x] = next_set_id
+                        next_set_id += 1
+                row_sets = next_row_sets
+
+        y = sub_h - 1
+        for x in range(sub_w - 1):
+            s1 = row_sets[x]
+            s2 = row_sets[x + 1]
+            if s1 != s2:
+                for idx in range(sub_w):
+                    if row_sets[idx] == s2:
+                        row_sets[idx] = s1
+                cells[2 * y + 1][2 * x + 2][0] = False
+
+    elif algorithm == 'binary_tree':
+        for y in range(sub_h):
+            for x in range(sub_w):
+                cells[2 * y + 1][2 * x + 1][0] = False
+                can_north = (y < sub_h - 1)
+                can_east = (x < sub_w - 1)
+                
+                if can_north and can_east:
+                    if random.random() >= direction_bias:
                         cells[2 * y + 2][2 * x + 1][0] = False
                         cells[2 * y + 3][2 * x + 1][0] = False
-                    elif can_east:
+                    else:
                         cells[2 * y + 1][2 * x + 2][0] = False
                         cells[2 * y + 1][2 * x + 3][0] = False
+                elif can_north:
+                    cells[2 * y + 2][2 * x + 1][0] = False
+                    cells[2 * y + 3][2 * x + 1][0] = False
+                elif can_east:
+                    cells[2 * y + 1][2 * x + 2][0] = False
+                    cells[2 * y + 1][2 * x + 3][0] = False
 
-        elif algorithm == 'prims':
-            visited = [[False] * sub_w for _ in range(sub_h)]
-            frontier_walls = []
+    elif algorithm == 'prims':
+        visited = [[False] * sub_w for _ in range(sub_h)]
+        frontier_walls = []
 
-            def add_frontier_of(cx, cy):
-                for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
-                    nx, ny = cx + dx, cy + dy
-                    if 0 <= nx < sub_w and 0 <= ny < sub_h:
-                        if not visited[ny][nx]:
-                            frontier_walls.append((cx, cy, nx, ny))
+        def add_frontier_of(cx, cy):
+            """Add unvisited neighbours of (cx, cy) to the Prim's frontier wall list (cube mode)."""
+            for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+                nx, ny = cx + dx, cy + dy
+                if 0 <= nx < sub_w and 0 <= ny < sub_h:
+                    if not visited[ny][nx]:
+                        frontier_walls.append((cx, cy, nx, ny))
 
-            sx = random.randrange(sub_w)
-            sy = random.randrange(sub_h)
-            
-            r_start = cell_to_room.get((sx, sy))
-            if r_start is not None:
-                for rx, ry in rooms[r_start]:
-                    visited[ry][rx] = True
-                    cells[2 * ry + 1][2 * rx + 1][0] = False
-                    add_frontier_of(rx, ry)
-            else:
-                visited[sy][sx] = True
-                cells[2 * sy + 1][2 * sx + 1][0] = False
-                add_frontier_of(sx, sy)
+        sx = random.randrange(sub_w)
+        sy = random.randrange(sub_h)
+        
+        r_start = cell_to_room.get((sx, sy))
+        if r_start is not None:
+            for rx, ry in rooms[r_start]:
+                visited[ry][rx] = True
+                cells[2 * ry + 1][2 * rx + 1][0] = False
+                add_frontier_of(rx, ry)
+        else:
+            visited[sy][sx] = True
+            cells[2 * sy + 1][2 * sx + 1][0] = False
+            add_frontier_of(sx, sy)
 
-            while frontier_walls:
-                wall_idx = random.randrange(len(frontier_walls))
-                x1, y1, x2, y2 = frontier_walls.pop(wall_idx)
+        while frontier_walls:
+            wall_idx = random.randrange(len(frontier_walls))
+            x1, y1, x2, y2 = frontier_walls.pop(wall_idx)
 
-                if visited[y1][x1] != visited[y2][x2]:
-                    ux, uy = (x2, y2) if not visited[y2][x2] else (x1, y1)
-                    cells[y1 + y2 + 1][x1 + x2 + 1][0] = False
-                    cells[2 * uy + 1][2 * ux + 1][0] = False
-                    
-                    r_next = cell_to_room.get((ux, uy))
-                    if r_next is not None:
-                        for rx, ry in rooms[r_next]:
-                            if not visited[ry][rx]:
-                                visited[ry][rx] = True
-                                cells[2 * ry + 1][2 * rx + 1][0] = False
-                                add_frontier_of(rx, ry)
-                    else:
-                        visited[uy][ux] = True
-                        add_frontier_of(ux, uy)
-
-        elif algorithm == 'hunt_and_kill':
-            visited = [[False] * sub_w for _ in range(sub_h)]
-            
-            cx = random.randrange(sub_w)
-            cy = random.randrange(sub_h)
-            
-            def mark_visited(x, y):
-                r = cell_to_room.get((x, y))
-                if r is not None:
-                    for rx, ry in rooms[r]:
-                        visited[ry][rx] = True
-                        cells[2 * ry + 1][2 * rx + 1][0] = False
-                else:
-                    visited[y][x] = True
-                    cells[2 * y + 1][2 * x + 1][0] = False
-
-            mark_visited(cx, cy)
-            
-            while True:
-                dirs = [(0, 1), (0, -1), (1, 0), (-1, 0)]
-                walk_stuck = False
-                while not walk_stuck:
-                    random.shuffle(dirs)
-                    moved = False
-                    for dx, dy in dirs:
-                        nx, ny = cx + dx, cy + dy
-                        if 0 <= nx < sub_w and 0 <= ny < sub_h and not visited[ny][nx]:
-                            cells[cy + ny + 1][cx + nx + 1][0] = False
-                            mark_visited(nx, ny)
-                            cx, cy = nx, ny
-                            moved = True
-                            break
-                    if not moved:
-                        walk_stuck = True
+            if visited[y1][x1] != visited[y2][x2]:
+                ux, uy = (x2, y2) if not visited[y2][x2] else (x1, y1)
+                cells[y1 + y2 + 1][x1 + x2 + 1][0] = False
+                cells[2 * uy + 1][2 * ux + 1][0] = False
                 
-                hunted = False
-                for y in range(sub_h):
-                    for x in range(sub_w):
-                        if not visited[y][x]:
-                            for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
-                                nx, ny = x + dx, y + dy
-                                if 0 <= nx < sub_w and 0 <= ny < sub_h and visited[ny][nx]:
-                                    cells[y + ny + 1][x + nx + 1][0] = False
-                                    mark_visited(x, y)
-                                    cx, cy = x, y
-                                    hunted = True
-                                    break
-                        if hunted:
-                            break
-                    if hunted:
-                        break
-                
-                if not hunted:
-                    break
-
-        elif algorithm == 'sidewinder':
-            for y in range(sub_h):
-                for x in range(sub_w):
-                    cells[2 * y + 1][2 * x + 1][0] = False
-                
-                run = []
-                for x in range(sub_w):
-                    run.append(x)
-                    
-                    in_same_room = False
-                    if x + 1 < sub_w:
-                        r1 = cell_to_room.get((x, y))
-                        r2 = cell_to_room.get((x + 1, y))
-                        if r1 is not None and r1 == r2:
-                            in_same_room = True
-
-                    carve_east = (x < sub_w - 1) and (in_same_room or random.random() < 0.5)
-                    
-                    if carve_east:
-                        cells[2 * y + 1][2 * x + 2][0] = False
-                    else:
-                        if y < sub_h - 1:
-                            member_x = random.choice(run)
-                            cells[2 * y + 2][2 * member_x + 1][0] = False
-                            cells[2 * y + 3][2 * member_x + 1][0] = False
-                        run = []
-
-        elif algorithm == 'wilsons':
-            visited = [[False] * sub_w for _ in range(sub_h)]
-            unvisited_list = []
-            
-            def mark_visited(x, y):
-                r = cell_to_room.get((x, y))
-                if r is not None:
-                    for rx, ry in rooms[r]:
-                        visited[ry][rx] = True
-                        cells[2 * ry + 1][2 * rx + 1][0] = False
-                else:
-                    visited[y][x] = True
-                    cells[2 * y + 1][2 * x + 1][0] = False
-
-            sx = random.randrange(sub_w)
-            sy = random.randrange(sub_h)
-            mark_visited(sx, sy)
-            
-            for y in range(sub_h):
-                for x in range(sub_w):
-                    if not visited[y][x]:
-                        unvisited_list.append((x, y))
-            
-            while unvisited_list:
-                unvisited_list = [(x, y) for (x, y) in unvisited_list if not visited[y][x]]
-                if not unvisited_list:
-                    break
-                
-                cx, cy = random.choice(unvisited_list)
-                walk = [(cx, cy)]
-                
-                while not visited[cy][cx]:
-                    dirs = [(0, 1), (0, -1), (1, 0), (-1, 0)]
-                    dx, dy = random.choice(dirs)
-                    nx, ny = cx + dx, cy + dy
-                    if 0 <= nx < sub_w and 0 <= ny < sub_h:
-                        if (nx, ny) in walk:
-                            idx = walk.index((nx, ny))
-                            walk = walk[:idx + 1]
-                        else:
-                            walk.append((nx, ny))
-                        cx, cy = nx, ny
-                
-                for i in range(len(walk) - 1):
-                    x1, y1 = walk[i]
-                    x2, y2 = walk[i+1]
-                    cells[y1 + y2 + 1][x1 + x2 + 1][0] = False
-                    mark_visited(x1, y1)
-                mark_visited(walk[-1][0], walk[-1][1])
-
-        elif algorithm == 'recursive_division':
-            for y in range(depth):
-                for x in range(width):
-                    cells[y][x][0] = False
-            
-            for x in range(width):
-                cells[0][x][0] = True
-                cells[depth - 1][x][0] = True
-            for y in range(depth):
-                cells[y][0][0] = True
-                cells[y][width - 1][0] = True
-                
-            def divide(rx, ry, rw, rh, horizontal):
-                if rw < 2 or rh < 2:
-                    return
-                
-                if horizontal:
-                    wy_sub = ry + random.randrange(rh - 1)
-                    wy_actual = 2 * wy_sub + 2
-                    px_sub = rx + random.randrange(rw)
-                    px_actual = 2 * px_sub + 1
-                    
-                    for x_sub in range(rx, rx + rw):
-                        x_actual = 2 * x_sub + 1
-                        if cell_to_room.get((x_sub, wy_sub)) is None or cell_to_room.get((x_sub, wy_sub + 1)) is None:
-                            if x_sub != px_sub:
-                                cells[wy_actual][x_actual][0] = True
-                                cells[wy_actual][x_actual - 1][0] = True
-                                cells[wy_actual][x_actual + 1][0] = True
-                    
-                    divide(rx, ry, rw, wy_sub - ry + 1, choose_orientation(rw, wy_sub - ry + 1))
-                    divide(rx, wy_sub + 1, rw, ry + rh - wy_sub - 1, choose_orientation(rw, ry + rh - wy_sub - 1))
-                else:
-                    wx_sub = rx + random.randrange(rw - 1)
-                    wx_actual = 2 * wx_sub + 2
-                    py_sub = ry + random.randrange(rh)
-                    py_actual = 2 * py_sub + 1
-                    
-                    for y_sub in range(ry, ry + rh):
-                        y_actual = 2 * y_sub + 1
-                        if cell_to_room.get((wx_sub, y_sub)) is None or cell_to_room.get((wx_sub + 1, y_sub)) is None:
-                            if y_sub != py_sub:
-                                cells[y_actual][wx_actual][0] = True
-                                cells[y_actual - 1][wx_actual][0] = True
-                                cells[y_actual + 1][wx_actual][0] = True
-                                
-                    divide(rx, ry, wx_sub - rx + 1, rh, choose_orientation(wx_sub - rx + 1, rh))
-                    divide(wx_sub + 1, ry, rx + rw - wx_sub - 1, rh, choose_orientation(rx + rw - wx_sub - 1, rh))
-
-            def choose_orientation(rw, rh):
-                if rw < rh:
-                    return True
-                elif rh < rw:
-                    return False
-                else:
-                    return random.random() < 0.5
-
-            divide(0, 0, sub_w, sub_h, choose_orientation(sub_w, sub_h))
-
-        elif algorithm == 'growing_tree':
-            visited = [[False] * sub_w for _ in range(sub_h)]
-            active = []
-            
-            def add_to_active(x, y):
-                r = cell_to_room.get((x, y))
-                if r is not None:
-                    for rx, ry in rooms[r]:
+                r_next = cell_to_room.get((ux, uy))
+                if r_next is not None:
+                    for rx, ry in rooms[r_next]:
                         if not visited[ry][rx]:
                             visited[ry][rx] = True
                             cells[2 * ry + 1][2 * rx + 1][0] = False
-                            active.append((rx, ry))
+                            add_frontier_of(rx, ry)
                 else:
-                    visited[y][x] = True
-                    cells[2 * y + 1][2 * x + 1][0] = False
-                    active.append((x, y))
+                    visited[uy][ux] = True
+                    add_frontier_of(ux, uy)
 
-            sx = random.randrange(sub_w)
-            sy = random.randrange(sub_h)
-            add_to_active(sx, sy)
-            
-            while active:
-                if random.random() < 0.5:
-                    idx = len(active) - 1
+    elif algorithm == 'hunt_and_kill':
+        visited = [[False] * sub_w for _ in range(sub_h)]
+        
+        cx = random.randrange(sub_w)
+        cy = random.randrange(sub_h)
+        
+        def mark_visited(x, y):
+            """Mark cell (x, y) as visited in cube mode, including room cells and clearing floor."""
+            r = cell_to_room.get((x, y))
+            if r is not None:
+                for rx, ry in rooms[r]:
+                    visited[ry][rx] = True
+                    cells[2 * ry + 1][2 * rx + 1][0] = False
+            else:
+                visited[y][x] = True
+                cells[2 * y + 1][2 * x + 1][0] = False
+
+        mark_visited(cx, cy)
+        
+        while True:
+            dirs = [(0, 1), (0, -1), (1, 0), (-1, 0)]
+            walk_stuck = False
+            last_dir = None
+            while not walk_stuck:
+                chosen_dir = None
+                if last_dir and last_dir in dirs:
+                    ldx, ldy = last_dir
+                    nx, ny = cx + ldx, cy + ldy
+                    if 0 <= nx < sub_w and 0 <= ny < sub_h and not visited[ny][nx]:
+                        if random.random() < straightness:
+                            chosen_dir = last_dir
+                if chosen_dir:
+                    ordered_dirs = [chosen_dir] + [d for d in dirs if d != chosen_dir]
                 else:
-                    idx = random.randrange(len(active))
-                
-                cx, cy = active[idx]
-                
-                dirs = [(0, 1), (0, -1), (1, 0), (-1, 0)]
-                random.shuffle(dirs)
-                carved = False
-                for dx, dy in dirs:
+                    random.shuffle(dirs)
+                    ordered_dirs = list(dirs)
+                moved = False
+                for dx, dy in ordered_dirs:
                     nx, ny = cx + dx, cy + dy
                     if 0 <= nx < sub_w and 0 <= ny < sub_h and not visited[ny][nx]:
                         cells[cy + ny + 1][cx + nx + 1][0] = False
-                        add_to_active(nx, ny)
-                        carved = True
+                        mark_visited(nx, ny)
+                        cx, cy = nx, ny
+                        last_dir = (dx, dy)
+                        moved = True
                         break
-                if not carved:
-                    active.pop(idx)
-
-        # Add loops directly by carving random standing wall cells in the block grid
-        if loop_probability > 0:
-            for y in range(1, depth - 1):
-                for x in range(1, width - 1):
-                    # Check if it is a wall separating two floor cells
-                    if cells[y][x][0]:
-                        is_horiz_divider = (not cells[y][x - 1][0] and not cells[y][x + 1][0])
-                        is_vert_divider = (not cells[y - 1][x][0] and not cells[y + 1][x][0])
-                        if is_horiz_divider or is_vert_divider:
-                            if random.random() < loop_probability * 0.3:
-                                cells[y][x][0] = False
-
-        # Add isolated walls by placing wall cubes inside floor regions
-        if isolated_wall_prob > 0:
-            max_isolated = int((width * depth) * isolated_wall_prob * 0.1)
-            placed = 0
-            for _ in range(max_isolated * 5):
-                if placed >= max_isolated:
+                if not moved:
+                    walk_stuck = True
+                    last_dir = None
+            
+            hunted = False
+            for y in range(sub_h):
+                for x in range(sub_w):
+                    if not visited[y][x]:
+                        for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+                            nx, ny = x + dx, y + dy
+                            if 0 <= nx < sub_w and 0 <= ny < sub_h and visited[ny][nx]:
+                                cells[y + ny + 1][x + nx + 1][0] = False
+                                mark_visited(x, y)
+                                cx, cy = x, y
+                                hunted = True
+                                break
+                    if hunted:
+                        break
+                if hunted:
                     break
-                wx = random.randint(1, width - 2)
-                wy = random.randint(1, depth - 2)
-                # Check if it is currently floor and surrounded by floors
-                if not cells[wy][wx][0]:
-                    if (not cells[wy - 1][wx][0] and not cells[wy + 1][wx][0] and
-                        not cells[wy][wx - 1][0] and not cells[wy][wx + 1][0]):
-                        cells[wy][wx][0] = True
-                        placed += 1
-
-        # Carve entrances and exits on the border
-        entrance_list = []
-        exit_list = []
-
-        def carve_cube_borders(count, side, is_entrance):
-            candidates = []
             
-            # Align border carvings with actual sub-grid path coordinates
-            path_cols = [2 * rx + 1 for rx in range(sub_w)]
-            path_rows = [2 * ry + 1 for ry in range(sub_h)]
-            
-            if side == 'N' or side == 'ANY':
-                for x in path_cols:
-                    if x < width:
-                        candidates.append((x, depth - 1, 'N'))
-            if side == 'S' or side == 'ANY':
-                for x in path_cols:
-                    if x < width:
-                        candidates.append((x, 0, 'S'))
-            if side == 'E' or side == 'ANY':
-                for y in path_rows:
-                    if y < depth:
-                        candidates.append((width - 1, y, 'E'))
-            if side == 'W' or side == 'ANY':
-                for y in path_rows:
-                    if y < depth:
-                        candidates.append((0, y, 'W'))
+            if not hunted:
+                break
 
-            random.shuffle(candidates)
-            carved_count = 0
+    elif algorithm == 'sidewinder':
+        for y in range(sub_h):
+            for x in range(sub_w):
+                cells[2 * y + 1][2 * x + 1][0] = False
+            
+            run = []
+            for x in range(sub_w):
+                run.append(x)
+                
+                in_same_room = False
+                if x + 1 < sub_w:
+                    r1 = cell_to_room.get((x, y))
+                    r2 = cell_to_room.get((x + 1, y))
+                    if r1 is not None and r1 == r2:
+                        in_same_room = True
+
+                carve_east = (x < sub_w - 1) and (in_same_room or random.random() < east_bias)
+                
+                if carve_east:
+                    cells[2 * y + 1][2 * x + 2][0] = False
+                else:
+                    if y < sub_h - 1:
+                        member_x = random.choice(run)
+                        cells[2 * y + 2][2 * member_x + 1][0] = False
+                        cells[2 * y + 3][2 * member_x + 1][0] = False
+                    run = []
+
+    elif algorithm == 'wilsons':
+        visited = [[False] * sub_w for _ in range(sub_h)]
+        unvisited_list = []
+        
+        def mark_visited(x, y):
+            """Mark cell (x, y) as visited in cube mode (Wilson's)."""
+            r = cell_to_room.get((x, y))
+            if r is not None:
+                for rx, ry in rooms[r]:
+                    visited[ry][rx] = True
+                    cells[2 * ry + 1][2 * rx + 1][0] = False
+            else:
+                visited[y][x] = True
+                cells[2 * y + 1][2 * x + 1][0] = False
+
+        sx = random.randrange(sub_w)
+        sy = random.randrange(sub_h)
+        mark_visited(sx, sy)
+        
+        for y in range(sub_h):
+            for x in range(sub_w):
+                if not visited[y][x]:
+                    unvisited_list.append((x, y))
+        
+        while unvisited_list:
+            unvisited_list = [(x, y) for (x, y) in unvisited_list if not visited[y][x]]
+            if not unvisited_list:
+                break
+            
+            cx, cy = random.choice(unvisited_list)
+            walk = [(cx, cy)]
+            
+            while not visited[cy][cx]:
+                dirs = [(0, 1), (0, -1), (1, 0), (-1, 0)]
+                dx, dy = random.choice(dirs)
+                nx, ny = cx + dx, cy + dy
+                if 0 <= nx < sub_w and 0 <= ny < sub_h:
+                    if (nx, ny) in walk:
+                        idx = walk.index((nx, ny))
+                        walk = walk[:idx + 1]
+                    else:
+                        walk.append((nx, ny))
+                    cx, cy = nx, ny
+            
+            for i in range(len(walk) - 1):
+                x1, y1 = walk[i]
+                x2, y2 = walk[i+1]
+                cells[y1 + y2 + 1][x1 + x2 + 1][0] = False
+                mark_visited(x1, y1)
+            mark_visited(walk[-1][0], walk[-1][1])
+
+    elif algorithm == 'recursive_division':
+        for y in range(depth):
+            for x in range(width):
+                cells[y][x][0] = False
+        
+        for x in range(width):
+            cells[0][x][0] = True
+            cells[depth - 1][x][0] = True
+        for y in range(depth):
+            cells[y][0][0] = True
+            cells[y][width - 1][0] = True
+            
+        def divide(rx, ry, rw, rh, horizontal):
+            """Recursively subdivide a rectangular region by placing walls (cube mode)."""
+            if rw < 2 or rh < 2:
+                return
+            
+            if horizontal:
+                wy_sub = ry + random.randrange(rh - 1)
+                wy_actual = 2 * wy_sub + 2
+                px_sub = rx + _biased_choice(rw, passage_bias)
+                px_actual = 2 * px_sub + 1
+                
+                for x_sub in range(rx, rx + rw):
+                    x_actual = 2 * x_sub + 1
+                    if cell_to_room.get((x_sub, wy_sub)) is None or cell_to_room.get((x_sub, wy_sub + 1)) is None:
+                        if x_sub != px_sub:
+                            cells[wy_actual][x_actual][0] = True
+                            cells[wy_actual][x_actual - 1][0] = True
+                            cells[wy_actual][x_actual + 1][0] = True
+                
+                divide(rx, ry, rw, wy_sub - ry + 1, choose_orientation(rw, wy_sub - ry + 1))
+                divide(rx, wy_sub + 1, rw, ry + rh - wy_sub - 1, choose_orientation(rw, ry + rh - wy_sub - 1))
+            else:
+                wx_sub = rx + random.randrange(rw - 1)
+                wx_actual = 2 * wx_sub + 2
+                py_sub = ry + _biased_choice(rh, passage_bias)
+                py_actual = 2 * py_sub + 1
+                
+                for y_sub in range(ry, ry + rh):
+                    y_actual = 2 * y_sub + 1
+                    if cell_to_room.get((wx_sub, y_sub)) is None or cell_to_room.get((wx_sub + 1, y_sub)) is None:
+                        if y_sub != py_sub:
+                            cells[y_actual][wx_actual][0] = True
+                            cells[y_actual - 1][wx_actual][0] = True
+                            cells[y_actual + 1][wx_actual][0] = True
+                            
+                divide(rx, ry, wx_sub - rx + 1, rh, choose_orientation(wx_sub - rx + 1, rh))
+                divide(wx_sub + 1, ry, rx + rw - wx_sub - 1, rh, choose_orientation(rx + rw - wx_sub - 1, rh))
+
+        def choose_orientation(rw, rh):
+            """Pick horizontal (True) or vertical (False) subdivision for recursive division (cube mode)."""
+            if rw < rh:
+                return True
+            elif rh < rw:
+                return False
+            else:
+                return random.random() < orientation_bias
+
+        divide(0, 0, sub_w, sub_h, choose_orientation(sub_w, sub_h))
+
+    elif algorithm == 'growing_tree':
+        visited = [[False] * sub_w for _ in range(sub_h)]
+        active = []
+        
+        def add_to_active(x, y):
+            """Mark cell as visited and add to the active list (cube mode)."""
+            r = cell_to_room.get((x, y))
+            if r is not None:
+                for rx, ry in rooms[r]:
+                    if not visited[ry][rx]:
+                        visited[ry][rx] = True
+                        cells[2 * ry + 1][2 * rx + 1][0] = False
+                        active.append((rx, ry))
+            else:
+                visited[y][x] = True
+                cells[2 * y + 1][2 * x + 1][0] = False
+                active.append((x, y))
+
+        sx = random.randrange(sub_w)
+        sy = random.randrange(sub_h)
+        add_to_active(sx, sy)
+        
+        while active:
+            if random.random() < selection_bias:
+                idx = random.randrange(len(active))
+            else:
+                idx = len(active) - 1
+            
+            cx, cy = active[idx]
+            
+            dirs = [(0, 1), (0, -1), (1, 0), (-1, 0)]
+            random.shuffle(dirs)
+            carved = False
+            for dx, dy in dirs:
+                nx, ny = cx + dx, cy + dy
+                if 0 <= nx < sub_w and 0 <= ny < sub_h and not visited[ny][nx]:
+                    cells[cy + ny + 1][cx + nx + 1][0] = False
+                    add_to_active(nx, ny)
+                    carved = True
+                    break
+            if not carved:
+                active.pop(idx)
+
+    # Add loops directly by carving random standing wall cells in the block grid
+    if loop_probability > 0:
+        for y in range(1, depth - 1):
+            for x in range(1, width - 1):
+                # Check if it is a wall separating two floor cells
+                if cells[y][x][0]:
+                    is_horiz_divider = (not cells[y][x - 1][0] and not cells[y][x + 1][0])
+                    is_vert_divider = (not cells[y - 1][x][0] and not cells[y + 1][x][0])
+                    if is_horiz_divider or is_vert_divider:
+                        if random.random() < loop_probability * 0.3:
+                            cells[y][x][0] = False
+
+    # Add isolated walls by placing wall cubes inside floor regions
+    if isolated_wall_prob > 0:
+        max_isolated = int((width * depth) * isolated_wall_prob * 0.1)
+        placed = 0
+        for _ in range(max_isolated * 5):
+            if placed >= max_isolated:
+                break
+            wx = random.randint(1, width - 2)
+            wy = random.randint(1, depth - 2)
+            # Check if it is currently floor and surrounded by floors
+            if not cells[wy][wx][0]:
+                if (not cells[wy - 1][wx][0] and not cells[wy + 1][wx][0] and
+                    not cells[wy][wx - 1][0] and not cells[wy][wx + 1][0]):
+                    cells[wy][wx][0] = True
+                    placed += 1
+
+    # Carve entrances and exits on the border
+    entrance_list = []
+    exit_list = []
+
+    def carve_cube_borders(count, side, is_entrance):
+        """Carve entrances or exits along a side of a cube-mode maze border."""
+        candidates = []
+        
+        # Align border carvings with actual sub-grid path coordinates
+        path_cols = [2 * rx + 1 for rx in range(sub_w)]
+        path_rows = [2 * ry + 1 for ry in range(sub_h)]
+        
+        if side == 'N' or side == 'ANY':
+            for x in path_cols:
+                if x < width:
+                    candidates.append((x, depth - 1, 'N'))
+        if side == 'S' or side == 'ANY':
+            for x in path_cols:
+                if x < width:
+                    candidates.append((x, 0, 'S'))
+        if side == 'E' or side == 'ANY':
+            for y in path_rows:
+                if y < depth:
+                    candidates.append((width - 1, y, 'E'))
+        if side == 'W' or side == 'ANY':
+            for y in path_rows:
+                if y < depth:
+                    candidates.append((0, y, 'W'))
+
+        random.shuffle(candidates)
+        carved_count = 0
+        for x, y, d in candidates:
+            if carved_count >= count:
+                break
+            already_used = False
+            for ex, ey, ed in entrance_list + exit_list:
+                if ex == x and ey == y and ed == d:
+                    already_used = True
+                    break
+            if already_used:
+                continue
+
+            # Set border cell to floor
+            cells[y][x][0] = False
+            
+            # Make sure the entrance connects to the nearest sub-maze cell center
+            if d == 'N' and y - 1 >= 0:
+                cells[y - 1][x][0] = False
+            elif d == 'S' and y + 1 < depth:
+                cells[y + 1][x][0] = False
+            elif d == 'E' and x - 1 >= 0:
+                cells[y][x - 1][0] = False
+            elif d == 'W' and x + 1 < width:
+                cells[y][x + 1][0] = False
+
+            if is_entrance:
+                entrance_list.append((x, y, d))
+            else:
+                exit_list.append((x, y, d))
+            carved_count += 1
+
+        # If we still need more but ran out of unique cells, allow reuse/overlapping
+        if carved_count < count:
             for x, y, d in candidates:
                 if carved_count >= count:
                     break
-                already_used = False
-                for ex, ey, ed in entrance_list + exit_list:
-                    if ex == x and ey == y and ed == d:
-                        already_used = True
-                        break
-                if already_used:
-                    continue
-
-                # Set border cell to floor
                 cells[y][x][0] = False
-                
-                # Make sure the entrance connects to the nearest sub-maze cell center
                 if d == 'N' and y - 1 >= 0:
                     cells[y - 1][x][0] = False
                 elif d == 'S' and y + 1 < depth:
@@ -729,85 +964,116 @@ def generate_maze(
                     exit_list.append((x, y, d))
                 carved_count += 1
 
-            # If we still need more but ran out of unique cells, allow reuse/overlapping
-            if carved_count < count:
-                for x, y, d in candidates:
-                    if carved_count >= count:
-                        break
-                    cells[y][x][0] = False
-                    if d == 'N' and y - 1 >= 0:
-                        cells[y - 1][x][0] = False
-                    elif d == 'S' and y + 1 < depth:
-                        cells[y + 1][x][0] = False
-                    elif d == 'E' and x - 1 >= 0:
-                        cells[y][x - 1][0] = False
-                    elif d == 'W' and x + 1 < width:
-                        cells[y][x + 1][0] = False
+    carve_cube_borders(num_entrances, entrance_side, is_entrance=True)
+    if mode == 'exit':
+        carve_cube_borders(num_exits, exit_side, is_entrance=False)
+    else:
+        if emergency_exits:
+            num_ee = random.randint(1, min(3, (width + depth) // 4 + 1))
+            carve_cube_borders(num_ee, 'ANY', is_entrance=False)
 
-                    if is_entrance:
-                        entrance_list.append((x, y, d))
-                    else:
-                        exit_list.append((x, y, d))
-                    carved_count += 1
+    # Assign random wall, floor, and roof collection indices
+    for y in range(depth):
+        for x in range(width):
+            is_wall = cells[y][x][0]
+            if is_wall:
+                if num_wall_meshes > 0:
+                    cells[y][x][1] = random.randrange(num_wall_meshes)
+                    cells[y][x][2] = random.randrange(num_wall_meshes)
+                    cells[y][x][3] = random.randrange(num_wall_meshes)
+                    cells[y][x][4] = random.randrange(num_wall_meshes)
+                if num_roof_meshes > 0:
+                    cells[y][x][6] = random.randrange(num_roof_meshes)
+            else:
+                if num_floor_meshes > 0:
+                    cells[y][x][5] = random.randrange(num_floor_meshes)
 
-        carve_cube_borders(num_entrances, entrance_side, is_entrance=True)
-        if mode == 'exit':
-            carve_cube_borders(num_exits, exit_side, is_entrance=False)
-        else:
-            if emergency_exits:
-                num_ee = random.randint(1, min(3, (width + depth) // 4 + 1))
-                carve_cube_borders(num_ee, 'ANY', is_entrance=False)
+    main_entrance = entrance_list[0] if entrance_list else (1, 1, 'S')
+    main_exits = exit_list
+    center = (2 * (sub_w // 2) + 1, 2 * (sub_h // 2) + 1)
+    if center[0] >= width:
+        center = (width // 2, center[1])
+    if center[1] >= depth:
+        center = (center[0], depth // 2)
 
-        # Assign random wall, floor, and roof collection indices
-        for y in range(depth):
-            for x in range(width):
-                is_wall = cells[y][x][0]
-                if is_wall:
-                    if num_wall_meshes > 0:
-                        cells[y][x][1] = random.randrange(num_wall_meshes)
-                        cells[y][x][2] = random.randrange(num_wall_meshes)
-                        cells[y][x][3] = random.randrange(num_wall_meshes)
-                        cells[y][x][4] = random.randrange(num_wall_meshes)
-                    if num_roof_meshes > 0:
-                        cells[y][x][6] = random.randrange(num_roof_meshes)
-                else:
-                    if num_floor_meshes > 0:
-                        cells[y][x][5] = random.randrange(num_floor_meshes)
+    # Expand to 3D for multilevel
+    if floors > 1:
+        cells, stairs_placed = _expand_cells_to_3d(
+            cells, width, depth, floors, wall_mode,
+            stair_count=stair_count, stair_footprint=stair_footprint,
+            stair_style=stair_style, stair_direction=stair_direction
+        )
+    else:
+        cells = [cells]
+        stairs_placed = []
 
-        main_entrance = entrance_list[0] if entrance_list else (1, 1, 'S')
-        main_exits = exit_list
-        center = (2 * (sub_w // 2) + 1, 2 * (sub_h // 2) + 1)
-        if center[0] >= width:
-            center = (width // 2, center[1])
-        if center[1] >= depth:
-            center = (center[0], depth // 2)
+    maze_data = MazeData(width, depth, cells, main_entrance, main_exits, center)
+    maze_data.floors = floors
+    maze_data.stairs = stairs_placed
+    if mask_image:
+        blocked = _get_image_mask_data(mask_image, mask_invert, sub_w, sub_h)
+        for y in range(sub_h):
+            for x in range(sub_w):
+                if blocked[y][x]:
+                    # Center cell is a wall
+                    cells[0][2 * y + 1][2 * x + 1][0] = True
+                    for idx in range(1, 7):
+                        cells[0][2 * y + 1][2 * x + 1][idx] = -1
+                    # Neighbors
+                    for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+                        nx, ny = 2 * x + 1 + dx, 2 * y + 1 + dy
+                        if 0 <= nx < width and 0 <= ny < depth:
+                            cells[0][ny][nx][0] = True
+                            for idx in range(1, 7):
+                                cells[0][ny][nx][idx] = -1
+        # Recompute entrance_list/exit_list and set against final cells state
+        entrance_list = [item for item in entrance_list if not cells[0][item[1]][item[0]][0]]
+        exit_list = [item for item in exit_list if not cells[0][item[1]][item[0]][0]]
+        maze_data.entrance = entrance_list[0] if entrance_list else (1, 1, 'S')
+        maze_data.exits = exit_list
+    
+    maze_data.guide_path = find_shortest_path(maze_data, wall_mode='cube')
+    return maze_data
 
-        maze_data = MazeData(width, depth, cells, main_entrance, main_exits, center)
-        if mask_image:
-            blocked = _get_image_mask_data(mask_image, mask_invert, sub_w, sub_h)
-            for y in range(sub_h):
-                for x in range(sub_w):
-                    if blocked[y][x]:
-                        # Center cell is a wall
-                        cells[2 * y + 1][2 * x + 1][0] = True
-                        for idx in range(1, 7):
-                            cells[2 * y + 1][2 * x + 1][idx] = -1
-                        # Neighbors
-                        for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
-                            nx, ny = 2 * x + 1 + dx, 2 * y + 1 + dy
-                            if 0 <= nx < width and 0 <= ny < depth:
-                                cells[ny][nx][0] = True
-                                for idx in range(1, 7):
-                                    cells[ny][nx][idx] = -1
-            # Recompute entrance_list/exit_list and set against final cells state
-            entrance_list = [item for item in entrance_list if not cells[item[1]][item[0]][0]]
-            exit_list = [item for item in exit_list if not cells[item[1]][item[0]][0]]
-            maze_data.entrance = entrance_list[0] if entrance_list else (1, 1, 'S')
-            maze_data.exits = exit_list
-        
-        maze_data.guide_path = find_shortest_path(maze_data, wall_mode='cube')
-        return maze_data
 
+
+def _generate_thin_maze(
+    width: int,
+    depth: int,
+    seed: int,
+    mode: str,
+    emergency_exits: bool,
+    algorithm: str,
+    rooms_enable: bool,
+    rooms_count: int,
+    min_room_size: int,
+    max_room_size: int,
+    loop_probability: float,
+    isolated_wall_prob: float,
+    entrance_side: str,
+    exit_side: str,
+    num_entrances: int,
+    num_exits: int,
+    num_wall_meshes: int,
+    num_floor_meshes: int,
+    num_roof_meshes: int,
+    mask_image,
+    mask_invert: bool,
+    floors: int,
+    stair_footprint: str,
+    stair_style: str,
+    stair_count: int,
+    stair_direction: str = 'random',
+    selection_bias: float = 0.5,
+    straightness: float = 0.5,
+    direction_bias: float = 0.5,
+    east_bias: float = 0.5,
+    orientation_bias: float = 0.5,
+    passage_bias: float = 0.5,
+    eller_merge_prob: float = 0.5,
+    wall_mode: str = 'thin',
+) -> MazeData:
+    """Carve a rectangular maze in thin wall mode."""
     # Thin wall mode
     # cells[y][x] = [N, S, E, W, n_wall_idx, s_wall_idx, e_wall_idx, w_wall_idx, floor_mesh_index, roof_mesh_index]
     cells = [[[True, True, True, True, -1, -1, -1, -1, -1, -1] for _ in range(width)] for _ in range(depth)]
@@ -880,12 +1146,24 @@ def generate_maze(
             visited[sy][sx] = True
             stack.append((sx, sy))
 
-        dirs = [('N', (0, 1)), ('S', (0, -1)), ('E', (1, 0)), ('W', (-1, 0))]
+        last_dir = None
+        raw_dirs = [('N', (0, 1)), ('S', (0, -1)), ('E', (1, 0)), ('W', (-1, 0))]
         while stack:
             x, y = stack[-1]
-            random.shuffle(dirs)
+            chosen_dir = None
+            if last_dir and last_dir in raw_dirs:
+                _ldname, (ldx, ldy) = last_dir
+                nx, ny = x + ldx, y + ldy
+                if 0 <= nx < width and 0 <= ny < depth and not visited[ny][nx]:
+                    if random.random() < straightness:
+                        chosen_dir = last_dir
+            if chosen_dir:
+                ordered_dirs = [chosen_dir] + [d for d in raw_dirs if d != chosen_dir]
+            else:
+                random.shuffle(raw_dirs)
+                ordered_dirs = list(raw_dirs)
             carved = False
-            for dname, (dx, dy) in dirs:
+            for dname, (dx, dy) in ordered_dirs:
                 nx, ny = x + dx, y + dy
                 if 0 <= nx < width and 0 <= ny < depth and not visited[ny][nx]:
                     cells[y][x][index[dname]] = False
@@ -899,10 +1177,12 @@ def generate_maze(
                     else:
                         visited[ny][nx] = True
                         stack.append((nx, ny))
+                    last_dir = (dname, (dx, dy))
                     carved = True
                     break
             if not carved:
                 stack.pop()
+                last_dir = None
 
     elif algorithm == 'kruskal':
         uf = UnionFind(width * depth)
@@ -966,7 +1246,7 @@ def generate_maze(
                 if s1 != s2:
                     same_room = (cell_to_room.get((x, y)) is not None and 
                                  cell_to_room.get((x, y)) == cell_to_room.get((x + 1, y)))
-                    if same_room or random.random() < 0.5:
+                    if same_room or random.random() < eller_merge_prob:
                         for idx in range(width):
                             if row_sets[idx] == s2:
                                 row_sets[idx] = s1
@@ -1024,7 +1304,7 @@ def generate_maze(
                 can_east = (x < width - 1)
                 
                 if can_north and can_east:
-                    if random.random() < 0.5:
+                    if random.random() >= direction_bias:
                         cells[y][x][0] = False
                         cells[y + 1][x][1] = False
                     else:
@@ -1037,23 +1317,14 @@ def generate_maze(
                     cells[y][x][2] = False
                     cells[y][x + 1][3] = False
 
-        if rooms_enable:
-            for y in range(depth):
-                for x in range(width):
-                    r_idx = cell_to_room.get((x, y))
-                    if r_idx is not None:
-                        if y + 1 < depth and cell_to_room.get((x, y + 1)) == r_idx:
-                            cells[y][x][0] = False
-                            cells[y + 1][x][1] = False
-                        if x + 1 < width and cell_to_room.get((x + 1, y)) == r_idx:
-                            cells[y][x][2] = False
-                            cells[y][x + 1][3] = False
+
 
     elif algorithm == 'prims':
         visited = [[False] * width for _ in range(depth)]
         frontier_walls = []
 
         def add_frontier_of(cx, cy):
+            """Add unvisited neighbours of (cx, cy) to the Prim's frontier wall list (2D mode)."""
             for dname, (dx, dy) in [('N', (0, 1)), ('S', (0, -1)), ('E', (1, 0)), ('W', (-1, 0))]:
                 nx, ny = cx + dx, cy + dy
                 if 0 <= nx < width and 0 <= ny < depth:
@@ -1099,6 +1370,7 @@ def generate_maze(
         cy = random.randrange(depth)
         
         def mark_visited(x, y):
+            """Mark cell (x, y) as visited in 2D mode (Hunt-and-Kill)."""
             r = cell_to_room.get((x, y))
             if r is not None:
                 for rx, ry in rooms[r]:
@@ -1109,18 +1381,31 @@ def generate_maze(
         mark_visited(cx, cy)
         
         while True:
-            dirs = [('N', (0, 1)), ('S', (0, -1)), ('E', (1, 0)), ('W', (-1, 0))]
             walk_stuck = False
+            last_dir = None
             while not walk_stuck:
-                random.shuffle(dirs)
+                raw_dirs = [('N', (0, 1)), ('S', (0, -1)), ('E', (1, 0)), ('W', (-1, 0))]
+                chosen_dir = None
+                if last_dir and last_dir in raw_dirs:
+                    _ldname, (ldx, ldy) = last_dir
+                    nx, ny = cx + ldx, cy + ldy
+                    if 0 <= nx < width and 0 <= ny < depth and not visited[ny][nx]:
+                        if random.random() < straightness:
+                            chosen_dir = last_dir
+                if chosen_dir:
+                    ordered_dirs = [chosen_dir] + [d for d in raw_dirs if d != chosen_dir]
+                else:
+                    random.shuffle(raw_dirs)
+                    ordered_dirs = list(raw_dirs)
                 moved = False
-                for dname, (dx, dy) in dirs:
+                for dname, (dx, dy) in ordered_dirs:
                     nx, ny = cx + dx, cy + dy
                     if 0 <= nx < width and 0 <= ny < depth and not visited[ny][nx]:
                         cells[cy][cx][index[dname]] = False
                         cells[ny][nx][index[opposites[dname]]] = False
                         mark_visited(nx, ny)
                         cx, cy = nx, ny
+                        last_dir = (dname, (dx, dy))
                         moved = True
                         break
                 if not moved:
@@ -1160,7 +1445,7 @@ def generate_maze(
                     if r1 is not None and r1 == r2:
                         in_same_room = True
 
-                carve_east = (x < width - 1) and (in_same_room or random.random() < 0.5)
+                carve_east = (x < width - 1) and (in_same_room or random.random() < east_bias)
                 
                 if carve_east:
                     cells[y][x][2] = False
@@ -1177,6 +1462,7 @@ def generate_maze(
         unvisited_list = []
         
         def mark_visited(x, y):
+            """Mark cell (x, y) as visited in 2D mode (Wilson's)."""
             r = cell_to_room.get((x, y))
             if r is not None:
                 for rx, ry in rooms[r]:
@@ -1241,12 +1527,13 @@ def generate_maze(
             cells[y][width - 1][2] = True
 
         def divide(rx, ry, rw, rh, horizontal):
+            """Recursively subdivide a rectangular region by placing walls (2D mode)."""
             if rw < 2 or rh < 2:
                 return
             
             if horizontal:
                 wy_sub = ry + random.randrange(rh - 1)
-                px_sub = rx + random.randrange(rw)
+                px_sub = rx + _biased_choice(rw, passage_bias)
                 
                 for x_sub in range(rx, rx + rw):
                     if cell_to_room.get((x_sub, wy_sub)) is None or cell_to_room.get((x_sub, wy_sub + 1)) is None:
@@ -1258,7 +1545,7 @@ def generate_maze(
                 divide(rx, wy_sub + 1, rw, ry + rh - wy_sub - 1, choose_orientation(rw, ry + rh - wy_sub - 1))
             else:
                 wx_sub = rx + random.randrange(rw - 1)
-                py_sub = ry + random.randrange(rh)
+                py_sub = ry + _biased_choice(rh, passage_bias)
                 
                 for y_sub in range(ry, ry + rh):
                     if cell_to_room.get((wx_sub, y_sub)) is None or cell_to_room.get((wx_sub + 1, y_sub)) is None:
@@ -1270,12 +1557,13 @@ def generate_maze(
                 divide(wx_sub + 1, ry, rx + rw - wx_sub - 1, rh, choose_orientation(rx + rw - wx_sub - 1, rh))
 
         def choose_orientation(rw, rh):
+            """Pick horizontal (True) or vertical (False) subdivision for recursive division (2D mode)."""
             if rw < rh:
                 return True
             elif rh < rw:
                 return False
             else:
-                return random.random() < 0.5
+                return random.random() < orientation_bias
 
         divide(0, 0, width, depth, choose_orientation(width, depth))
 
@@ -1284,6 +1572,7 @@ def generate_maze(
         active = []
         
         def add_to_active(x, y):
+            """Mark cell as visited and add to the active list (2D mode)."""
             r = cell_to_room.get((x, y))
             if r is not None:
                 for rx, ry in rooms[r]:
@@ -1299,10 +1588,10 @@ def generate_maze(
         add_to_active(sx, sy)
         
         while active:
-            if random.random() < 0.5:
-                idx = len(active) - 1
-            else:
+            if random.random() < selection_bias:
                 idx = random.randrange(len(active))
+            else:
+                idx = len(active) - 1
             
             cx, cy = active[idx]
             
@@ -1378,6 +1667,7 @@ def generate_maze(
     exit_list = []
 
     def carve_borders(count, side, is_entrance):
+        """Carve the specified number of entrance or exit openings along a maze border."""
         candidates = []
         if side == 'N' or side == 'ANY':
             for x in range(width):
@@ -1476,24 +1766,37 @@ def generate_maze(
     main_exits = exit_list
     center = (width // 2, depth // 2)
 
+    # Expand to 3D for multilevel
+    if floors > 1:
+        cells, stairs_placed = _expand_cells_to_3d(
+            cells, width, depth, floors, wall_mode,
+            stair_count=stair_count, stair_footprint=stair_footprint,
+            stair_style=stair_style, stair_direction=stair_direction
+        )
+    else:
+        cells = [cells]
+        stairs_placed = []
+
     maze_data = MazeData(width, depth, cells, main_entrance, main_exits, center)
+    maze_data.floors = floors
+    maze_data.stairs = stairs_placed
     if mask_image:
         blocked = _get_image_mask_data(mask_image, mask_invert, width, depth)
         for y in range(depth):
             for x in range(width):
                 if blocked[y][x]:
-                    cells[y][x][8] = -2
-                    cells[y][x][9] = -2
-                    cells[y][x][0] = cells[y][x][1] = cells[y][x][2] = cells[y][x][3] = False
+                    cells[0][y][x][8] = -2
+                    cells[0][y][x][9] = -2
+                    cells[0][y][x][0] = cells[0][y][x][1] = cells[0][y][x][2] = cells[0][y][x][3] = False
                     
                     if y + 1 < depth and not blocked[y+1][x]:
-                        cells[y+1][x][1] = True
+                        cells[0][y+1][x][1] = True
                     if y - 1 >= 0 and not blocked[y-1][x]:
-                        cells[y-1][x][0] = True
+                        cells[0][y-1][x][0] = True
                     if x + 1 < width and not blocked[y][x+1]:
-                        cells[y][x+1][3] = True
+                        cells[0][y][x+1][3] = True
                     if x - 1 >= 0 and not blocked[y][x-1]:
-                        cells[y][x-1][2] = True
+                        cells[0][y][x-1][2] = True
         # Filter entrances and exits to exclude masked cells
         entrance_list = [item for item in entrance_list if not blocked[item[1]][item[0]]]
         exit_list = [item for item in exit_list if not blocked[item[1]][item[0]]]
@@ -1504,134 +1807,492 @@ def generate_maze(
     return maze_data
 
 
-def find_shortest_path(maze_data: MazeData, wall_mode: str) -> List[Tuple[int, int]]:
-    if not maze_data.entrance:
-        return []
-    
-    if maze_data.grid_type == 'polar':
-        start = maze_data.entrance[0:2]
-        targets = []
-        if maze_data.exits:
-            for ex_r, ex_theta, _ in maze_data.exits:
-                targets.append((ex_r, ex_theta))
-        else:
-            targets.append(maze_data.center)
-            
-        if not targets:
-            return []
-            
-        queue = deque([[start]])
-        bfs_visited = {start}
-        rings = maze_data.polar_rings
-        ring_sectors = maze_data.ring_sectors
 
-        def get_neighbors(r, theta):
-            neighbors = []
-            Nr = ring_sectors[r]
-            if r >= 1:
-                neighbors.append((r, (theta + 1) % Nr))
-                neighbors.append((r, (theta - 1) % Nr))
-            if r > 0:
-                N_in = ring_sectors[r - 1]
+
+def generate_maze(
+    width: int,
+    depth: int,
+    seed: int = 0,
+    mode: str = 'center',
+    emergency_exits: bool = False,
+    algorithm: str = 'dfs',
+    rooms_enable: bool = False,
+    rooms_count: int = 3,
+    min_room_size: int = 2,
+    max_room_size: int = 4,
+    loop_probability: float = 0.0,
+    isolated_wall_prob: float = 0.0,
+    entrance_side: str = 'ANY',
+    exit_side: str = 'ANY',
+    num_entrances: int = 1,
+    num_exits: int = 1,
+    wall_mode: str = 'thin',
+    num_wall_meshes: int = 0,
+    num_floor_meshes: int = 0,
+    num_roof_meshes: int = 0,
+    mask_image = None,
+    mask_invert: bool = False,
+    grid_type: str = 'rect',
+    polar_rings: int = 5,
+    floors: int = 1,
+    stair_footprint: str = '1x1',
+    stair_style: str = 'stair',
+    stair_count: int = 1,
+    stair_direction: str = 'random',
+    selection_bias: float = 0.5,
+    straightness: float = 0.5,
+    direction_bias: float = 0.5,
+    east_bias: float = 0.5,
+    orientation_bias: float = 0.5,
+    passage_bias: float = 0.5,
+    eller_merge_prob: float = 0.5,
+    radial_bias: float = 0.5,
+) -> MazeData:
+    """Generate a complete rectangular or polar maze with the selected algorithm."""
+    # Disable mask for multilevel mazes
+    if floors > 1 and mask_image is not None:
+        mask_image = None
+
+    if grid_type == 'polar':
+        return generate_polar_maze(
+            rings=polar_rings,
+            seed=seed,
+            algorithm=algorithm,
+            mode=mode,
+            wall_mode=wall_mode,
+            num_wall_meshes=num_wall_meshes,
+            num_floor_meshes=num_floor_meshes,
+            num_roof_meshes=num_roof_meshes,
+            floors=floors,
+            stair_footprint=stair_footprint,
+            stair_style=stair_style,
+            stair_count=stair_count,
+            stair_direction=stair_direction,
+            radial_bias=radial_bias,
+        )
+
+    if seed:
+        random.seed(seed)
+
+    if wall_mode == 'cube':
+        return _generate_cube_maze(
+            width=width, depth=depth, seed=seed, mode=mode,
+            emergency_exits=emergency_exits, algorithm=algorithm,
+            rooms_enable=rooms_enable, rooms_count=rooms_count,
+            min_room_size=min_room_size, max_room_size=max_room_size,
+            loop_probability=loop_probability, isolated_wall_prob=isolated_wall_prob,
+            entrance_side=entrance_side, exit_side=exit_side,
+            num_entrances=num_entrances, num_exits=num_exits,
+            num_wall_meshes=num_wall_meshes, num_floor_meshes=num_floor_meshes,
+            num_roof_meshes=num_roof_meshes, mask_image=mask_image,
+            mask_invert=mask_invert, floors=floors, stair_footprint=stair_footprint,
+            stair_style=stair_style, stair_count=stair_count, stair_direction=stair_direction,
+            selection_bias=selection_bias, straightness=straightness,
+            direction_bias=direction_bias, east_bias=east_bias,
+            orientation_bias=orientation_bias, passage_bias=passage_bias,
+            eller_merge_prob=eller_merge_prob
+        )
+    else:
+        return _generate_thin_maze(
+            width=width, depth=depth, seed=seed, mode=mode,
+            emergency_exits=emergency_exits, algorithm=algorithm,
+            rooms_enable=rooms_enable, rooms_count=rooms_count,
+            min_room_size=min_room_size, max_room_size=max_room_size,
+            loop_probability=loop_probability, isolated_wall_prob=isolated_wall_prob,
+            entrance_side=entrance_side, exit_side=exit_side,
+            num_entrances=num_entrances, num_exits=num_exits,
+            num_wall_meshes=num_wall_meshes, num_floor_meshes=num_floor_meshes,
+            num_roof_meshes=num_roof_meshes, mask_image=mask_image,
+            mask_invert=mask_invert, floors=floors, stair_footprint=stair_footprint,
+            stair_style=stair_style, stair_count=stair_count, stair_direction=stair_direction,
+            selection_bias=selection_bias, straightness=straightness,
+            direction_bias=direction_bias, east_bias=east_bias,
+            orientation_bias=orientation_bias, passage_bias=passage_bias,
+            eller_merge_prob=eller_merge_prob
+        )
+
+
+def _get_polar_neighbors(r, theta, rings, ring_sectors):
+    """Return the (r, theta) neighbours of a polar cell on a circular grid."""
+    neighbors = []
+    Nr = ring_sectors[r]
+    if r >= 1:
+        neighbors.append((r, (theta + 1) % Nr))
+        neighbors.append((r, (theta - 1) % Nr))
+    if r > 0:
+        N_in = ring_sectors[r - 1]
+        if N_in == Nr:
+            neighbors.append((r - 1, theta))
+        elif N_in == 1:
+            neighbors.append((r - 1, 0))
+        else:
+            neighbors.append((r - 1, theta // 2))
+    if r < rings - 1:
+        N_out = ring_sectors[r + 1]
+        if N_out == Nr:
+            neighbors.append((r + 1, theta))
+        elif Nr == 1:
+            for t in range(N_out):
+                neighbors.append((r + 1, t))
+        else:
+            neighbors.append((r + 1, 2 * theta))
+            neighbors.append((r + 1, 2 * theta + 1))
+    return neighbors
+
+
+def _find_shortest_path_polar_3d(maze_data, wall_mode, cells_3d):
+    """3D BFS for polar grid over (z, r, theta) with vertical stair edges.
+
+    Args:
+        maze_data: MazeData instance.
+        wall_mode: 'thin' or 'cube'.
+        cells_3d: 3D cell list [z][r][theta].
+
+    Returns:
+        List of (z, r, theta) tuples representing the shortest path, or [].
+    """
+    start_r = maze_data.entrance[0]
+    start_theta = maze_data.entrance[1]
+    start_z = 0
+    floors = maze_data.floors
+    rings = maze_data.polar_rings
+    ring_sectors = maze_data.ring_sectors
+
+    # Build stair edge map: (z, r, theta) -> (z+1, r, theta)
+    stair_up = {}
+    stair_down = {}
+    for s in maze_data.stairs:
+        sz = s['z']
+        sx, sy = s['x'], s['y']
+        stheta, sr = sx, sy
+        if sy >= rings and sx < rings:
+            stheta, sr = sy, sx
+        key_up = (sz, sr, stheta)
+        key_down = (sz + 1, sr, stheta)
+        stair_up[key_up] = (sz + 1, sr, stheta)
+        stair_down[key_down] = (sz, sr, stheta)
+
+    # Goal: exits on top floor, or center of top floor
+    if maze_data.exits:
+        targets = [(floors - 1, ex[0], ex[1]) for ex in maze_data.exits]
+    else:
+        cr, ctheta = maze_data.center
+        targets = [(floors - 1, cr, ctheta)]
+
+    queue = deque([(start_z, start_r, start_theta)])
+    parent = {(start_z, start_r, start_theta): None}
+    while queue:
+        cz, cr, ctheta = queue.popleft()
+        node = (cz, cr, ctheta)
+        if node in targets:
+            path = []
+            curr = node
+            while curr is not None:
+                path.append(curr)
+                curr = parent[curr]
+            path.reverse()
+            return path
+
+        Nr = ring_sectors[cr]
+        accessible = []
+        if wall_mode == 'cube':
+            for nr, ntheta in _get_polar_neighbors(cr, ctheta, rings, ring_sectors):
+                if not cells_3d[cz][nr][ntheta][0]:
+                    accessible.append((nr, ntheta))
+        else:
+            if cr >= 1 and not cells_3d[cz][cr][ctheta][0]:
+                accessible.append((cr, (ctheta + 1) % Nr))
+            if cr >= 1 and not cells_3d[cz][cr][(ctheta - 1) % Nr][0]:
+                accessible.append((cr, (ctheta - 1) % Nr))
+            if cr > 0 and not cells_3d[cz][cr][ctheta][1]:
+                N_in = ring_sectors[cr - 1]
                 if N_in == Nr:
-                    neighbors.append((r - 1, theta))
+                    accessible.append((cr - 1, ctheta))
                 elif N_in == 1:
-                    neighbors.append((r - 1, 0))
+                    accessible.append((cr - 1, 0))
                 else:
-                    neighbors.append((r - 1, theta // 2))
-            if r < rings - 1:
-                N_out = ring_sectors[r + 1]
+                    accessible.append((cr - 1, ctheta // 2))
+            if cr < rings - 1:
+                N_out = ring_sectors[cr + 1]
                 if N_out == Nr:
-                    neighbors.append((r + 1, theta))
+                    if not cells_3d[cz][cr + 1][ctheta][1]:
+                        accessible.append((cr + 1, ctheta))
                 elif Nr == 1:
                     for t in range(N_out):
-                        neighbors.append((r + 1, t))
+                        if not cells_3d[cz][cr + 1][t][1]:
+                            accessible.append((cr + 1, t))
                 else:
-                    neighbors.append((r + 1, 2 * theta))
-                    neighbors.append((r + 1, 2 * theta + 1))
-            return neighbors
-        
-        while queue:
-            path = queue.popleft()
-            node = path[-1]
-            if node in targets:
-                return path
-            r, theta = node
-            Nr = ring_sectors[r]
-            accessible = []
-            if wall_mode == 'cube':
-                for nr, ntheta in get_neighbors(r, theta):
-                    if not maze_data.cells[nr][ntheta][0]:
-                        accessible.append((nr, ntheta))
-            else:
-                if r >= 1 and not maze_data.cells[r][theta][0]:
-                    accessible.append((r, (theta + 1) % Nr))
-                if r >= 1 and not maze_data.cells[r][(theta - 1) % Nr][0]:
-                    accessible.append((r, (theta - 1) % Nr))
-                if r > 0 and not maze_data.cells[r][theta][1]:
-                    N_in = ring_sectors[r - 1]
-                    if N_in == Nr:
-                        accessible.append((r - 1, theta))
-                    elif N_in == 1:
-                        accessible.append((r - 1, 0))
-                    else:
-                        accessible.append((r - 1, theta // 2))
-                if r < rings - 1:
-                    N_out = ring_sectors[r + 1]
-                    if N_out == Nr:
-                        if not maze_data.cells[r + 1][theta][1]:
-                            accessible.append((r + 1, theta))
-                    elif Nr == 1:
-                        for t in range(N_out):
-                            if not maze_data.cells[r + 1][t][1]:
-                                accessible.append((r + 1, t))
-                    else:
-                        if not maze_data.cells[r + 1][2 * theta][1]:
-                            accessible.append((r + 1, 2 * theta))
-                        if not maze_data.cells[r + 1][2 * theta + 1][1]:
-                            accessible.append((r + 1, 2 * theta + 1))
-            for neighbor in accessible:
-                if neighbor not in bfs_visited:
-                    bfs_visited.add(neighbor)
-                    queue.append(path + [neighbor])
+                    if not cells_3d[cz][cr + 1][2 * ctheta][1]:
+                        accessible.append((cr + 1, 2 * ctheta))
+                    if not cells_3d[cz][cr + 1][2 * ctheta + 1][1]:
+                        accessible.append((cr + 1, 2 * ctheta + 1))
+
+        for nr, ntheta in accessible:
+            nn = (cz, nr, ntheta)
+            if nn not in parent:
+                parent[nn] = node
+                queue.append(nn)
+
+        # Vertical stair neighbors
+        if node in stair_up:
+            nn = stair_up[node]
+            if nn not in parent:
+                parent[nn] = node
+                queue.append(nn)
+        if node in stair_down:
+            nn = stair_down[node]
+            if nn not in parent:
+                parent[nn] = node
+                queue.append(nn)
+
+    return []
+
+
+
+def find_shortest_path(maze_data: MazeData, wall_mode: str) -> List:
+    """Find the shortest path from entrance to exit/center using BFS.
+
+    Dispatches to the appropriate 2D/3D and rect/polar pathfinder based on
+    maze_data.grid_type and floor count.
+
+    Args:
+        maze_data: MazeData instance.
+        wall_mode: 'thin' or 'cube'.
+
+    Returns:
+        List of coordinate tuples (2D or 3D) representing the path, or [].
+    """
+    if not maze_data.entrance:
         return []
 
-    start_x, start_y, _ = maze_data.entrance
+    cells_3d, floors = _resolve_cells_3d(maze_data)
+    is_3d = (floors > 1)
 
+    if maze_data.grid_type == 'polar':
+        if is_3d:
+            return _find_shortest_path_polar_3d(maze_data, wall_mode, cells_3d)
+        return _find_shortest_path_polar_2d(maze_data, wall_mode)
+
+    if is_3d:
+        return _find_shortest_path_3d(maze_data, wall_mode, cells_3d)
+
+    # 2D rect BFS (back-compat with old 2D cells layout)
+    return _find_shortest_path_2d(maze_data, wall_mode, cells_3d[0])
+
+
+def _find_shortest_path_2d(maze_data, wall_mode, cells_2d):
+    """2D BFS for rectangular grid (y, x) with wall-aware neighbour traversal.
+
+    Args:
+        maze_data: MazeData instance.
+        wall_mode: 'thin' or 'cube'.
+        cells_2d: 2D cell list [y][x].
+
+    Returns:
+        List of (x, y) tuples, or [].
+    """
+    start_x, start_y, _ = maze_data.entrance
     targets = []
     if maze_data.exits:
         for ex, ey, _ in maze_data.exits:
             targets.append((ex, ey))
     else:
         targets.append(maze_data.center)
-
     if not targets:
         return []
 
-    queue = deque([(start_x, start_y, [(start_x, start_y)])])
-    visited = {(start_x, start_y)}
-
+    queue = deque([(start_x, start_y)])
+    parent = {(start_x, start_y): None}
     dirs = [('N', 0, 1, 0), ('S', 0, -1, 1), ('E', 1, 0, 2), ('W', -1, 0, 3)]
 
     while queue:
-        cx, cy, path = queue.popleft()
-
+        cx, cy = queue.popleft()
         if (cx, cy) in targets:
+            path = []
+            curr = (cx, cy)
+            while curr is not None:
+                path.append(curr)
+                curr = parent[curr]
+            path.reverse()
             return path
-
         for dname, dx, dy, wall_idx in dirs:
             nx, ny = cx + dx, cy + dy
             if 0 <= nx < maze_data.width and 0 <= ny < maze_data.depth:
-                if (nx, ny) not in visited:
+                nn = (nx, ny)
+                if nn not in parent:
                     if wall_mode == 'cube':
-                        if not maze_data.cells[ny][nx][0]:
-                            visited.add((nx, ny))
-                            queue.append((nx, ny, path + [(nx, ny)]))
+                        if not cells_2d[ny][nx][0]:
+                            parent[nn] = (cx, cy)
+                            queue.append(nn)
                     else:
-                        if not maze_data.cells[cy][cx][wall_idx]:
-                            visited.add((nx, ny))
-                            queue.append((nx, ny, path + [(nx, ny)]))
+                        if not cells_2d[cy][cx][wall_idx]:
+                            parent[nn] = (cx, cy)
+                            queue.append(nn)
     return []
+
+
+def _find_shortest_path_3d(maze_data, wall_mode, cells_3d):
+    """3D BFS over (z, y, x) with vertical stair edges.
+
+    Args:
+        maze_data: MazeData instance.
+        wall_mode: 'thin' or 'cube'.
+        cells_3d: 3D cell list [z][y][x].
+
+    Returns:
+        List of (z, y, x) tuples, or [].
+    """
+    start_x, start_y, _ = maze_data.entrance
+    start_z = 0
+    floors = maze_data.floors
+
+    # Build stair edge map: (z, y, x) -> (z+1, y, x)
+    stair_up = {}
+    stair_down = {}
+    for s in maze_data.stairs:
+        sz = s['z']
+        sx, sy = s['x'], s['y']
+        fp = s.get('footprint', '1x1')
+        orient = s.get('orientation', 'N')
+        coords = _get_stair_footprint_coords(sx, sy, fp, orient)
+        for cx, cy in coords:
+            if 0 <= cy < maze_data.depth and 0 <= cx < maze_data.width:
+                key_up = (sz, cy, cx)
+                key_down = (sz + 1, cy, cx)
+                stair_up[key_up] = (sz + 1, cy, cx)
+                stair_down[key_down] = (sz, cy, cx)
+
+    # Goal: center on top floor
+    if maze_data.exits:
+        targets = [(floors - 1, ey, ex) for ex, ey, _ in maze_data.exits]
+    else:
+        cx, cy = maze_data.center
+        targets = [(floors - 1, cy, cx)]
+
+    queue = deque([(start_z, start_y, start_x)])
+    parent = {(start_z, start_y, start_x): None}
+    dirs = [('N', 1, 0, 0), ('S', -1, 0, 1), ('E', 0, 1, 2), ('W', 0, -1, 3)]
+
+    while queue:
+        cz, cy, cx = queue.popleft()
+        node = (cz, cy, cx)
+        if node in targets:
+            path = []
+            curr = node
+            while curr is not None:
+                path.append(curr)
+                curr = parent[curr]
+            path.reverse()
+            return path
+
+        # Cardinal neighbors in current floor
+        for dname, dy, dx, wall_idx in dirs:
+            ny, nx = cy + dy, cx + dx
+            if 0 <= nx < maze_data.width and 0 <= ny < maze_data.depth:
+                nn = (cz, ny, nx)
+                if nn not in parent:
+                    if wall_mode == 'cube':
+                        if not cells_3d[cz][ny][nx][0]:
+                            parent[nn] = node
+                            queue.append(nn)
+                    else:
+                        if not cells_3d[cz][cy][cx][wall_idx]:
+                            parent[nn] = node
+                            queue.append(nn)
+
+        # Vertical stair neighbors
+        if node in stair_up:
+            nn = stair_up[node]
+            if nn not in parent:
+                parent[nn] = node
+                queue.append(nn)
+        if node in stair_down:
+            nn = stair_down[node]
+            if nn not in parent:
+                parent[nn] = node
+                queue.append(nn)
+
+    return []
+
+
+
+def _find_shortest_path_polar_2d(maze_data, wall_mode):
+    """2D BFS for polar grid (r, theta) with ring-aware neighbour traversal.
+
+    Args:
+        maze_data: MazeData instance.
+        wall_mode: 'thin' or 'cube'.
+
+    Returns:
+        List of (r, theta) tuples, or [].
+    """
+    start = maze_data.entrance[0:2]
+    targets = []
+    if maze_data.exits:
+        for ex_r, ex_theta, _ in maze_data.exits:
+            targets.append((ex_r, ex_theta))
+    else:
+        targets.append(maze_data.center)
+    if not targets:
+        return []
+    queue = deque([start])
+    parent = {start: None}
+    rings = maze_data.polar_rings
+    ring_sectors = maze_data.ring_sectors
+
+    cells_3d, _ = _resolve_cells_3d(maze_data)
+    cells_2d = cells_3d[0]
+
+    while queue:
+        node = queue.popleft()
+        if node in targets:
+            path = []
+            curr = node
+            while curr is not None:
+                path.append(curr)
+                curr = parent[curr]
+            path.reverse()
+            return path
+        r, theta = node
+        Nr = ring_sectors[r]
+        accessible = []
+        if wall_mode == 'cube':
+            for nr, ntheta in _get_polar_neighbors(r, theta, rings, ring_sectors):
+                if not cells_2d[nr][ntheta][0]:
+                    accessible.append((nr, ntheta))
+        else:
+            if r >= 1 and not cells_2d[r][theta][0]:
+                accessible.append((r, (theta + 1) % Nr))
+            if r >= 1 and not cells_2d[r][(theta - 1) % Nr][0]:
+                accessible.append((r, (theta - 1) % Nr))
+            if r > 0 and not cells_2d[r][theta][1]:
+                N_in = ring_sectors[r - 1]
+                if N_in == Nr:
+                    accessible.append((r - 1, theta))
+                elif N_in == 1:
+                    accessible.append((r - 1, 0))
+                else:
+                    accessible.append((r - 1, theta // 2))
+            if r < rings - 1:
+                N_out = ring_sectors[r + 1]
+                if N_out == Nr:
+                    if not cells_2d[r + 1][theta][1]:
+                        accessible.append((r + 1, theta))
+                elif Nr == 1:
+                    for t in range(N_out):
+                        if not cells_2d[r + 1][t][1]:
+                            accessible.append((r + 1, t))
+                else:
+                    if not cells_2d[r + 1][2 * theta][1]:
+                        accessible.append((r + 1, 2 * theta))
+                    if not cells_2d[r + 1][2 * theta + 1][1]:
+                        accessible.append((r + 1, 2 * theta + 1))
+        for neighbor in accessible:
+            if neighbor not in parent:
+                parent[neighbor] = node
+                queue.append(neighbor)
+    return []
+
 
 
 def generate_polar_maze(
@@ -1643,9 +2304,45 @@ def generate_polar_maze(
     num_wall_meshes: int = 0,
     num_floor_meshes: int = 0,
     num_roof_meshes: int = 0,
+    floors: int = 1,
+    stair_footprint: str = '1x1',
+    stair_style: str = 'stair',
+    stair_count: int = 1,
+    stair_direction: str = 'random',
+    radial_bias: float = 0.5,
 ) -> MazeData:
+    """Generate a polar (circular) maze.
+
+    Only DFS has a native polar implementation; other algorithms fall back
+    to a random spanning tree (Kruskal-style) for equivalent results.
+
+    Args:
+        rings: Number of concentric rings.
+        seed: Random seed (0 for time-based).
+        algorithm: Algorithm name ('dfs' or other).
+        mode: 'center' or 'exit'.
+        wall_mode: 'thin' or 'cube'.
+        num_wall_meshes: Count for wall collection index assignment.
+        num_floor_meshes: Count for floor collection index assignment.
+        num_roof_meshes: Count for roof collection index assignment.
+        floors: Number of vertical levels.
+        stair_footprint: Stair footprint (polar supports only '1x1').
+        stair_style: 'stair' or 'ramp'.
+        stair_count: Number of stairs per floor transition.
+        radial_bias: 0 = prefer tangential, 1 = prefer radial movements.
+
+    Returns:
+        A fully populated MazeData instance for a polar grid.
+    """
     if seed:
         random.seed(seed)
+
+    # Only DFS has a dedicated polar implementation; all other algorithms use a
+    # random spanning tree (Kruskal-style) which produces similar perfect-maze results.
+    _POLAR_NATIVE_ALGORITHMS = {'dfs'}
+    if algorithm not in _POLAR_NATIVE_ALGORITHMS:
+        logger.info(f"Algorithm '{algorithm}' is not natively implemented for polar "
+                    f"grids — using random spanning tree (similar to Kruskal) instead.")
 
     if wall_mode == 'cube' and rings % 2 == 1:
         rings += 1
@@ -1681,32 +2378,6 @@ def generate_polar_maze(
                     row.append([True, True, -1, -1, -1, -1, -1])
             cells.append(row)
 
-    # Setup adjacency graph
-    def get_neighbors(r, theta):
-        neighbors = []
-        Nr = ring_sectors[r]
-        if r >= 1:
-            neighbors.append((r, (theta + 1) % Nr))
-            neighbors.append((r, (theta - 1) % Nr))
-        if r > 0:
-            N_in = ring_sectors[r - 1]
-            if N_in == Nr:
-                neighbors.append((r - 1, theta))
-            elif N_in == 1:
-                neighbors.append((r - 1, 0))
-            else:
-                neighbors.append((r - 1, theta // 2))
-        if r < rings - 1:
-            N_out = ring_sectors[r + 1]
-            if N_out == Nr:
-                neighbors.append((r + 1, theta))
-            elif Nr == 1:
-                for t in range(N_out):
-                    neighbors.append((r + 1, t))
-            else:
-                neighbors.append((r + 1, 2 * theta))
-                neighbors.append((r + 1, 2 * theta + 1))
-        return neighbors
 
     if wall_mode == 'cube':
         # 1. Build Passage Cells and Bidirectional graph
@@ -1766,7 +2437,17 @@ def generate_polar_maze(
                 cell = stack[-1]
                 unvisited = [edge for edge in graph[cell] if not visited[edge[0]]]
                 if unvisited:
-                    neighbor, int_cell = random.choice(unvisited)
+                    radial = [edge for edge in unvisited if edge[0][0] != cell[0]]
+                    tangential = [edge for edge in unvisited if edge[0][0] == cell[0]]
+                    if radial and tangential:
+                        if random.random() < radial_bias:
+                            neighbor, int_cell = random.choice(radial)
+                        else:
+                            neighbor, int_cell = random.choice(tangential)
+                    elif radial:
+                        neighbor, int_cell = random.choice(radial)
+                    else:
+                        neighbor, int_cell = random.choice(tangential)
                     ir, itheta = int_cell
                     cells[ir][itheta][0] = False
                     visited[neighbor] = True
@@ -1800,10 +2481,20 @@ def generate_polar_maze(
             stack = [(0, 0)]
             while stack:
                 r, theta = stack[-1]
-                neighbors = get_neighbors(r, theta)
+                neighbors = _get_polar_neighbors(r, theta, rings, ring_sectors)
                 unvisited = [n for n in neighbors if not visited[n[0]][n[1]]]
                 if unvisited:
-                    nr, ntheta = random.choice(unvisited)
+                    radial = [n for n in unvisited if n[0] != r]
+                    angular = [n for n in unvisited if n[0] == r]
+                    if radial and angular:
+                        if random.random() < radial_bias:
+                            nr, ntheta = random.choice(radial)
+                        else:
+                            nr, ntheta = random.choice(angular)
+                    elif radial:
+                        nr, ntheta = random.choice(radial)
+                    else:
+                        nr, ntheta = random.choice(angular)
                     if nr == r:
                         Nr = ring_sectors[r]
                         if ntheta == (theta + 1) % Nr:
@@ -1819,8 +2510,10 @@ def generate_polar_maze(
                 else:
                     stack.pop()
 
-        elif algorithm == 'kruskal' or algorithm == 'prims' or algorithm == 'eller' or algorithm == 'binary_tree' or algorithm == 'hunt_and_kill' or algorithm == 'sidewinder' or algorithm == 'wilsons' or algorithm == 'recursive_division' or algorithm == 'growing_tree':
+        elif algorithm in ('kruskal', 'prims', 'eller', 'binary_tree', 'hunt_and_kill',
+                           'sidewinder', 'wilsons', 'recursive_division', 'growing_tree'):
             def get_id(r, theta):
+                """Return a unique cell ID for a polar (r, theta) coordinate."""
                 return sum(ring_sectors[:r]) + theta
             uf = UnionFind(total_cells)
             walls = []
@@ -1869,55 +2562,7 @@ def generate_polar_maze(
         for ex in exits:
             cells[ex[0]][ex[1]][0] = False
 
-    start = (rings - 1, 1) if wall_mode == 'cube' else (rings - 1, 0)
-    target = exits[0][0:2] if exits else (0, 0)
-    queue = deque([[start]])
-    bfs_visited = {start}
     guide_path = []
-    while queue:
-        path = queue.popleft()
-        node = path[-1]
-        if node == target:
-            guide_path = path
-            break
-        r, theta = node
-        Nr = ring_sectors[r]
-        accessible = []
-        if wall_mode == 'cube':
-            for nr, ntheta in get_neighbors(r, theta):
-                if not cells[nr][ntheta][0]:
-                    accessible.append((nr, ntheta))
-        else:
-            if r >= 1 and not cells[r][theta][0]:
-                accessible.append((r, (theta + 1) % Nr))
-            if r >= 1 and not cells[r][(theta - 1) % Nr][0]:
-                accessible.append((r, (theta - 1) % Nr))
-            if r > 0 and not cells[r][theta][1]:
-                N_in = ring_sectors[r - 1]
-                if N_in == Nr:
-                    accessible.append((r - 1, theta))
-                elif N_in == 1:
-                    accessible.append((r - 1, 0))
-                else:
-                    accessible.append((r - 1, theta // 2))
-            if r < rings - 1:
-                N_out = ring_sectors[r + 1]
-                if N_out == Nr:
-                    if not cells[r + 1][theta][1]:
-                        accessible.append((r + 1, theta))
-                elif Nr == 1:
-                    for t in range(N_out):
-                        if not cells[r + 1][t][1]:
-                            accessible.append((r + 1, t))
-                else:
-                    if not cells[r + 1][2 * theta][1]:
-                        accessible.append((r + 1, 2 * theta))
-                    if not cells[r + 1][2 * theta + 1][1]:
-                        accessible.append((r + 1, 2 * theta + 1))
-        for neighbor in accessible:
-            if neighbor not in bfs_visited:
-                bfs_visited.add(neighbor)
-                queue.append(path + [neighbor])
 
     for r in range(rings):
         for theta in range(ring_sectors[r]):
@@ -1935,6 +2580,60 @@ def generate_polar_maze(
                 if len(cells[r][theta]) > 8:
                     cells[r][theta][8] = random.randrange(num_wall_meshes)
 
+    # Expand to 3D for multilevel (polar supports only 1x1 footprints)
+    if floors > 1:
+        stair_defs = []
+        for z in range(floors - 1):
+            candidates = []
+            for r in range(1, rings):
+                for theta in range(ring_sectors[r]):
+                    candidates.append((r, theta))
+            random.shuffle(candidates)
+            num_stairs = max(1, min(stair_count, len(candidates)))
+            placed_cells_z = set()  # track (r, theta) cells placed as stairs on this floor
+            placed_count = 0
+            for r, theta in candidates:
+                if placed_count >= num_stairs:
+                    break
+                if (r, theta) in placed_cells_z:
+                    continue
+                placed_cells_z.add((r, theta))
+                polar_orient = (random.choice(['IN', 'OUT', 'CW', 'CCW']) if stair_direction == 'random'
+                                else {'N': 'CCW', 'E': 'OUT', 'S': 'CW', 'W': 'IN'}.get(stair_direction, stair_direction))
+                stair_defs.append({
+                    'z': z, 'x': theta, 'y': r,
+                    'type': stair_style,
+                    'footprint': '1x1',
+                    'orientation': polar_orient,
+                })
+                placed_count += 1
+        # For polar, we can't use the rect _expand_cells_to_3d directly
+        # since cell indexing is different. Instead we clone the 2D cells list.
+        cells_3d = [cells]
+        for _ in range(1, floors):
+            cells_3d.append(copy.deepcopy(cells))
+        # Force stair footprint cells open on both levels
+        for s in stair_defs:
+            sz = s['z']
+            sr = s['y']  # ring
+            st = s['x']  # theta
+            if wall_mode == 'cube':
+                for cz in (sz, sz + 1):
+                    if 0 <= cz < floors and 0 <= sr < rings:
+                        if 0 <= st < len(cells_3d[cz][sr]):
+                            cells_3d[cz][sr][st][0] = False
+            else:
+                for cz in (sz, sz + 1):
+                    if 0 <= cz < floors and 0 <= sr < rings:
+                        if 0 <= st < len(cells_3d[cz][sr]):
+                            cells_3d[cz][sr][st][0] = False  # CW wall
+                            cells_3d[cz][sr][st][1] = False  # IN wall
+        cells = cells_3d
+        stairs_placed = stair_defs
+    else:
+        cells = [cells]
+        stairs_placed = []
+
     maze_data = MazeData(
         width=rings,
         depth=rings,
@@ -1946,5 +2645,8 @@ def generate_polar_maze(
         grid_type='polar',
         polar_rings=rings,
         ring_sectors=ring_sectors,
+        floors=floors,
+        stairs=stairs_placed,
     )
+    maze_data.guide_path = find_shortest_path(maze_data, wall_mode=wall_mode)
     return maze_data
