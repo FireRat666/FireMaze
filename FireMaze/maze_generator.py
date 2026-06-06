@@ -2562,55 +2562,7 @@ def generate_polar_maze(
         for ex in exits:
             cells[ex[0]][ex[1]][0] = False
 
-    start = (rings - 1, 1) if wall_mode == 'cube' else (rings - 1, 0)
-    target = exits[0][0:2] if exits else (0, 0)
-    queue = deque([[start]])
-    bfs_visited = {start}
     guide_path = []
-    while queue:
-        path = queue.popleft()
-        node = path[-1]
-        if node == target:
-            guide_path = path
-            break
-        r, theta = node
-        Nr = ring_sectors[r]
-        accessible = []
-        if wall_mode == 'cube':
-            for nr, ntheta in _get_polar_neighbors(r, theta, rings, ring_sectors):
-                if not cells[nr][ntheta][0]:
-                    accessible.append((nr, ntheta))
-        else:
-            if r >= 1 and not cells[r][theta][0]:
-                accessible.append((r, (theta + 1) % Nr))
-            if r >= 1 and not cells[r][(theta - 1) % Nr][0]:
-                accessible.append((r, (theta - 1) % Nr))
-            if r > 0 and not cells[r][theta][1]:
-                N_in = ring_sectors[r - 1]
-                if N_in == Nr:
-                    accessible.append((r - 1, theta))
-                elif N_in == 1:
-                    accessible.append((r - 1, 0))
-                else:
-                    accessible.append((r - 1, theta // 2))
-            if r < rings - 1:
-                N_out = ring_sectors[r + 1]
-                if N_out == Nr:
-                    if not cells[r + 1][theta][1]:
-                        accessible.append((r + 1, theta))
-                elif Nr == 1:
-                    for t in range(N_out):
-                        if not cells[r + 1][t][1]:
-                            accessible.append((r + 1, t))
-                else:
-                    if not cells[r + 1][2 * theta][1]:
-                        accessible.append((r + 1, 2 * theta))
-                    if not cells[r + 1][2 * theta + 1][1]:
-                        accessible.append((r + 1, 2 * theta + 1))
-        for neighbor in accessible:
-            if neighbor not in bfs_visited:
-                bfs_visited.add(neighbor)
-                queue.append(path + [neighbor])
 
     for r in range(rings):
         for theta in range(ring_sectors[r]):
@@ -2696,4 +2648,5 @@ def generate_polar_maze(
         floors=floors,
         stairs=stairs_placed,
     )
+    maze_data.guide_path = find_shortest_path(maze_data, wall_mode=wall_mode)
     return maze_data
