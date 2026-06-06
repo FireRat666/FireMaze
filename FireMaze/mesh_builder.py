@@ -1131,7 +1131,7 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
         wh = ts * props.wall_height_tiles
  
     wall_mode = props.wall_mode
-    rng = random.Random(props.seed + 1000 if props.seed else None)
+    rng = _real_random.Random(props.seed + 1000 if props.seed else None)
  
     def place_prop(src_obj, pos, rot_z):
         """Copy a source prop object into the maze collection at the given position and rotation."""
