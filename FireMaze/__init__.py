@@ -10,7 +10,7 @@ import logging
 bl_info = {
     "name": "FireMaze",
     "author": "FireRat666",
-    "version": (3, 1, 0),
+    "version": (3, 1, 1),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar > FireRat",
     "description": "Random maze generator with tiled construction",
