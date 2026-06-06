@@ -2888,6 +2888,12 @@ def _build_spiral_stair_1x1(bm, uv_layer, cx, cy, ts, wh, z_offset, mat_offset):
         for loop in f_top.loops:
             loop[uv_layer].uv = ((i % 2), 0.5)
 
+        # Bottom face (normal points DOWN)
+        v_bot = [bm.verts.new(p0), bm.verts.new(p3), bm.verts.new(p2), bm.verts.new(p1)]
+        f_bot = bm.faces.new(v_bot)
+        for loop in f_bot.loops:
+            loop[uv_layer].uv = (0, 0)
+
         # Outer riser
         v_outer = [bm.verts.new(p1), bm.verts.new(p2), bm.verts.new(p6), bm.verts.new(p5)]
         f_outer = bm.faces.new(v_outer)
