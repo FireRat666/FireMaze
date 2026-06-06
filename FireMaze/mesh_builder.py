@@ -2166,6 +2166,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix):
     rings = maze_data.polar_rings
     ring_sectors = maze_data.ring_sectors
     alignment = props.polar_custom_alignment
+    wall_rng = _real_random.Random(props.seed if props.seed else None)
 
     if props.wall_mode == 'cube':
         for z in ctx['z_range']:
@@ -2203,7 +2204,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix):
                                     if isinstance(wall_idx, int) and 0 <= wall_idx < len(ctx['wall_meshes_list']):
                                         src_mesh = ctx['wall_meshes_list'][wall_idx]
                                     else:
-                                        src_mesh = random.choice(ctx['wall_meshes_list'])
+                                        src_mesh = wall_rng.choice(ctx['wall_meshes_list'])
                                 else:
                                     src_mesh = ctx['custom_wall']
                                     
@@ -2976,6 +2977,7 @@ def _build_rect_cube_walls(ctx, props, maze_data, created_objects, name_suffix):
     # Walls
     bm_wall, uv_wall, wall_materials = _create_bmesh_element("wall", ctx['materials'])
     cent = Matrix.Translation(Vector((-ctx['ts'] / 2, -ctx['ts'] / 2, 0))) if not ctx['centered'] else Matrix.Identity(4)
+    wall_rng = _real_random.Random(props.seed if props.seed else None)
     for z in ctx['z_range']:
         z_off_floor = z * ctx['wh']
         level_cells = ctx['cells_3d'][z]
@@ -2995,7 +2997,7 @@ def _build_rect_cube_walls(ctx, props, maze_data, created_objects, name_suffix):
                             if isinstance(wall_idx, int) and 0 <= wall_idx < len(ctx['wall_meshes_list']):
                                 src_mesh = ctx['wall_meshes_list'][wall_idx]
                             else:
-                                src_mesh = random.choice(ctx['wall_meshes_list'])
+                                src_mesh = wall_rng.choice(ctx['wall_meshes_list'])
                             
                             mat_base = Matrix.Translation(Vector((cx + ctx['ts'] / 2, cy + ctx['ts'] / 2, z_off))) @ cent
                             mat = mat_base @ ctx['mat_wall_offset']
@@ -3009,7 +3011,7 @@ def _build_rect_cube_walls(ctx, props, maze_data, created_objects, name_suffix):
                                     if isinstance(f_idx, int) and 0 <= f_idx < len(ctx['wall_meshes_list']):
                                         src_mesh = ctx['wall_meshes_list'][f_idx]
                                     else:
-                                        src_mesh = random.choice(ctx['wall_meshes_list'])
+                                        src_mesh = wall_rng.choice(ctx['wall_meshes_list'])
                                     mat_base = Matrix.Translation(Vector((cx + ctx['ts'] / 2, cy + ctx['ts'] / 2, hw))) @ offset_rot @ cent
                                     mat = mat_base @ ctx['mat_wall_offset']
                                     _add_mesh_at(bm_wall, src_mesh, mat, uv_wall, final_materials_list=wall_materials)
@@ -3165,6 +3167,7 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix):
     has_any_wall_custom = (ctx['custom_wall'] or ctx['wall_meshes_list'])
     cent = Matrix.Translation(Vector((-ctx['ts'] / 2, -ctx['ts'] / 2, 0))) if not ctx['centered'] else Matrix.Identity(4)
     tw = ctx['wt'] / 2
+    wall_rng = _real_random.Random(props.seed if props.seed else None)
 
     for z in ctx['z_range']:
         level_cells = ctx['cells_3d'][z]
@@ -3236,7 +3239,7 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix):
                             if isinstance(wall_idx, int) and 0 <= wall_idx < len(ctx['wall_meshes_list']):
                                 src_mesh = ctx['wall_meshes_list'][wall_idx]
                             else:
-                                src_mesh = random.choice(ctx['wall_meshes_list'])
+                                src_mesh = wall_rng.choice(ctx['wall_meshes_list'])
                             mat_base = Matrix.Translation(Vector((x0 + ctx['ts'] / 2, yc + y_offset, hw))) @ offset_rot @ cent
                             mat = mat_base @ ctx['mat_wall_offset']
                             _add_mesh_at(bm_wall, src_mesh, mat, uv_wall, final_materials_list=wall_materials)
@@ -3317,7 +3320,7 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix):
                             if isinstance(wall_idx, int) and 0 <= wall_idx < len(ctx['wall_meshes_list']):
                                 src_mesh = ctx['wall_meshes_list'][wall_idx]
                             else:
-                                src_mesh = random.choice(ctx['wall_meshes_list'])
+                                src_mesh = wall_rng.choice(ctx['wall_meshes_list'])
                             mat_base = Matrix.Translation(Vector((xc + x_offset, y0 + ctx['ts'] / 2, hw))) @ offset_rot @ cent
                             mat = mat_base @ ctx['mat_wall_offset']
                             _add_mesh_at(bm_wall, src_mesh, mat, uv_wall, final_materials_list=wall_materials)
