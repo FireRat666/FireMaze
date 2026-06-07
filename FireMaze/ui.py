@@ -305,6 +305,7 @@ class VIEW3D_PT_fire_maze_custom_tiles(bpy.types.Panel):
         col.prop(props, "custom_wall_mesh", text="Wall Mesh")
         if props.wall_mode == 'thin':
             col.prop(props, "thin_wall_double_sided", text="Double-Sided Thin Walls")
+            col.prop(props, "clean_wall_corners", text="Clean Wall Corners")
         col.separator(factor=0.3)
         col.prop(props, "custom_wall_collection", text="Wall Collection")
         if props.wall_mode == 'cube':

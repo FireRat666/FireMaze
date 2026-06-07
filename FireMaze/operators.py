@@ -60,7 +60,7 @@ PROP_NAMES = [
     "merge_objects", "remove_doubles", "generate_lightmap", "lightmap_method",
     "generate_colliders", "merge_colliders", "optimize_colliders_coplanar", "optimize_coplanar", "vertex_paint_enable",
     "vertex_paint_mode", "vertex_paint_intensity", "prop_torch_density", "prop_chest_density",
-    "mask_invert", "thin_wall_double_sided", "fire_maze_collection_name",
+    "mask_invert", "thin_wall_double_sided", "clean_wall_corners", "fire_maze_collection_name",
     "floors", "stair_footprint", "stair_style", "stair_direction", "edit_floor_level",
     "stair_count", "edit_tool", "edit_roof"
 ]

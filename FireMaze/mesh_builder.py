@@ -206,6 +206,7 @@ def _prepare_maze_building_context(props, maze_data, context, collection, force_
         'stair_bottom_cells': stair_bottom_cells,
         'stair_top_cells': stair_top_cells,
         'stair_cells': stair_cells,
+        'clean_wall_corners': props.clean_wall_corners,
     }
 
 
@@ -375,34 +376,44 @@ def _add_floor_tile_transformed(bm, uv_layer, x, y, ts, mat_offset, z_offset=0.0
 
 
 
-def _add_horizontal_roof_face_transformed(bm, uv_layer, x, y, ts, wh, wt, mat_offset):
+def _add_horizontal_roof_face_transformed(bm, uv_layer, x, y, ts, wh, wt, mat_offset, extend_left=False, extend_right=False):
     """Add a horizontal roof cap quad along a thin wall segment at grid-line (x, y)."""
     xc = x * ts + ts / 2
     yc = y * ts
     T = Matrix.Translation(Vector((xc, yc, wh))) @ mat_offset
     tw = wt / 2
     t2 = ts / 2
-    v0 = T @ Vector((-t2, -tw, 0))
-    v1 = T @ Vector((t2, -tw, 0))
-    v2 = T @ Vector((t2, tw, 0))
-    v3 = T @ Vector((-t2, tw, 0))
+    x_lo = -t2 - (tw if extend_left else 0)
+    x_hi = t2 + (tw if extend_right else 0)
+    v0 = T @ Vector((x_lo, -tw, 0))
+    v1 = T @ Vector((x_hi, -tw, 0))
+    v2 = T @ Vector((x_hi, tw, 0))
+    v3 = T @ Vector((x_lo, tw, 0))
     face = bm.faces.new([bm.verts.new(v0), bm.verts.new(v1), bm.verts.new(v2), bm.verts.new(v3)])
 
-    for loop, uv in zip(face.loops, [(0, 0), (ts, 0), (ts, wt), (0, wt)]):
+    u_left = -tw if extend_left else 0.0
+    u_right = ts + tw if extend_right else ts
+    for loop, uv in zip(face.loops, [(u_left, 0), (u_right, 0), (u_right, wt), (u_left, wt)]):
         loop[uv_layer].uv = uv
 
 
 
 
-def _add_vertical_roof_face_transformed(bm, uv_layer, x, y, ts, wh, wt, mat_offset, trim_south=False, trim_north=False):
-    """Add a vertical roof cap face with optional trimming at T-junctions."""
+def _add_vertical_roof_face_transformed(bm, uv_layer, x, y, ts, wh, wt, mat_offset, trim_south=False, trim_north=False, extend_south=False, extend_north=False):
+    """Add a vertical roof cap face with optional trimming/extending at junctions."""
     xc = x * ts
     yc = y * ts + ts / 2
     T = Matrix.Translation(Vector((xc, yc, wh))) @ mat_offset
     tw = wt / 2
     t2 = ts / 2
-    y0 = -t2 + (tw if trim_south else 0)
-    y1 = t2 - (tw if trim_north else 0)
+    if extend_south:
+        y0 = -t2 - tw
+    else:
+        y0 = -t2 + (tw if trim_south else 0)
+    if extend_north:
+        y1 = t2 + tw
+    else:
+        y1 = t2 - (tw if trim_north else 0)
     dy = y1 - y0
 
     v0 = T @ Vector((-tw, y0, 0))
@@ -410,7 +421,10 @@ def _add_vertical_roof_face_transformed(bm, uv_layer, x, y, ts, wh, wt, mat_offs
     v2 = T @ Vector((tw, y1, 0))
     v3 = T @ Vector((-tw, y1, 0))
     face = bm.faces.new([bm.verts.new(v0), bm.verts.new(v1), bm.verts.new(v2), bm.verts.new(v3)])
-    for loop, uv in zip(face.loops, [(0, 0), (wt, 0), (wt, dy), (0, dy)]):
+    
+    u_south = y0 + t2
+    u_north = y1 + t2
+    for loop, uv in zip(face.loops, [(0, u_south), (wt, u_south), (wt, u_north), (0, u_north)]):
         loop[uv_layer].uv = uv
 
 def _add_vertical_roof_filler_transformed(bm, uv_layer, xc, yc, wh, tw, y_lo_rel, y_hi_rel, hx0_rel, hx1_rel, mat_offset):
@@ -3276,6 +3290,8 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix):
                 if seg_type == 'H':
                     x0, x1 = a * ctx['ts'], (a + 1) * ctx['ts']
                     yc = b * ctx['ts']
+                    dx_left = tw if (ctx['clean_wall_corners'] and ((a, b) in v_positions or (a, b - 1) in v_positions)) else 0.0
+                    dx_right = tw if (ctx['clean_wall_corners'] and ((a + 1, b) in v_positions or (a + 1, b - 1) in v_positions)) else 0.0
                     
                     def add_horizontal_face(direction, offset_rot, custom_mesh_fallback, y_offset, uvs_standard, local_pts):
                         """Place a horizontal wall face (along Y) using a custom mesh or procedural geometry."""
@@ -3285,11 +3301,23 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix):
                                 src_mesh = ctx['wall_meshes_list'][wall_idx]
                             else:
                                 src_mesh = wall_rng.choice(ctx['wall_meshes_list'])
-                            mat_base = Matrix.Translation(Vector((x0 + ctx['ts'] / 2, yc + y_offset, hw))) @ offset_rot @ cent
+                            if ctx['clean_wall_corners'] and (dx_left > 0.0 or dx_right > 0.0):
+                                scale_x = (ctx['ts'] + dx_left + dx_right) / ctx['ts']
+                                shift_x = (dx_right - dx_left) / 2
+                                mat_scale_shift = Matrix.Translation(Vector((shift_x, 0, 0))) @ Matrix.Scale(scale_x, 4, Vector((1, 0, 0)))
+                                mat_base = Matrix.Translation(Vector((x0 + ctx['ts'] / 2, yc + y_offset, hw))) @ mat_scale_shift @ offset_rot @ cent
+                            else:
+                                mat_base = Matrix.Translation(Vector((x0 + ctx['ts'] / 2, yc + y_offset, hw))) @ offset_rot @ cent
                             mat = mat_base @ ctx['mat_wall_offset']
                             _add_mesh_at(bm_wall, src_mesh, mat, uv_wall, final_materials_list=wall_materials)
                         elif custom_mesh_fallback:
-                            mat_base = Matrix.Translation(Vector((x0 + ctx['ts'] / 2, yc + y_offset, hw))) @ offset_rot @ cent
+                            if ctx['clean_wall_corners'] and (dx_left > 0.0 or dx_right > 0.0):
+                                scale_x = (ctx['ts'] + dx_left + dx_right) / ctx['ts']
+                                shift_x = (dx_right - dx_left) / 2
+                                mat_scale_shift = Matrix.Translation(Vector((shift_x, 0, 0))) @ Matrix.Scale(scale_x, 4, Vector((1, 0, 0)))
+                                mat_base = Matrix.Translation(Vector((x0 + ctx['ts'] / 2, yc + y_offset, hw))) @ mat_scale_shift @ offset_rot @ cent
+                            else:
+                                mat_base = Matrix.Translation(Vector((x0 + ctx['ts'] / 2, yc + y_offset, hw))) @ offset_rot @ cent
                             mat = mat_base @ ctx['mat_wall_offset']
                             _add_mesh_at(bm_wall, custom_mesh_fallback, mat, uv_wall, final_materials_list=wall_materials)
                         else:
@@ -3300,24 +3328,27 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix):
                                 loop[uv_wall].uv = uv
 
                     if not has_any_wall_custom:
+                        u_left = -dx_left / ctx['ts']
+                        u_right = 1.0 + dx_right / ctx['ts']
+                        
                         # North face (+Y)
                         add_horizontal_face('+Y', Matrix.Rotation(math.radians(-90), 4, 'X'), None, tw, 
-                                            [(0,0),(1,0),(1,1),(0,1)],
-                                            [(ctx['ts']/2, tw, -sh/2), (-ctx['ts']/2, tw, -sh/2), (-ctx['ts']/2, tw, sh/2), (ctx['ts']/2, tw, sh/2)])
+                                            [(u_right,0),(u_left,0),(u_left,1),(u_right,1)],
+                                            [(ctx['ts']/2 + dx_right, tw, -sh/2), (-ctx['ts']/2 - dx_left, tw, -sh/2), (-ctx['ts']/2 - dx_left, tw, sh/2), (ctx['ts']/2 + dx_right, tw, sh/2)])
                         # South face (-Y)
                         add_horizontal_face('-Y', Matrix.Rotation(math.radians(90), 4, 'X'), None, -tw, 
-                                            [(0,0),(1,0),(1,1),(0,1)],
-                                            [(-ctx['ts']/2, -tw, -sh/2), (ctx['ts']/2, -tw, -sh/2), (ctx['ts']/2, -tw, sh/2), (-ctx['ts']/2, -tw, sh/2)])
+                                            [(u_left,0),(u_right,0),(u_right,1),(u_left,1)],
+                                            [(-ctx['ts']/2 - dx_left, -tw, -sh/2), (ctx['ts']/2 + dx_right, -tw, -sh/2), (ctx['ts']/2 + dx_right, -tw, sh/2), (-ctx['ts']/2 - dx_left, -tw, sh/2)])
                         
                         # West end-cap
-                        if (a - 1, b) not in h_positions:
+                        if (a - 1, b) not in h_positions and not dx_left > 0.0:
                             T = Matrix.Translation(Vector((x0 + ctx['ts']/2, yc, hw))) @ ctx['mat_wall_offset']
                             v_pts = [T @ Vector(p) for p in [(-ctx['ts']/2, tw, -sh/2), (-ctx['ts']/2, -tw, -sh/2), (-ctx['ts']/2, -tw, sh/2), (-ctx['ts']/2, tw, sh/2)]]
                             f = bm_cap.faces.new([bm_cap.verts.new(p) for p in v_pts])
                             for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
                                 loop[uv_cap].uv = uv
                         # East end-cap
-                        if (a + 1, b) not in h_positions:
+                        if (a + 1, b) not in h_positions and not dx_right > 0.0:
                             T = Matrix.Translation(Vector((x0 + ctx['ts']/2, yc, hw))) @ ctx['mat_wall_offset']
                             v_pts = [T @ Vector(p) for p in [(ctx['ts']/2, -tw, -sh/2), (ctx['ts']/2, tw, -sh/2), (ctx['ts']/2, tw, sh/2), (ctx['ts']/2, -tw, sh/2)]]
                             f = bm_cap.faces.new([bm_cap.verts.new(p) for p in v_pts])
@@ -3335,14 +3366,14 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix):
                                                 [(-ctx['ts']/2, -tw, -sh/2), (ctx['ts']/2, -tw, -sh/2), (ctx['ts']/2, -tw, sh/2), (-ctx['ts']/2, -tw, sh/2)])
                             
                             # West end-cap
-                            if (a - 1, b) not in h_positions:
+                            if (a - 1, b) not in h_positions and not dx_left > 0.0:
                                 T = Matrix.Translation(Vector((x0 + ctx['ts']/2, yc, hw))) @ ctx['mat_wall_offset']
                                 v_pts = [T @ Vector(p) for p in [(-ctx['ts']/2, tw, -sh/2), (-ctx['ts']/2, -tw, -sh/2), (-ctx['ts']/2, -tw, sh/2), (-ctx['ts']/2, tw, sh/2)]]
                                 f = bm_cap.faces.new([bm_cap.verts.new(p) for p in v_pts])
                                 for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
                                     loop[uv_cap].uv = uv
                             # East end-cap
-                            if (a + 1, b) not in h_positions:
+                            if (a + 1, b) not in h_positions and not dx_right > 0.0:
                                 T = Matrix.Translation(Vector((x0 + ctx['ts']/2, yc, hw))) @ ctx['mat_wall_offset']
                                 v_pts = [T @ Vector(p) for p in [(ctx['ts']/2, -tw, -sh/2), (ctx['ts']/2, tw, -sh/2), (ctx['ts']/2, tw, sh/2), (ctx['ts']/2, -tw, sh/2)]]
                                 f = bm_cap.faces.new([bm_cap.verts.new(p) for p in v_pts])
@@ -3357,6 +3388,8 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix):
                 else:
                     xc = a * ctx['ts']
                     y0, y1 = b * ctx['ts'], (b + 1) * ctx['ts']
+                    dy_south = tw if (ctx['clean_wall_corners'] and ((a, b) in h_positions or (a - 1, b) in h_positions)) else 0.0
+                    dy_north = tw if (ctx['clean_wall_corners'] and ((a, b + 1) in h_positions or (a - 1, b + 1) in h_positions)) else 0.0
                     
                     def add_vertical_face(direction, offset_rot, custom_mesh_fallback, x_offset, uvs_standard, local_pts):
                         """Place a vertical wall face (along X) using a custom mesh or procedural geometry."""
@@ -3366,11 +3399,23 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix):
                                 src_mesh = ctx['wall_meshes_list'][wall_idx]
                             else:
                                 src_mesh = wall_rng.choice(ctx['wall_meshes_list'])
-                            mat_base = Matrix.Translation(Vector((xc + x_offset, y0 + ctx['ts'] / 2, hw))) @ offset_rot @ cent
+                            if ctx['clean_wall_corners'] and (dy_south > 0.0 or dy_north > 0.0):
+                                scale_y = (ctx['ts'] + dy_south + dy_north) / ctx['ts']
+                                shift_y = (dy_north - dy_south) / 2
+                                mat_scale_shift = Matrix.Translation(Vector((0, shift_y, 0))) @ Matrix.Scale(scale_y, 4, Vector((0, 1, 0)))
+                                mat_base = Matrix.Translation(Vector((xc + x_offset, y0 + ctx['ts'] / 2, hw))) @ mat_scale_shift @ offset_rot @ cent
+                            else:
+                                mat_base = Matrix.Translation(Vector((xc + x_offset, y0 + ctx['ts'] / 2, hw))) @ offset_rot @ cent
                             mat = mat_base @ ctx['mat_wall_offset']
                             _add_mesh_at(bm_wall, src_mesh, mat, uv_wall, final_materials_list=wall_materials)
                         elif custom_mesh_fallback:
-                            mat_base = Matrix.Translation(Vector((xc + x_offset, y0 + ctx['ts'] / 2, hw))) @ offset_rot @ cent
+                            if ctx['clean_wall_corners'] and (dy_south > 0.0 or dy_north > 0.0):
+                                scale_y = (ctx['ts'] + dy_south + dy_north) / ctx['ts']
+                                shift_y = (dy_north - dy_south) / 2
+                                mat_scale_shift = Matrix.Translation(Vector((0, shift_y, 0))) @ Matrix.Scale(scale_y, 4, Vector((0, 1, 0)))
+                                mat_base = Matrix.Translation(Vector((xc + x_offset, y0 + ctx['ts'] / 2, hw))) @ mat_scale_shift @ offset_rot @ cent
+                            else:
+                                mat_base = Matrix.Translation(Vector((xc + x_offset, y0 + ctx['ts'] / 2, hw))) @ offset_rot @ cent
                             mat = mat_base @ ctx['mat_wall_offset']
                             _add_mesh_at(bm_wall, custom_mesh_fallback, mat, uv_wall, final_materials_list=wall_materials)
                         else:
@@ -3379,26 +3424,29 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix):
                             f = bm_wall.faces.new(verts)
                             for loop, uv in zip(f.loops, uvs_standard):
                                 loop[uv_wall].uv = uv
-     
+
                     if not has_any_wall_custom:
+                        u_south = -dy_south / ctx['ts']
+                        u_north = 1.0 + dy_north / ctx['ts']
+
                         # East face (+X)
                         add_vertical_face('+X', Matrix.Rotation(math.radians(-90), 4, 'Z') @ Matrix.Rotation(math.radians(-90), 4, 'X') @ Matrix.Rotation(math.radians(180), 4, 'Z'), None, tw, 
-                                          [(0,0),(1,0),(1,1),(0,1)],
-                                          [(tw, -ctx['ts']/2, -sh/2), (tw, ctx['ts']/2, -sh/2), (tw, ctx['ts']/2, sh/2), (tw, -ctx['ts']/2, sh/2)])
+                                          [(u_south,0),(u_north,0),(u_north,1),(u_south,1)],
+                                          [(tw, -ctx['ts']/2 - dy_south, -sh/2), (tw, ctx['ts']/2 + dy_north, -sh/2), (tw, ctx['ts']/2 + dy_north, sh/2), (tw, -ctx['ts']/2 - dy_south, sh/2)])
                         # West face (-X)
                         add_vertical_face('-X', Matrix.Rotation(math.radians(-90), 4, 'Y'), None, -tw, 
-                                          [(1,0),(0,0),(0,1),(1,1)],
-                                          [(-tw, ctx['ts']/2, -sh/2), (-tw, -ctx['ts']/2, -sh/2), (-tw, -ctx['ts']/2, sh/2), (-tw, ctx['ts']/2, sh/2)])
+                                          [(u_north,0),(u_south,0),(u_south,1),(u_north,1)],
+                                          [(-tw, ctx['ts']/2 + dy_north, -sh/2), (-tw, -ctx['ts']/2 - dy_south, -sh/2), (-tw, -ctx['ts']/2 - dy_south, sh/2), (-tw, ctx['ts']/2 + dy_north, sh/2)])
      
                         # South end-cap
-                        if (a, b - 1) not in v_positions:
+                        if (a, b - 1) not in v_positions and not dy_south > 0.0:
                             T = Matrix.Translation(Vector((xc, y0 + ctx['ts']/2, hw))) @ ctx['mat_wall_offset']
                             v_pts = [T @ Vector(p) for p in [(-tw, -ctx['ts']/2, -sh/2), (tw, -ctx['ts']/2, -sh/2), (tw, -ctx['ts']/2, sh/2), (-tw, -ctx['ts']/2, sh/2)]]
                             f = bm_cap.faces.new([bm_cap.verts.new(p) for p in v_pts])
                             for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
                                 loop[uv_cap].uv = uv
                         # North end-cap
-                        if (a, b + 1) not in v_positions:
+                        if (a, b + 1) not in v_positions and not dy_north > 0.0:
                             T = Matrix.Translation(Vector((xc, y0 + ctx['ts']/2, hw))) @ ctx['mat_wall_offset']
                             v_pts = [T @ Vector(p) for p in [(tw, ctx['ts']/2, -sh/2), (-tw, ctx['ts']/2, -sh/2), (-tw, ctx['ts']/2, sh/2), (tw, ctx['ts']/2, sh/2)]]
                             f = bm_cap.faces.new([bm_cap.verts.new(p) for p in v_pts])
@@ -3416,14 +3464,14 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix):
                                               [(-tw, ctx['ts']/2, -sh/2), (-tw, -ctx['ts']/2, -sh/2), (-tw, -ctx['ts']/2, sh/2), (-tw, ctx['ts']/2, sh/2)])
                             
                             # South end-cap
-                            if (a, b - 1) not in v_positions:
+                            if (a, b - 1) not in v_positions and not dy_south > 0.0:
                                 T = Matrix.Translation(Vector((xc, y0 + ctx['ts']/2, hw))) @ ctx['mat_wall_offset']
                                 v_pts = [T @ Vector(p) for p in [(-tw, -ctx['ts']/2, -sh/2), (tw, -ctx['ts']/2, -sh/2), (tw, -ctx['ts']/2, sh/2), (-tw, -ctx['ts']/2, sh/2)]]
                                 f = bm_cap.faces.new([bm_cap.verts.new(p) for p in v_pts])
                                 for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
                                     loop[uv_cap].uv = uv
                             # North end-cap
-                            if (a, b + 1) not in v_positions:
+                            if (a, b + 1) not in v_positions and not dy_north > 0.0:
                                 T = Matrix.Translation(Vector((xc, y0 + ctx['ts']/2, hw))) @ ctx['mat_wall_offset']
                                 v_pts = [T @ Vector(p) for p in [(tw, ctx['ts']/2, -sh/2), (-tw, ctx['ts']/2, -sh/2), (-tw, ctx['ts']/2, sh/2), (tw, ctx['ts']/2, sh/2)]]
                                 f = bm_cap.faces.new([bm_cap.verts.new(p) for p in v_pts])
@@ -3474,10 +3522,11 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix):
             bm_cap.free()
 
 
-def _build_rect_thin_roof(ctx, maze_data, created_objects, name_suffix):
+def _build_rect_thin_roof(ctx, props, maze_data, created_objects, name_suffix):
     # Roof
     if name_suffix != "_EditHelper":
         bm_roof, uv_roof, roof_materials = _create_bmesh_element("roof", ctx['materials'])
+        tw = ctx['wt'] / 2
         for z in ctx['z_range']:
             level_cells = ctx['cells_3d'][z]
             if name_suffix == "_EditHelper":
@@ -3510,6 +3559,15 @@ def _build_rect_thin_roof(ctx, maze_data, created_objects, name_suffix):
                             roof_idx = level_cells[target_y][a][9] if len(level_cells[target_y][a]) > 9 else -1
                         else:
                             roof_idx = -1
+                        dx_left = tw if (ctx['clean_wall_corners'] and ((a, b) in v_positions or (a, b - 1) in v_positions)) else 0.0
+                        dx_right = tw if (ctx['clean_wall_corners'] and ((a + 1, b) in v_positions or (a + 1, b - 1) in v_positions)) else 0.0
+                        if ctx['clean_wall_corners'] and (dx_left > 0.0 or dx_right > 0.0):
+                            scale_x = (ctx['ts'] + dx_left + dx_right) / ctx['ts']
+                            shift_x = (dx_right - dx_left) / 2
+                            mat_scale_shift = Matrix.Translation(Vector((shift_x, 0, 0))) @ Matrix.Scale(scale_x, 4, Vector((1, 0, 0)))
+                            mat_base = Matrix.Translation(Vector((cx, cy, sz))) @ mat_scale_shift
+                        else:
+                            mat_base = Matrix.Translation(Vector((cx, cy, sz)))
                     else:
                         cx, cy = a * ctx['ts'], b * ctx['ts'] + ctx['ts'] / 2
                         if len(level_cells[0][0]) > 8:
@@ -3517,52 +3575,68 @@ def _build_rect_thin_roof(ctx, maze_data, created_objects, name_suffix):
                             roof_idx = level_cells[b][target_x][9] if len(level_cells[b][target_x]) > 9 else -1
                         else:
                             roof_idx = -1
+                        dy_south = tw if (ctx['clean_wall_corners'] and ((a, b) in h_positions or (a - 1, b) in h_positions)) else 0.0
+                        dy_north = tw if (ctx['clean_wall_corners'] and ((a, b + 1) in h_positions or (a - 1, b + 1) in h_positions)) else 0.0
+                        if ctx['clean_wall_corners'] and (dy_south > 0.0 or dy_north > 0.0):
+                            scale_y = (ctx['ts'] + dy_south + dy_north) / ctx['ts']
+                            shift_y = (dy_north - dy_south) / 2
+                            mat_scale_shift = Matrix.Translation(Vector((0, shift_y, 0))) @ Matrix.Scale(scale_y, 4, Vector((0, 1, 0)))
+                            mat_base = Matrix.Translation(Vector((cx, cy, sz))) @ mat_scale_shift
+                        else:
+                            mat_base = Matrix.Translation(Vector((cx, cy, sz)))
                     
                     if ctx['roof_meshes_list'] and isinstance(roof_idx, int) and 0 <= roof_idx < len(ctx['roof_meshes_list']):
-                        mat_base = Matrix.Translation(Vector((cx, cy, sz)))
                         mat = mat_base @ ctx['mat_roof_offset']
                         _add_mesh_at(bm_roof, ctx['roof_meshes_list'][roof_idx], mat, uv_roof, final_materials_list=roof_materials)
                     elif ctx['custom_roof']:
-                        mat_base = Matrix.Translation(Vector((cx, cy, sz)))
                         mat = mat_base @ ctx['mat_roof_offset']
                         _add_mesh_at(bm_roof, ctx['custom_roof'], mat, uv_roof, final_materials_list=roof_materials)
             else:
                 filled = set()
                 for seg_type, a, b in segments:
                     if seg_type == 'H':
-                        _add_horizontal_roof_face_transformed(bm_roof, uv_roof, a, b, ctx['ts'], sz, ctx['wt'], ctx['mat_roof_offset'])
+                        if ctx['clean_wall_corners']:
+                            extend_left = (a, b) in v_positions or (a, b - 1) in v_positions
+                            extend_right = (a + 1, b) in v_positions or (a + 1, b - 1) in v_positions
+                            _add_horizontal_roof_face_transformed(bm_roof, uv_roof, a, b, ctx['ts'], sz, ctx['wt'], ctx['mat_roof_offset'], extend_left=extend_left, extend_right=extend_right)
+                        else:
+                            _add_horizontal_roof_face_transformed(bm_roof, uv_roof, a, b, ctx['ts'], sz, ctx['wt'], ctx['mat_roof_offset'])
                     else:
-                        tsouth = (a, b) in h_endpoints
-                        tnorth = (a, b + 1) in h_endpoints
-                        _add_vertical_roof_face_transformed(bm_roof, uv_roof, a, b, ctx['ts'], sz, ctx['wt'], ctx['mat_roof_offset'], trim_south=tsouth, trim_north=tnorth)
-                        tw = ctx['wt'] / 2
-                        xc = a * ctx['ts']
-                        if tsouth:
-                            yc = b * ctx['ts']
-                            y_lo = yc if (a, b - 1) not in v_positions else yc - tw
-                            y_hi = yc + tw
-                            for gx, gy, side in [(a - 1, b, 'l'), (a, b, 'r')]:
-                                key = (gx, gy, side)
-                                if (gx, gy) not in h_positions and key not in filled:
-                                    filled.add(key)
-                                    if side == 'l':
-                                        hx0_rel, hx1_rel = -tw, 0
-                                    else:
-                                        hx0_rel, hx1_rel = 0, tw
-                                    _add_vertical_roof_filler_transformed(bm_roof, uv_roof, xc, yc, sz, tw, y_lo - yc, y_hi - yc, hx0_rel, hx1_rel, ctx['mat_roof_offset'])
-                        if tnorth:
-                            yc = (b + 1) * ctx['ts']
-                            y_lo = yc - tw
-                            y_hi = yc if (a, b + 1) not in v_positions else yc + tw
-                            for gx, gy, side in [(a - 1, b + 1, 'l'), (a, b + 1, 'r')]:
-                                key = (gx, gy, side)
-                                if (gx, gy) not in h_positions and key not in filled:
-                                    filled.add(key)
-                                    if side == 'l':
-                                        hx0_rel, hx1_rel = -tw, 0
-                                    else:
-                                        hx0_rel, hx1_rel = 0, tw
-                                    _add_vertical_roof_filler_transformed(bm_roof, uv_roof, xc, yc, sz, tw, y_lo - yc, y_hi - yc, hx0_rel, hx1_rel, ctx['mat_roof_offset'])
+                        if ctx['clean_wall_corners']:
+                            extend_south = (a, b) in h_positions or (a - 1, b) in h_positions
+                            extend_north = (a, b + 1) in h_positions or (a - 1, b + 1) in h_positions
+                            _add_vertical_roof_face_transformed(bm_roof, uv_roof, a, b, ctx['ts'], sz, ctx['wt'], ctx['mat_roof_offset'], trim_south=False, trim_north=False, extend_south=extend_south, extend_north=extend_north)
+                        else:
+                            tsouth = (a, b) in h_endpoints
+                            tnorth = (a, b + 1) in h_endpoints
+                            _add_vertical_roof_face_transformed(bm_roof, uv_roof, a, b, ctx['ts'], sz, ctx['wt'], ctx['mat_roof_offset'], trim_south=tsouth, trim_north=tnorth)
+                            xc = a * ctx['ts']
+                            if tsouth:
+                                yc = b * ctx['ts']
+                                y_lo = yc if (a, b - 1) not in v_positions else yc - tw
+                                y_hi = yc + tw
+                                for gx, gy, side in [(a - 1, b, 'l'), (a, b, 'r')]:
+                                    key = (gx, gy, side)
+                                    if (gx, gy) not in h_positions and key not in filled:
+                                        filled.add(key)
+                                        if side == 'l':
+                                            hx0_rel, hx1_rel = -tw, 0
+                                        else:
+                                            hx0_rel, hx1_rel = 0, tw
+                                        _add_vertical_roof_filler_transformed(bm_roof, uv_roof, xc, yc, sz, tw, y_lo - yc, y_hi - yc, hx0_rel, hx1_rel, ctx['mat_roof_offset'])
+                            if tnorth:
+                                yc = (b + 1) * ctx['ts']
+                                y_lo = yc - tw
+                                y_hi = yc if (a, b + 1) not in v_positions else yc + tw
+                                for gx, gy, side in [(a - 1, b + 1, 'l'), (a, b + 1, 'r')]:
+                                    key = (gx, gy, side)
+                                    if (gx, gy) not in h_positions and key not in filled:
+                                        filled.add(key)
+                                        if side == 'l':
+                                            hx0_rel, hx1_rel = -tw, 0
+                                        else:
+                                            hx0_rel, hx1_rel = 0, tw
+                                        _add_vertical_roof_filler_transformed(bm_roof, uv_roof, xc, yc, sz, tw, y_lo - yc, y_hi - yc, hx0_rel, hx1_rel, ctx['mat_roof_offset'])
 
         if not ctx['custom_roof']:
             bmesh.ops.remove_doubles(bm_roof, verts=bm_roof.verts, dist=0.001)
@@ -3588,7 +3662,7 @@ def build_maze_objects_impl(props, maze_data, context, collection=None, force_si
     else:
         _build_rect_thin_floor(ctx, maze_data, created_objects, name_suffix)
         _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix)
-        _build_rect_thin_roof(ctx, maze_data, created_objects, name_suffix)
+        _build_rect_thin_roof(ctx, props, maze_data, created_objects, name_suffix)
         _build_rect_stairs(ctx, props, maze_data, created_objects, name_suffix)
 
     # Build guide path if requested

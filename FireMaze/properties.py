@@ -221,6 +221,13 @@ class FireMazeProperties(bpy.types.PropertyGroup):
                     "Disable to use a single centered custom tile with built-in thickness",
         default=True,
     )
+    clean_wall_corners: bpy.props.BoolProperty(
+        name="Clean Wall Corners",
+        description="Extend thin wall and roof faces at intersections to make corners seamless. "
+                    "Adjusts UV coordinates proportionally to maintain perfect, stretch-free texture tiling. "
+                    "Roof faces will overlap at corners",
+        default=False,
+    )
     custom_roof_mesh: bpy.props.PointerProperty(
         name="Roof Mesh",
         description="Optional custom mesh for roof tiles",
