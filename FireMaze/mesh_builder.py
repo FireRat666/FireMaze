@@ -3689,6 +3689,10 @@ def build_maze_objects_impl(props, maze_data, context, collection=None, force_si
     # Merging logic
     if name_suffix == "_Collider":
         if props.merge_colliders:
+            if props.optimize_colliders_coplanar:
+                for obj in created_objects:
+                    if obj.type == 'MESH':
+                        _optimize_coplanar_on_obj(obj)
             meshes_to_merge = [obj for obj in created_objects if obj.type == 'MESH']
             merged_obj = _merge_maze_objects(meshes_to_merge, context, name="FireMaze_Collider")
             if props.optimize_colliders_coplanar and merged_obj:
