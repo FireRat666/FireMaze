@@ -4,7 +4,16 @@ import math
 import bmesh
 from mathutils import Matrix, Vector
 
-def _build_spiral_stair_1x1(bm, uv_layer, cx, cy, ts, wh, z_offset, mat_offset):
+def _build_spiral_stair_1x1(
+    bm: bmesh.types.BMesh,
+    uv_layer: bmesh.types.BMLayerItem,
+    cx: float,
+    cy: float,
+    ts: float,
+    wh: float,
+    z_offset: float,
+    mat_offset: Matrix,
+) -> None:
     """Procedural 1x1 spiral staircase: central post + 12 wedge steps, full 360° rotation, rising wh."""
     T_base = Matrix.Translation(Vector((cx, cy, 0))) @ mat_offset
     steps = 12
@@ -126,7 +135,16 @@ def _build_spiral_stair_1x1(bm, uv_layer, cx, cy, ts, wh, z_offset, mat_offset):
             loop[uv_layer].uv = (0, 0)
 
 
-def _build_ramp_1x1(bm, uv_layer, cx, cy, ts, wh, z_offset, mat_offset):
+def _build_ramp_1x1(
+    bm: bmesh.types.BMesh,
+    uv_layer: bmesh.types.BMLayerItem,
+    cx: float,
+    cy: float,
+    ts: float,
+    wh: float,
+    z_offset: float,
+    mat_offset: Matrix,
+) -> None:
     """Procedural 1x1 ramp: sloped quadrilateral with solid side panels."""
     T_base = Matrix.Translation(Vector((cx, cy, 0))) @ mat_offset
     t2 = ts / 2

@@ -4,7 +4,8 @@ import math
 import bpy
 import bmesh
 from mathutils import Matrix, Vector
-from ..utils import is_valid_ref, get_rng
+from ..utils import get_rng
+from ..maze_data import MazeData
 from .bmesh_utils import (
     _create_bmesh_element,
     _add_mesh_at,
@@ -1402,9 +1403,9 @@ def _build_polar_stairs(ctx, props, maze_data, created_objects, name_suffix):
                 combined_rot = Matrix.Rotation(theta_mid + extra_angle, 4, 'Z')
                 mat = Matrix.Translation(Vector((cx, cy, z_offset))) @ combined_rot @ ctx['mat_floor_offset']
                 
-                if style == 'ramp' and ctx['custom_ramp_mesh'] and is_valid_ref(ctx['custom_ramp_mesh']):
+                if style == 'ramp' and ctx['custom_ramp_mesh']:
                     _add_mesh_at(bm_stairs, ctx['custom_ramp_mesh'].data if ctx['custom_ramp_mesh'].type == 'MESH' else ctx['custom_ramp_mesh'], mat, uv_stairs, final_materials_list=stair_materials)
-                elif style == 'stair' and ctx['custom_stair_mesh'] and is_valid_ref(ctx['custom_stair_mesh']):
+                elif style == 'stair' and ctx['custom_stair_mesh']:
                     _add_mesh_at(bm_stairs, ctx['custom_stair_mesh'].data if ctx['custom_stair_mesh'].type == 'MESH' else ctx['custom_stair_mesh'], mat, uv_stairs, final_materials_list=stair_materials)
                 elif style == 'ramp':
                     _build_ramp_1x1(bm_stairs, uv_stairs, cx, cy, ctx['ts'], ctx['wh'], z_offset, combined_rot @ ctx['mat_floor_offset'])
@@ -1420,7 +1421,14 @@ def _build_polar_stairs(ctx, props, maze_data, created_objects, name_suffix):
             bm_stairs.free()
 
 
-def _build_polar_maze_objects_impl(props, maze_data, context, collection=None, force_simple=False, name_suffix=""):
+def _build_polar_maze_objects_impl(
+    props: bpy.types.PropertyGroup,
+    maze_data: MazeData,
+    context: bpy.types.Context,
+    collection: bpy.types.Collection = None,
+    force_simple: bool = False,
+    name_suffix: str = "",
+) -> bpy.types.Collection:
     """Build all polar maze meshes (floor, walls, roof, stairs, guide path, colliders) into a collection."""
 
     ctx = _prepare_maze_building_context(props, maze_data, context, collection, force_simple)

@@ -1,7 +1,6 @@
 """Common BMesh helper functions and context managers for FireMaze builders."""
 
 import math
-import random as _real_random
 import bpy
 import bmesh
 import logging

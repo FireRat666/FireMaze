@@ -4,7 +4,8 @@ import math
 import bpy
 import bmesh
 from mathutils import Matrix, Vector
-from ..utils import is_valid_ref, get_rng
+from ..utils import get_rng
+from ..maze_data import MazeData
 from .bmesh_utils import (
     _create_bmesh_element,
     _add_mesh_at,
@@ -193,11 +194,11 @@ def _build_rect_stairs(ctx, props, maze_data, created_objects, name_suffix):
                     rot_angle = math.pi / 2
                 rot_mat = Matrix.Rotation(rot_angle, 4, 'Z')
 
-                if style == 'ramp' and ctx['custom_ramp_mesh'] and is_valid_ref(ctx['custom_ramp_mesh']):
+                if style == 'ramp' and ctx['custom_ramp_mesh']:
                     off = ctx['ts'] / 2 if ctx['centered'] else 0
                     mat = Matrix.Translation(Vector((sx * ctx['ts'] + off, sy * ctx['ts'] + off, z_offset))) @ rot_mat @ ctx['mat_floor_offset']
                     _add_mesh_at(bm_stairs, ctx['custom_ramp_mesh'].data if ctx['custom_ramp_mesh'].type == 'MESH' else ctx['custom_ramp_mesh'], mat, uv_stairs, final_materials_list=stair_materials)
-                elif style == 'stair' and ctx['custom_stair_mesh'] and is_valid_ref(ctx['custom_stair_mesh']):
+                elif style == 'stair' and ctx['custom_stair_mesh']:
                     off = ctx['ts'] / 2 if ctx['centered'] else 0
                     mat = Matrix.Translation(Vector((sx * ctx['ts'] + off, sy * ctx['ts'] + off, z_offset))) @ rot_mat @ ctx['mat_floor_offset']
                     _add_mesh_at(bm_stairs, ctx['custom_stair_mesh'].data if ctx['custom_stair_mesh'].type == 'MESH' else ctx['custom_stair_mesh'], mat, uv_stairs, final_materials_list=stair_materials)
@@ -715,7 +716,14 @@ def _build_rect_thin_roof(ctx, props, maze_data, created_objects, name_suffix):
         created_objects.append(roof_obj)
 
 
-def build_maze_objects_impl(props, maze_data, context, collection=None, force_simple=False, name_suffix=""):
+def build_maze_objects_impl(
+    props: bpy.types.PropertyGroup,
+    maze_data: MazeData,
+    context: bpy.types.Context,
+    collection: bpy.types.Collection = None,
+    force_simple: bool = False,
+    name_suffix: str = "",
+) -> bpy.types.Collection:
     """Build all rectangular maze meshes (floor, walls, roof, stairs, guide path, colliders) into a collection."""
     if maze_data.grid_type == 'polar':
         return _build_polar_maze_objects_impl(props, maze_data, context, collection, force_simple, name_suffix)
