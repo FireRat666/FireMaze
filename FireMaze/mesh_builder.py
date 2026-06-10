@@ -1498,7 +1498,7 @@ def _add_polar_floor_wedge(bm, uv_layer, r, theta, Nr, ts, z_base, is_roof=False
         for loop in f.loops:
             loop[uv_layer].uv = uv_map_dict[loop.vert]
 
-def _add_circular_wall(bm, uv_layer, radius, phi_start, phi_end, ts, h, wt, z_base, flip=False):
+def _add_circular_wall(bm, uv_layer, radius, phi_start, phi_end, ts, h, wt, z_base, flip=False, add_start=True, add_end=True):
     """Build a thick circular wall arc with inner/outer faces and top/bottom/end caps."""
     subdivs = 8
     alpha_total = phi_end - phi_start
@@ -1623,44 +1623,46 @@ def _add_circular_wall(bm, uv_layer, radius, phi_start, phi_end, ts, h, wt, z_ba
             loop[uv_layer].uv = uv
             
     # 5. Start end-cap
-    if flip:
-        f_start = bm.faces.new([
-            verts_a_bot[0],
-            verts_a_top[0],
-            verts_b_top[0],
-            verts_b_bot[0]
-        ])
-        uvs_start = [(0.0, 0.0), (0.0, h / ts), (wt / ts, h / ts), (wt / ts, 0.0)]
-    else:
-        f_start = bm.faces.new([
-            verts_a_bot[0],
-            verts_b_bot[0],
-            verts_b_top[0],
-            verts_a_top[0]
-        ])
-        uvs_start = [(0.0, 0.0), (wt / ts, 0.0), (wt / ts, h / ts), (0.0, h / ts)]
-    for loop, uv in zip(f_start.loops, uvs_start):
-        loop[uv_layer].uv = uv
+    if add_start:
+        if flip:
+            f_start = bm.faces.new([
+                verts_a_bot[0],
+                verts_a_top[0],
+                verts_b_top[0],
+                verts_b_bot[0]
+            ])
+            uvs_start = [(0.0, 0.0), (0.0, h / ts), (wt / ts, h / ts), (wt / ts, 0.0)]
+        else:
+            f_start = bm.faces.new([
+                verts_a_bot[0],
+                verts_b_bot[0],
+                verts_b_top[0],
+                verts_a_top[0]
+            ])
+            uvs_start = [(0.0, 0.0), (wt / ts, 0.0), (wt / ts, h / ts), (0.0, h / ts)]
+        for loop, uv in zip(f_start.loops, uvs_start):
+            loop[uv_layer].uv = uv
         
     # 6. End end-cap
-    if flip:
-        f_end = bm.faces.new([
-            verts_b_bot[subdivs],
-            verts_b_top[subdivs],
-            verts_a_top[subdivs],
-            verts_a_bot[subdivs]
-        ])
-        uvs_end = [(0.0, 0.0), (0.0, h / ts), (wt / ts, h / ts), (wt / ts, 0.0)]
-    else:
-        f_end = bm.faces.new([
-            verts_b_bot[subdivs],
-            verts_a_bot[subdivs],
-            verts_a_top[subdivs],
-            verts_b_top[subdivs]
-        ])
-        uvs_end = [(0.0, 0.0), (wt / ts, 0.0), (wt / ts, h / ts), (0.0, h / ts)]
-    for loop, uv in zip(f_end.loops, uvs_end):
-        loop[uv_layer].uv = uv
+    if add_end:
+        if flip:
+            f_end = bm.faces.new([
+                verts_b_bot[subdivs],
+                verts_b_top[subdivs],
+                verts_a_top[subdivs],
+                verts_a_bot[subdivs]
+            ])
+            uvs_end = [(0.0, 0.0), (0.0, h / ts), (wt / ts, h / ts), (wt / ts, 0.0)]
+        else:
+            f_end = bm.faces.new([
+                verts_b_bot[subdivs],
+                verts_a_bot[subdivs],
+                verts_a_top[subdivs],
+                verts_b_top[subdivs]
+            ])
+            uvs_end = [(0.0, 0.0), (wt / ts, 0.0), (wt / ts, h / ts), (0.0, h / ts)]
+        for loop, uv in zip(f_end.loops, uvs_end):
+            loop[uv_layer].uv = uv
 
 def _add_circular_wall_flat(bm, uv_layer, radius, phi_start, phi_end, ts, h, z_base, facing_outward: bool):
     """Build a thin (zero-thickness) circular wall arc segment facing inward or outward."""
@@ -1726,7 +1728,7 @@ def _add_radial_wall_flat(bm, uv_layer, phi, r_in, r_out, ts, h, z_base, facing_
     for loop, uv in zip(face.loops, uvs):
         loop[uv_layer].uv = uv
 
-def _add_radial_wall(bm, uv_layer, phi, r_in, r_out, ts, h, wt, z_base):
+def _add_radial_wall(bm, uv_layer, phi, r_in, r_out, ts, h, wt, z_base, add_inner=True, add_outer=True):
     """Build a thick radial wall with left, right, inner, outer, top and bottom faces."""
     ux = math.cos(phi)
     uy = math.sin(phi)
@@ -1759,16 +1761,18 @@ def _add_radial_wall(bm, uv_layer, phi, r_in, r_out, ts, h, wt, z_base):
         loop[uv_layer].uv = uv
         
     # Inner face (at r_in, normal must point inward = toward center)
-    f_inner = bm.faces.new([v_r_in_top, v_l_in_top, v_l_in_bot, v_r_in_bot])
-    uvs_inner = [(0.0, h / ts), (wt / ts, h / ts), (wt / ts, 0.0), (0.0, 0.0)]
-    for loop, uv in zip(f_inner.loops, uvs_inner):
-        loop[uv_layer].uv = uv
+    if add_inner:
+        f_inner = bm.faces.new([v_r_in_top, v_l_in_top, v_l_in_bot, v_r_in_bot])
+        uvs_inner = [(0.0, h / ts), (wt / ts, h / ts), (wt / ts, 0.0), (0.0, 0.0)]
+        for loop, uv in zip(f_inner.loops, uvs_inner):
+            loop[uv_layer].uv = uv
         
     # Outer face (at r_out, normal must point outward = away from center)
-    f_outer = bm.faces.new([v_l_out_top, v_r_out_top, v_r_out_bot, v_l_out_bot])
-    uvs_outer = [(0.0, h / ts), (wt / ts, h / ts), (wt / ts, 0.0), (0.0, 0.0)]
-    for loop, uv in zip(f_outer.loops, uvs_outer):
-        loop[uv_layer].uv = uv
+    if add_outer:
+        f_outer = bm.faces.new([v_l_out_top, v_r_out_top, v_r_out_bot, v_l_out_bot])
+        uvs_outer = [(0.0, h / ts), (wt / ts, h / ts), (wt / ts, 0.0), (0.0, 0.0)]
+        for loop, uv in zip(f_outer.loops, uvs_outer):
+            loop[uv_layer].uv = uv
         
     # Bottom face (normal must point downward)
     f_bot = bm.faces.new([v_l_out_bot, v_r_out_bot, v_r_in_bot, v_l_in_bot])
@@ -1782,7 +1786,7 @@ def _add_radial_wall(bm, uv_layer, phi, r_in, r_out, ts, h, wt, z_base):
     for loop, uv in zip(f_top.loops, uvs_top):
         loop[uv_layer].uv = uv
 
-def _add_radial_wall_caps(bm_cap, uv_cap, phi, r_in, r_out, wt, h, z_base):
+def _add_radial_wall_caps(bm_cap, uv_cap, phi, r_in, r_out, wt, h, z_base, add_inner=True, add_outer=True):
     """Add end-cap faces for a thick radial wall at the inner and outer boundaries."""
     ux = math.cos(phi)
     uy = math.sin(phi)
@@ -1790,45 +1794,45 @@ def _add_radial_wall_caps(bm_cap, uv_cap, phi, r_in, r_out, wt, h, z_base):
     vy = math.cos(phi)
     tw = wt / 2
     
-    v_l_in_bot = bm_cap.verts.new((r_in * ux + tw * vx, r_in * uy + tw * vy, z_base))
-    v_r_in_bot = bm_cap.verts.new((r_in * ux - tw * vx, r_in * uy - tw * vy, z_base))
-    v_l_in_top = bm_cap.verts.new((r_in * ux + tw * vx, r_in * uy + tw * vy, z_base + h))
-    v_r_in_top = bm_cap.verts.new((r_in * ux - tw * vx, r_in * uy - tw * vy, z_base + h))
-    
-    v_l_out_bot = bm_cap.verts.new((r_out * ux + tw * vx, r_out * uy + tw * vy, z_base))
-    v_r_out_bot = bm_cap.verts.new((r_out * ux - tw * vx, r_out * uy - tw * vy, z_base))
-    v_l_out_top = bm_cap.verts.new((r_out * ux + tw * vx, r_out * uy + tw * vy, z_base + h))
-    v_r_out_top = bm_cap.verts.new((r_out * ux - tw * vx, r_out * uy - tw * vy, z_base + h))
-    
-    
-    f_inner = bm_cap.faces.new([v_r_in_top, v_l_in_top, v_l_in_bot, v_r_in_bot])
-    f_outer = bm_cap.faces.new([v_l_out_top, v_r_out_top, v_r_out_bot, v_l_out_bot])
-    
-    for f in (f_inner, f_outer):
-        for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
+    if add_inner:
+        v_l_in_bot = bm_cap.verts.new((r_in * ux + tw * vx, r_in * uy + tw * vy, z_base))
+        v_r_in_bot = bm_cap.verts.new((r_in * ux - tw * vx, r_in * uy - tw * vy, z_base))
+        v_l_in_top = bm_cap.verts.new((r_in * ux + tw * vx, r_in * uy + tw * vy, z_base + h))
+        v_r_in_top = bm_cap.verts.new((r_in * ux - tw * vx, r_in * uy - tw * vy, z_base + h))
+        f_inner = bm_cap.faces.new([v_r_in_top, v_l_in_top, v_l_in_bot, v_r_in_bot])
+        for loop, uv in zip(f_inner.loops, [(0,0),(1,0),(1,1),(0,1)]):
+            loop[uv_cap].uv = uv
+            
+    if add_outer:
+        v_l_out_bot = bm_cap.verts.new((r_out * ux + tw * vx, r_out * uy + tw * vy, z_base))
+        v_r_out_bot = bm_cap.verts.new((r_out * ux - tw * vx, r_out * uy - tw * vy, z_base))
+        v_l_out_top = bm_cap.verts.new((r_out * ux + tw * vx, r_out * uy + tw * vy, z_base + h))
+        v_r_out_top = bm_cap.verts.new((r_out * ux - tw * vx, r_out * uy - tw * vy, z_base + h))
+        f_outer = bm_cap.faces.new([v_l_out_top, v_r_out_top, v_r_out_bot, v_l_out_bot])
+        for loop, uv in zip(f_outer.loops, [(0,0),(1,0),(1,1),(0,1)]):
             loop[uv_cap].uv = uv
 
-def _add_circular_wall_caps(bm_cap, uv_cap, radius, phi_start, phi_end, wt, h, z_base):
+def _add_circular_wall_caps(bm_cap, uv_cap, radius, phi_start, phi_end, wt, h, z_base, add_start=True, add_end=True):
     """Add end-cap faces for a thick circular wall arc at the start and end angles."""
     R_a = max(radius - wt / 2, 0.001)
     R_b = radius + wt / 2
     
-    v_a_bot_s = bm_cap.verts.new((R_a * math.cos(phi_start), R_a * math.sin(phi_start), z_base))
-    v_b_bot_s = bm_cap.verts.new((R_b * math.cos(phi_start), R_b * math.sin(phi_start), z_base))
-    v_a_top_s = bm_cap.verts.new((R_a * math.cos(phi_start), R_a * math.sin(phi_start), z_base + h))
-    v_b_top_s = bm_cap.verts.new((R_b * math.cos(phi_start), R_b * math.sin(phi_start), z_base + h))
-    
-    v_a_bot_e = bm_cap.verts.new((R_a * math.cos(phi_end), R_a * math.sin(phi_end), z_base))
-    v_b_bot_e = bm_cap.verts.new((R_b * math.cos(phi_end), R_b * math.sin(phi_end), z_base))
-    v_a_top_e = bm_cap.verts.new((R_a * math.cos(phi_end), R_a * math.sin(phi_end), z_base + h))
-    v_b_top_e = bm_cap.verts.new((R_b * math.cos(phi_end), R_b * math.sin(phi_end), z_base + h))
-    
-    
-    f_start = bm_cap.faces.new([v_a_bot_s, v_b_bot_s, v_b_top_s, v_a_top_s])
-    f_end = bm_cap.faces.new([v_b_bot_e, v_a_bot_e, v_a_top_e, v_b_top_e])
-    
-    for f in (f_start, f_end):
-        for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
+    if add_start:
+        v_a_bot_s = bm_cap.verts.new((R_a * math.cos(phi_start), R_a * math.sin(phi_start), z_base))
+        v_b_bot_s = bm_cap.verts.new((R_b * math.cos(phi_start), R_b * math.sin(phi_start), z_base))
+        v_a_top_s = bm_cap.verts.new((R_a * math.cos(phi_start), R_a * math.sin(phi_start), z_base + h))
+        v_b_top_s = bm_cap.verts.new((R_b * math.cos(phi_start), R_b * math.sin(phi_start), z_base + h))
+        f_start = bm_cap.faces.new([v_a_bot_s, v_b_bot_s, v_b_top_s, v_a_top_s])
+        for loop, uv in zip(f_start.loops, [(0,0),(1,0),(1,1),(0,1)]):
+            loop[uv_cap].uv = uv
+            
+    if add_end:
+        v_a_bot_e = bm_cap.verts.new((R_a * math.cos(phi_end), R_a * math.sin(phi_end), z_base))
+        v_b_bot_e = bm_cap.verts.new((R_b * math.cos(phi_end), R_b * math.sin(phi_end), z_base))
+        v_a_top_e = bm_cap.verts.new((R_a * math.cos(phi_end), R_a * math.sin(phi_end), z_base + h))
+        v_b_top_e = bm_cap.verts.new((R_b * math.cos(phi_end), R_b * math.sin(phi_end), z_base + h))
+        f_end = bm_cap.faces.new([v_b_bot_e, v_a_bot_e, v_a_top_e, v_b_top_e])
+        for loop, uv in zip(f_end.loops, [(0,0),(1,0),(1,1),(0,1)]):
             loop[uv_cap].uv = uv
 
 def _add_mesh_polar_center(bm, src_mesh, mat_offset, uv_layer, final_materials_list, ts, z_off, centered, reverse_faces=False):
@@ -2410,6 +2414,95 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix):
         for z in ctx['z_range']:
             z_off_floor = z * ctx['wh']
             level_cells = ctx['cells_3d'][z]
+
+            def has_cw_wall(r_val, t_val):
+                if r_val < 1 or r_val >= rings:
+                    return False
+                Nr_val = ring_sectors[r_val]
+                t_val = t_val % Nr_val
+                if name_suffix == "_EditHelper":
+                    return True
+                return level_cells[r_val][t_val][0]
+
+            def has_in_wall(r_val, t_val):
+                if r_val < 1 or r_val >= rings:
+                    return False
+                Nr_val = ring_sectors[r_val]
+                t_val = t_val % Nr_val
+                if name_suffix == "_EditHelper":
+                    return True
+                return level_cells[r_val][t_val][1]
+
+            def has_out_wall(r_val, t_val):
+                if r_val != rings - 1:
+                    return has_in_wall(r_val + 1, t_val)
+                Nr_val = ring_sectors[r_val]
+                t_val = t_val % Nr_val
+                is_entrance_actual = False
+                if z == 0 and maze_data.entrance:
+                    en_r, en_theta, en_side = maze_data.entrance
+                    if en_r == r_val and en_theta == t_val and en_side == 'OUT':
+                        is_entrance_actual = True
+                is_exit_actual = False
+                if z == (ctx['floors'] - 1) and maze_data.exits:
+                    for ex_r, ex_theta, ex_side in maze_data.exits:
+                        if ex_r == r_val and ex_theta == t_val and ex_side == 'OUT':
+                            is_exit_actual = True
+                            break
+                is_entrance = is_entrance_actual if name_suffix != "_EditHelper" else False
+                is_exit = is_exit_actual if name_suffix != "_EditHelper" else False
+                is_stair = (z, r_val, t_val) in ctx['stair_cells']
+                
+                if not is_entrance and not is_exit and not is_stair:
+                    return True
+                return False
+
+            def get_junction_active(r_grid, theta_grid):
+                active = set()
+                if r_grid < rings:
+                    N_ref = ring_sectors[r_grid]
+                    t_idx = theta_grid % N_ref
+                    
+                    if has_in_wall(r_grid, (t_idx - 1) % N_ref):
+                        active.add('CW_CIRC')
+                    if has_in_wall(r_grid, t_idx):
+                        active.add('CCW_CIRC')
+                    if has_cw_wall(r_grid, (t_idx - 1) % N_ref):
+                        active.add('OUT_RAD')
+                        
+                    # Inward radial wall in ring r_grid - 1
+                    if r_grid > 1:
+                        N_in = ring_sectors[r_grid - 1]
+                        ratio = N_ref // N_in
+                        if t_idx % ratio == 0:
+                            theta_in_boundary = t_idx // ratio
+                            if has_cw_wall(r_grid - 1, (theta_in_boundary - 1) % N_in):
+                                active.add('IN_RAD')
+                else:
+                    # r_grid == rings (outermost boundary)
+                    N_ref = ring_sectors[rings - 1]
+                    t_idx = theta_grid % N_ref
+                    
+                    if has_out_wall(rings - 1, (t_idx - 1) % N_ref):
+                        active.add('CW_CIRC')
+                    if has_out_wall(rings - 1, t_idx):
+                        active.add('CCW_CIRC')
+                    if has_cw_wall(rings - 1, (t_idx - 1) % N_ref):
+                        active.add('IN_RAD')
+                        
+                return active
+
+            def should_generate_cap(r_grid, theta_grid):
+                active = get_junction_active(r_grid, theta_grid)
+                count = len(active)
+                if count == 1:
+                    return True
+                if count == 2:
+                    if active == {'CW_CIRC', 'CCW_CIRC'} or active == {'OUT_RAD', 'IN_RAD'}:
+                        return False
+                    return True
+                return False
+
             for level in range(ctx['tiles_high']):
                 z_off = z_off_floor + level * ctx['seg_h']
                 
@@ -2452,6 +2545,17 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix):
                             src_out_wall = ctx['custom_wall']
                         
                         if cw_wall and r >= 1:
+                            # Calculate end caps visibility for radial wall
+                            add_inner = should_generate_cap(r, theta + 1)
+                            
+                            if r < rings - 1:
+                                N_out = ring_sectors[r + 1]
+                                ratio_out = N_out // Nr
+                                theta_grid_out = (theta + 1) * ratio_out
+                                add_outer = should_generate_cap(r + 1, theta_grid_out)
+                            else:
+                                add_outer = should_generate_cap(rings, theta + 1)
+                            
                             if src_cw_wall and alignment != 'procedural':
                                 if props.thin_wall_double_sided:
                                     if alignment == 'trapezoid':
@@ -2467,7 +2571,8 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix):
                                     phi = (theta + 1) * alpha_r
                                     r_in = (r - 0.5) * ctx['ts']
                                     r_out = (r + 0.5) * ctx['ts']
-                                    _add_radial_wall_caps(bm_cap, uv_cap, phi, r_in, r_out, ctx['wt'], sh_cw, z_off)
+                                    if add_inner or add_outer:
+                                        _add_radial_wall_caps(bm_cap, uv_cap, phi, r_in, r_out, ctx['wt'], sh_cw, z_off, add_inner=add_inner, add_outer=add_outer)
                                 else:
                                     if alignment == 'trapezoid':
                                         _add_wall_polar_trapezoid(bm_wall, src_cw_wall, ctx['mat_wall_offset'], uv_wall, wall_materials, 'CW', r, theta, Nr, ctx['ts'], z_off, ctx['centered'], thin_wall_offset=0.0)
@@ -2480,9 +2585,13 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix):
                                 phi = (theta + 1) * alpha_r
                                 r_in = (r - 0.5) * ctx['ts']
                                 r_out = (r + 0.5) * ctx['ts']
-                                _add_radial_wall(bm_wall, uv_wall, phi, r_in, r_out, ctx['ts'], sh_cw, ctx['wt'], z_off)
+                                _add_radial_wall(bm_wall, uv_wall, phi, r_in, r_out, ctx['ts'], sh_cw, ctx['wt'], z_off, add_inner=add_inner, add_outer=add_outer)
  
                         if in_wall and r >= 1:
+                            # Calculate end caps visibility for inward circular wall
+                            add_start = should_generate_cap(r, theta)
+                            add_end = should_generate_cap(r, theta + 1)
+                            
                             if src_in_wall and alignment != 'procedural':
                                 N_in = ring_sectors[r - 1]
                                 theta_in = 0 if N_in == 1 else (theta if N_in == Nr else theta // 2)
@@ -2502,7 +2611,8 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix):
                                     radius = (r - 0.5) * ctx['ts']
                                     phi_start = theta * alpha_r
                                     phi_end = (theta + 1) * alpha_r
-                                    _add_circular_wall_caps(bm_cap, uv_cap, radius, phi_start, phi_end, ctx['wt'], sh_in, z_off)
+                                    if add_start or add_end:
+                                        _add_circular_wall_caps(bm_cap, uv_cap, radius, phi_start, phi_end, ctx['wt'], sh_in, z_off, add_start=add_start, add_end=add_end)
                                 else:
                                     if alignment == 'trapezoid':
                                         _add_wall_polar_trapezoid(bm_wall, src_in_wall, ctx['mat_wall_offset'], uv_wall, wall_materials, 'IN', r, theta, Nr, ctx['ts'], z_off, ctx['centered'], flip_out=True, thin_wall_offset=0.0)
@@ -2515,7 +2625,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix):
                                 radius = (r - 0.5) * ctx['ts']
                                 phi_start = theta * alpha_r
                                 phi_end = (theta + 1) * alpha_r
-                                _add_circular_wall(bm_wall, uv_wall, radius, phi_start, phi_end, ctx['ts'], sh_in, ctx['wt'], z_off)
+                                _add_circular_wall(bm_wall, uv_wall, radius, phi_start, phi_end, ctx['ts'], sh_in, ctx['wt'], z_off, flip=False, add_start=add_start, add_end=add_end)
        
                         if r == rings - 1:
                             is_entrance_actual = False
@@ -2539,6 +2649,10 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix):
                                 sh_out = 0.02 * ctx['ts']
                                 
                             if not is_entrance and not is_exit and not is_stair:
+                                # Calculate end caps visibility for outer circular wall
+                                add_start = should_generate_cap(rings, theta)
+                                add_end = should_generate_cap(rings, theta + 1)
+                                
                                 if src_out_wall and alignment != 'procedural':
                                     if props.thin_wall_double_sided:
                                         if alignment == 'trapezoid':
@@ -2556,7 +2670,8 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix):
                                         radius = (r + 0.5) * ctx['ts']
                                         phi_start = theta * alpha_r
                                         phi_end = (theta + 1) * alpha_r
-                                        _add_circular_wall_caps(bm_cap, uv_cap, radius, phi_start, phi_end, ctx['wt'], sh_out, z_off)
+                                        if add_start or add_end:
+                                            _add_circular_wall_caps(bm_cap, uv_cap, radius, phi_start, phi_end, ctx['wt'], sh_out, z_off, add_start=add_start, add_end=add_end)
                                     else:
                                         # Single-sided: face inward so players see the front face
                                         if alignment == 'trapezoid':
@@ -2570,7 +2685,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix):
                                     radius = (r + 0.5) * ctx['ts']
                                     phi_start = theta * alpha_r
                                     phi_end = (theta + 1) * alpha_r
-                                    _add_circular_wall(bm_wall, uv_wall, radius, phi_start, phi_end, ctx['ts'], sh_out, ctx['wt'], z_off)
+                                    _add_circular_wall(bm_wall, uv_wall, radius, phi_start, phi_end, ctx['ts'], sh_out, ctx['wt'], z_off, flip=False, add_start=add_start, add_end=add_end)
  
     if bm_wall.verts:
         _safe_remove_doubles(bm_wall, dist=0.001)
