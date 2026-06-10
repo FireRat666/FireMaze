@@ -6,8 +6,6 @@ image export and autosave recovery operators.
 
 import bpy
 import json
-import random as _real_random
-random = _real_random.Random()
 import math
 import os
 import tempfile
@@ -18,7 +16,8 @@ from bpy_extras import view3d_utils
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 from .maze_generator import generate_maze, find_shortest_path, MazeData
 from .mesh_builder import build_maze_objects
-from .utils import is_valid_ref, _resolve_cells_3d
+from .utils import is_valid_ref, _resolve_cells_3d, get_rng
+random = get_rng()
 
 logger = logging.getLogger(__name__)
 

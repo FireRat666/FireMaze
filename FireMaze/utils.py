@@ -55,3 +55,25 @@ def _get_stair_footprint_coords(x, y, footprint, orientation):
     return coords
 
 
+import random
+
+# Shared PRNG instance
+shared_rng = random.Random()
+
+def get_rng():
+    """Get the shared random instance."""
+    return shared_rng
+
+def set_seed(seed):
+    """Set seed for the shared random instance and global random state."""
+    if seed:
+        shared_rng.seed(seed)
+        random.seed(seed)
+    else:
+        import time
+        s = int(time.time() * 1000)
+        shared_rng.seed(s)
+        random.seed(s)
+
+
+
