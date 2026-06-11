@@ -612,7 +612,6 @@ class MAZE_OT_clear(bpy.types.Operator):
         context.scene.fire_maze.fire_maze_collection_name = ""
         self.report({'INFO'}, f"Removed {count} maze object(s)")
         return {'FINISHED'}
-
 class MAZE_OT_interactive_edit(bpy.types.Operator):
     """Modal operator for interactive wall toggling and mesh cycling in the 3D viewport."""
 
@@ -626,6 +625,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
         """Return True when a rect or polar grid is selected."""
         props = context.scene.fire_maze
         return props.grid_type in {'rect', 'polar'}
+
     def _check_modal_early_exit_and_bounds(self, context, event, props):
         """Perform early checks for modal loop. Return tuple (action_taken, result_value)."""
         if context.area:
@@ -635,6 +635,10 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
         if not props.is_editing:
             context.workspace.status_text_set(None)
             set_other_mazes_visibility(context, True)
+            col = _get_active_maze_collection(context)
+            if col and getattr(self, "maze_data", None) is not None:
+                col["fire_maze_data"] = json.dumps(self._maze_raw)
+                rebuild_maze_from_collection(context, col)
             self.report({'INFO'}, "Interactive Edit finished")
             return True, {'FINISHED'}
 
@@ -646,7 +650,8 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
             delete_edit_helper()
             set_other_mazes_visibility(context, True)
             col = _get_active_maze_collection(context)
-            if col:
+            if col and getattr(self, "maze_data", None) is not None:
+                col["fire_maze_data"] = json.dumps(self._maze_raw)
                 rebuild_maze_from_collection(context, col)
             self.report({'INFO'}, "Interactive Edit finished (auto-exited)")
             return True, {'FINISHED'}
@@ -677,7 +682,8 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
             delete_edit_helper()
             set_other_mazes_visibility(context, True)
             col = _get_active_maze_collection(context)
-            if col:
+            if col and getattr(self, "maze_data", None) is not None:
+                col["fire_maze_data"] = json.dumps(self._maze_raw)
                 rebuild_maze_from_collection(context, col)
             self.report({'INFO'}, "Interactive Edit finished")
             return True, {'FINISHED'}
@@ -756,31 +762,46 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                 self.report({'INFO'}, f"Placed stair at floor {z_hit}, cell ({cx_clamped}, {cy_clamped}) with orientation {stair_orient}")
             else:
                 self.report({'WARNING'}, "Cannot place stair on the top floor")
-                return
+                return None
         
         data_dict['stairs'] = stairs
         data_dict['cells'] = original_cells
-        col["fire_maze_data"] = json.dumps(data_dict)
-        rebuild_maze_from_collection(context, col)
 
-    def _handle_polar_mesh_cycle(self, context, event, props, col, data_dict, cells, wall_mode, ring_sectors, rings, hit_x, hit_y, ts, r_hit, phi_hit, r_idx, alpha_r, theta, Nr, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells):
+        # Calculate dirty cells
+        dirty_cells = set()
+        width = data_dict['width']
+        depth = data_dict['depth']
+        for z in [z_hit, z_hit + 1]:
+            if 0 <= z < props.floors:
+                dirty_cells.add((z, cy_clamped, cx_clamped))
+                for dy in [-1, 0, 1]:
+                    for dx in [-1, 0, 1]:
+                        ny, nx = cy_clamped + dy, cx_clamped + dx
+                        if 0 <= ny < depth and 0 <= nx < width:
+                            dirty_cells.add((z, ny, nx))
+        return dirty_cells
+
+    def _handle_polar_mesh_cycle(self, context, event, props, col, data_dict, cells, wall_mode, ring_sectors, rings, hit_x, hit_y, ts, r_hit, phi_hit, r_idx, alpha_r, theta, Nr, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells, z_hit):
         modified = False
         rebuilt_text = ""
+        is_wall = cells[r_idx][theta][0] if wall_mode == 'cube' else False
         
         if face_dir == 'ROOF':
-            roof_idx_pos = 5
-            if num_roof_meshes > 0 and len(cells[r_idx][theta]) > roof_idx_pos:
-                current_idx = cells[r_idx][theta][roof_idx_pos] if isinstance(cells[r_idx][theta][roof_idx_pos], int) else -1
-                cells[r_idx][theta][roof_idx_pos] = (current_idx + 1) % num_roof_meshes
-                modified = True
-                rebuilt_text = "roof"
+            if not (wall_mode == 'cube' and not is_wall):
+                roof_idx_pos = 5
+                if num_roof_meshes > 0 and len(cells[r_idx][theta]) > roof_idx_pos:
+                    current_idx = cells[r_idx][theta][roof_idx_pos] if isinstance(cells[r_idx][theta][roof_idx_pos], int) else -1
+                    cells[r_idx][theta][roof_idx_pos] = (current_idx + 1) % num_roof_meshes
+                    modified = True
+                    rebuilt_text = "roof"
         elif face_dir == 'FLOOR':
-            floor_idx_pos = 4
-            if num_floor_meshes > 0 and len(cells[r_idx][theta]) > floor_idx_pos:
-                current_idx = cells[r_idx][theta][floor_idx_pos] if isinstance(cells[r_idx][theta][floor_idx_pos], int) else -1
-                cells[r_idx][theta][floor_idx_pos] = (current_idx + 1) % num_floor_meshes
-                modified = True
-                rebuilt_text = "floor"
+            if not (wall_mode == 'cube' and is_wall):
+                floor_idx_pos = 4
+                if num_floor_meshes > 0 and len(cells[r_idx][theta]) > floor_idx_pos:
+                    current_idx = cells[r_idx][theta][floor_idx_pos] if isinstance(cells[r_idx][theta][floor_idx_pos], int) else -1
+                    cells[r_idx][theta][floor_idx_pos] = (current_idx + 1) % num_floor_meshes
+                    modified = True
+                    rebuilt_text = "floor"
         else:
             # Clicked a wall face
             if wall_mode == 'cube':
@@ -944,9 +965,35 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                     
         if modified:
             data_dict['cells'] = original_cells
-            col["fire_maze_data"] = json.dumps(data_dict)
-            rebuild_maze_from_collection(context, col)
             self.report({'INFO'}, f"Swapped {rebuilt_text} mesh at cell ({r_idx}, {theta})")
+            
+            # Calculate dirty cells using overlapping sector check
+            dirty_cells = {(z_hit, r_idx, theta)}
+            dirty_cells.add((z_hit, r_idx, (theta - 1) % Nr))
+            dirty_cells.add((z_hit, r_idx, (theta + 1) % Nr))
+            
+            alpha_r = 2 * math.pi / Nr
+            A = theta * alpha_r
+            B = (theta + 1) * alpha_r
+            
+            if r_idx > 0:
+                N_in = ring_sectors[r_idx - 1]
+                alpha_in = 2 * math.pi / N_in
+                for t_in in range(N_in):
+                    A_in = t_in * alpha_in
+                    B_in = (t_in + 1) * alpha_in
+                    if max(A, A_in) < min(B, B_in) - 1e-5:
+                        dirty_cells.add((z_hit, r_idx - 1, t_in))
+            if r_idx < rings - 1:
+                N_out = ring_sectors[r_idx + 1]
+                alpha_out = 2 * math.pi / N_out
+                for t_out in range(N_out):
+                    A_out = t_out * alpha_out
+                    B_out = (t_out + 1) * alpha_out
+                    if max(A, A_out) < min(B, B_out) - 1e-5:
+                        dirty_cells.add((z_hit, r_idx + 1, t_out))
+            return dirty_cells
+        return None
 
     def _handle_polar_wall_toggle(self, context, event, props, col, data_dict, cells, wall_mode, ring_sectors, rings, hit_x, hit_y, ts, r_hit, phi_hit, r_idx, alpha_r, theta, Nr, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells, z_hit):
         modified = False
@@ -1134,15 +1181,39 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                         self.report({'WARNING'}, "Cannot place entrance/exit on middle floors")
                         modified = False
 
-
-                    
         if modified:
             data_dict['cells'] = original_cells
-            col["fire_maze_data"] = json.dumps(data_dict)
-            rebuild_maze_from_collection(context, col)
             self.report({'INFO'}, f"Toggled {rebuilt_text} at cell ({r_idx}, {theta})")
+            
+            # Calculate dirty cells using overlapping sector check
+            dirty_cells = {(z_hit, r_idx, theta)}
+            dirty_cells.add((z_hit, r_idx, (theta - 1) % Nr))
+            dirty_cells.add((z_hit, r_idx, (theta + 1) % Nr))
+            
+            alpha_r = 2 * math.pi / Nr
+            A = theta * alpha_r
+            B = (theta + 1) * alpha_r
+            
+            if r_idx > 0:
+                N_in = ring_sectors[r_idx - 1]
+                alpha_in = 2 * math.pi / N_in
+                for t_in in range(N_in):
+                    A_in = t_in * alpha_in
+                    B_in = (t_in + 1) * alpha_in
+                    if max(A, A_in) < min(B, B_in) - 1e-5:
+                        dirty_cells.add((z_hit, r_idx - 1, t_in))
+            if r_idx < rings - 1:
+                N_out = ring_sectors[r_idx + 1]
+                alpha_out = 2 * math.pi / N_out
+                for t_out in range(N_out):
+                    A_out = t_out * alpha_out
+                    B_out = (t_out + 1) * alpha_out
+                    if max(A, A_out) < min(B, B_out) - 1e-5:
+                        dirty_cells.add((z_hit, r_idx + 1, t_out))
+            return dirty_cells
+        return None
 
-    def _handle_rect_mesh_cycle(self, context, event, props, col, data_dict, cells, wall_mode, hit_x, hit_y, ts, width, depth, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells):
+    def _handle_rect_mesh_cycle(self, context, event, props, col, data_dict, cells, wall_mode, hit_x, hit_y, ts, width, depth, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells, z_hit):
         cx = math.floor(hit_x / ts)
         cy = math.floor(hit_y / ts)
         if -1 <= cx <= width and -1 <= cy <= depth:
@@ -1168,13 +1239,13 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                             modified = True
                             rebuilt_text = "pillar"
                     else:
-                        if num_roof_meshes > 0 and len(cells[cy_clamped][cx_clamped]) > 6:
+                        if is_wall and num_roof_meshes > 0 and len(cells[cy_clamped][cx_clamped]) > 6:
                             current_idx = cells[cy_clamped][cx_clamped][6] if isinstance(cells[cy_clamped][cx_clamped][6], int) else -1
                             cells[cy_clamped][cx_clamped][6] = (current_idx + 1) % num_roof_meshes
                             modified = True
                             rebuilt_text = "roof"
                 elif face_dir == 'FLOOR':
-                    if num_floor_meshes > 0 and len(cells[cy_clamped][cx_clamped]) > 5:
+                    if not is_wall and num_floor_meshes > 0 and len(cells[cy_clamped][cx_clamped]) > 5:
                         current_idx = cells[cy_clamped][cx_clamped][5] if isinstance(cells[cy_clamped][cx_clamped][5], int) else -1
                         cells[cy_clamped][cx_clamped][5] = (current_idx + 1) % num_floor_meshes
                         modified = True
@@ -1192,17 +1263,30 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                             modified = True
                             rebuilt_text = "pillar"
                         else:
+                            actual_face = face_dir
+                            if actual_face not in {'N', 'S', 'E', 'W'}:
+                                d_N = abs(hit_y - (cy_clamped + 1) * ts)
+                                d_S = abs(hit_y - cy_clamped * ts)
+                                d_E = abs(hit_x - (cx_clamped + 1) * ts)
+                                d_W = abs(hit_x - cx_clamped * ts)
+                                min_d = min(d_N, d_S, d_E, d_W)
+                                if min_d == d_N:
+                                    actual_face = 'N'
+                                elif min_d == d_S:
+                                    actual_face = 'S'
+                                elif min_d == d_E:
+                                    actual_face = 'E'
+                                else:
+                                    actual_face = 'W'
                             idx_map = {'N': 1, 'S': 2, 'E': 3, 'W': 4}
-                            face_idx = idx_map.get(face_dir, 1)
+                            face_idx = idx_map.get(actual_face, 1)
                             current_idx = cells[cy_clamped][cx_clamped][face_idx] if isinstance(cells[cy_clamped][cx_clamped][face_idx], int) else -1
                             cells[cy_clamped][cx_clamped][face_idx] = (current_idx + 1) % num_wall_meshes
                             modified = True
-                            rebuilt_text = f"wall ({face_dir} face)"
+                            rebuilt_text = f"wall ({actual_face} face)"
                             
                 if modified:
                     data_dict['cells'] = original_cells
-                    col["fire_maze_data"] = json.dumps(data_dict)
-                    rebuild_maze_from_collection(context, col)
                     self.report({'INFO'}, f"Swapped {rebuilt_text} mesh at ({cx_clamped}, {cy_clamped})")
                 else:
                     if not is_wall:
@@ -1210,8 +1294,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                             current_idx = cells[cy_clamped][cx_clamped][5] if isinstance(cells[cy_clamped][cx_clamped][5], int) else -1
                             cells[cy_clamped][cx_clamped][5] = (current_idx + 1) % num_floor_meshes
                             data_dict['cells'] = original_cells
-                            col["fire_maze_data"] = json.dumps(data_dict)
-                            rebuild_maze_from_collection(context, col)
+                            modified = True
                             self.report({'INFO'}, f"Swapped floor mesh at ({cx_clamped}, {cy_clamped})")
             else:
                 # Thin wall mode
@@ -1284,7 +1367,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                                  next_idx = (current_idx + 1) % num_wall_meshes
                                  cells[cy_clamped][cx_clamped][7] = next_idx
                                  if cx_clamped - 1 >= 0:
-                                     cells[cy_clamped - 1][cx_clamped][6] = next_idx
+                                     cells[cy_clamped][cx_clamped - 1][6] = next_idx
                                  modified = True
                                  rebuilt_text = "vertical wall (West)"
                         else:
@@ -1293,6 +1376,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                                 target_y = min(target_y, depth - 1)
                                 current_idx = cells[target_y][cx_clamped][4] if isinstance(cells[target_y][cx_clamped][4], int) else -1
                                 cells[target_y][cx_clamped][4] = (current_idx + 1) % num_wall_meshes
+                                cy_clamped = target_y
                                 modified = True
                                 rebuilt_text = "horizontal wall"
                             else:
@@ -1300,16 +1384,23 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                                 target_x = min(target_x, width - 1)
                                 current_idx = cells[cy_clamped][target_x][5] if isinstance(cells[cy_clamped][target_x][5], int) else -1
                                 cells[cy_clamped][target_x][5] = (current_idx + 1) % num_wall_meshes
+                                cx_clamped = target_x
                                 modified = True
                                 rebuilt_text = "vertical wall"
-                    
-                if modified:
-                    data_dict['cells'] = original_cells
-                    col["fire_maze_data"] = json.dumps(data_dict)
-                    rebuild_maze_from_collection(context, col)
-                    self.report({'INFO'}, f"Swapped {rebuilt_text} mesh at ({cx_clamped}, {cy_clamped})")
+                     
+            if modified:
+                # Calculate dirty cells
+                dirty_cells = set()
+                for dy in [-1, 0, 1]:
+                    for dx in [-1, 0, 1]:
+                        ny, nx = cy_clamped + dy, cx_clamped + dx
+                        if 0 <= ny < depth and 0 <= nx < width:
+                            dirty_cells.add((z_hit, ny, nx))
+                return dirty_cells
+        return None
 
-    def _handle_rect_wall_toggle(self, context, event, props, col, data_dict, cells, wall_mode, hit_x, hit_y, ts, width, depth, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells):
+    def _handle_rect_wall_toggle(self, context, event, props, col, data_dict, cells, wall_mode, hit_x, hit_y, ts, width, depth, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells, z_hit):
+        modified = False
         if wall_mode == 'cube':
             cx = math.floor(hit_x / ts)
             cy = math.floor(hit_y / ts)
@@ -1349,9 +1440,9 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                     if num_floor_meshes > 0:
                         cells[ty][tx][5] = random.randrange(num_floor_meshes)
                 data_dict['cells'] = original_cells
-                col["fire_maze_data"] = json.dumps(data_dict)
-                rebuild_maze_from_collection(context, col)
                 self.report({'INFO'}, f"Toggled wall tile at ({tx}, {ty})")
+                modified = True
+                cx_clamped, cy_clamped = tx, ty
         else:
             # Thin wall mode
             cx = math.floor(hit_x / ts)
@@ -1385,9 +1476,18 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                         cells[cy_clamped][cx_clamped - 1][2] = cells[cy_clamped][cx_clamped][3]
                         
                 data_dict['cells'] = original_cells
-                col["fire_maze_data"] = json.dumps(data_dict)
-                rebuild_maze_from_collection(context, col)
                 self.report({'INFO'}, f"Toggled wall at cell ({cx_clamped}, {cy_clamped})")
+                modified = True
+                
+        if modified:
+            dirty_cells = set()
+            for dy in [-1, 0, 1]:
+                for dx in [-1, 0, 1]:
+                    ny, nx = cy_clamped + dy, cx_clamped + dx
+                    if 0 <= ny < depth and 0 <= nx < width:
+                        dirty_cells.add((z_hit, ny, nx))
+            return dirty_cells
+        return None
 
     def modal(self, context, event):
         """Handle viewport events: wall toggle on click, mesh cycle on shift+click, exit on Esc/Enter."""
@@ -1419,7 +1519,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                         if "fire_maze_data" not in col:
                             col = None
                             
-                    if col:
+                    if col and getattr(self, "maze_data", None) is not None:
                         # Offset hit coordinates slightly inward along normal to prevent floating-point boundary issues
                         if normal:
                             offset_loc = loc - normal * 0.01
@@ -1440,7 +1540,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                                 z_hit = max(0, min(props.floors - 1, int(offset_loc.z / wh))) if wh > 0 and props.floors > 0 else 0
                         hit_x, hit_y = offset_loc.x, offset_loc.y
                         
-                        data_dict = json.loads(col["fire_maze_data"])
+                        data_dict = self._maze_raw
                         width = data_dict['width']
                         depth = data_dict['depth']
                         cells = data_dict['cells']
@@ -1463,11 +1563,6 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                             cx_clamped = max(0, min(math.floor(hit_x / ts), width - 1))
                             cy_clamped = max(0, min(math.floor(hit_y / ts), depth - 1))
 
-                        # If tool is stair, handle stair toggling!
-                        if props.edit_tool == 'stair' and props.floors > 1:
-                            self._handle_stair_tool(context, event, props, col, data_dict, z_hit, cx_clamped, cy_clamped, grid_type, original_cells, wall_mode)
-                            return {'RUNNING_MODAL'}
-                        
                         num_wall_meshes = data_dict.get('num_wall_meshes', 0)
                         num_floor_meshes = data_dict.get('num_floor_meshes', 0)
                         num_roof_meshes = data_dict.get('num_roof_meshes', 0)
@@ -1486,18 +1581,31 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                                 else:
                                     face_dir = 'E' if normal.x > 0 else 'W'
 
-                        if event.shift:
+                        dirty_cells = None
+                        if props.edit_tool == 'stair' and props.floors > 1:
+                            dirty_cells = self._handle_stair_tool(context, event, props, col, data_dict, z_hit, cx_clamped, cy_clamped, grid_type, original_cells, wall_mode)
+                        elif event.shift:
                             if grid_type == 'polar':
-                                self._handle_polar_mesh_cycle(context, event, props, col, data_dict, cells, wall_mode, ring_sectors, rings, hit_x, hit_y, ts, r_hit, phi_hit, r_idx, alpha_r, theta, Nr, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells)
+                                dirty_cells = self._handle_polar_mesh_cycle(context, event, props, col, data_dict, cells, wall_mode, ring_sectors, rings, hit_x, hit_y, ts, r_hit, phi_hit, r_idx, alpha_r, theta, Nr, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells, z_hit)
                             else:
-                                self._handle_rect_mesh_cycle(context, event, props, col, data_dict, cells, wall_mode, hit_x, hit_y, ts, width, depth, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells)
+                                dirty_cells = self._handle_rect_mesh_cycle(context, event, props, col, data_dict, cells, wall_mode, hit_x, hit_y, ts, width, depth, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells, z_hit)
                         else:
                             if grid_type == 'polar':
-                                self._handle_polar_wall_toggle(context, event, props, col, data_dict, cells, wall_mode, ring_sectors, rings, hit_x, hit_y, ts, r_hit, phi_hit, r_idx, alpha_r, theta, Nr, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells, z_hit)
+                                dirty_cells = self._handle_polar_wall_toggle(context, event, props, col, data_dict, cells, wall_mode, ring_sectors, rings, hit_x, hit_y, ts, r_hit, phi_hit, r_idx, alpha_r, theta, Nr, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells, z_hit)
                             else:
-                                self._handle_rect_wall_toggle(context, event, props, col, data_dict, cells, wall_mode, hit_x, hit_y, ts, width, depth, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells)
+                                dirty_cells = self._handle_rect_wall_toggle(context, event, props, col, data_dict, cells, wall_mode, hit_x, hit_y, ts, width, depth, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells, z_hit)
+                        
+                        if dirty_cells:
+                            self.maze_data.entrance = tuple(data_dict['entrance']) if data_dict.get('entrance') else None
+                            self.maze_data.exits = [tuple(e) for e in data_dict.get('exits', [])]
+                            self.maze_data.cells = data_dict['cells']
+                            self.maze_data.stairs = data_dict.get('stairs', [])
+                            self.maze_data.guide_path = find_shortest_path(self.maze_data, wall_mode=wall_mode)
+                            data_dict['guide_path'] = self.maze_data.guide_path
+                            
+                            from .mesh_builder import rebuild_maze_incrementally
+                            rebuild_maze_incrementally(props, self.maze_data, context, col, dirty_cells)
             return {'RUNNING_MODAL'}
-
 
         return {'PASS_THROUGH'}
 
@@ -1528,11 +1636,27 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
         set_other_mazes_visibility(context, False)
 
         try:
-            data_dict = json.loads(col["fire_maze_data"])
-            col_floors = data_dict.get('floors', 1)
+            data = json.loads(col["fire_maze_data"])
+            self._maze_raw = data
+            self.maze_data = MazeData(
+                width=data['width'],
+                depth=data['depth'],
+                cells=data['cells'],
+                entrance=tuple(data['entrance']) if data.get('entrance') else None,
+                exits=[tuple(e) for e in data.get('exits', [])],
+                center=tuple(data['center']),
+                grid_type=data.get('grid_type', 'rect'),
+                polar_rings=data.get('polar_rings', 0),
+                ring_sectors=data.get('ring_sectors', []),
+                floors=data.get('floors', 1),
+                stairs=data.get('stairs', []),
+            )
+            col_floors = self.maze_data.floors
             props.edit_floor_level = max(0, min(props.edit_floor_level, col_floors - 1))
         except Exception as e:
-            logger.debug(f"Failed to validate floor level: {e}")
+            logger.debug(f"Failed to validate floor level or parse maze data: {e}")
+            self.maze_data = None
+            self._maze_raw = None
 
         rebuild_maze_from_collection(context, col)
         if props.floors > 1:

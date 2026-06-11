@@ -28,3 +28,240 @@ def build_maze_objects(
         return build_maze_objects_impl(
             props, maze_data, context, collection, force_simple, name_suffix
         )
+
+
+def rebuild_maze_incrementally(
+    props: bpy.types.PropertyGroup,
+    maze_data: MazeData,
+    context: bpy.types.Context,
+    collection: bpy.types.Collection,
+    dirty_cells: set,
+):
+    """Incrementally updates existing meshes in collection for dirty_cells in-place."""
+    with _bmesh_cache_context():
+        _rebuild_maze_incrementally_impl(props, maze_data, context, collection, dirty_cells)
+
+
+def _rebuild_maze_incrementally_impl(
+    props: bpy.types.PropertyGroup,
+    maze_data: MazeData,
+    context: bpy.types.Context,
+    collection: bpy.types.Collection,
+    dirty_cells: set,
+):
+    import bmesh
+    from ..utils import get_cell_id
+    from .post_processor import _merge_maze_objects
+    from .rect_builder import build_maze_objects_impl
+    from .bmesh_utils import _prepare_maze_building_context
+    
+    dirty_cell_ids = {get_cell_id(z, y, x) for (z, y, x) in dirty_cells}
+    ctx = _prepare_maze_building_context(props, maze_data, context, collection, force_simple=False)
+    
+    # 1. Update the visual objects (name_suffix="")
+    name_suffix = ""
+    created_objects = []
+    
+    # Floor
+    floor_obj = collection.objects.get(f"FireMaze_Floor{name_suffix}")
+    if floor_obj:
+        bm = bmesh.new()
+        bm.from_mesh(floor_obj.data)
+        cell_layer = bm.faces.layers.int.get("cell_id")
+        if cell_layer is not None:
+            faces_to_delete = [f for f in bm.faces if f[cell_layer] in dirty_cell_ids]
+            bmesh.ops.delete(bm, geom=faces_to_delete, context="FACES")
+            verts_to_delete = [v for v in bm.verts if not v.link_faces]
+            bmesh.ops.delete(bm, geom=verts_to_delete, context="VERTS")
+        uv_layer = bm.loops.layers.uv.active or bm.loops.layers.uv.new("UVMap")
+        materials = list(floor_obj.data.materials)
+        
+        if maze_data.grid_type == 'polar':
+            from .polar_builder import _build_polar_floor
+            _build_polar_floor(ctx, props, maze_data, created_objects, name_suffix, bm=bm, uv_layer=uv_layer, materials=materials, dirty_cells=dirty_cells)
+        else:
+            if props.wall_mode == 'cube':
+                from .rect_builder import _build_rect_cube_floor
+                _build_rect_cube_floor(ctx, maze_data, created_objects, name_suffix, bm=bm, uv_layer=uv_layer, materials=materials, dirty_cells=dirty_cells)
+            else:
+                from .rect_builder import _build_rect_thin_floor
+                _build_rect_thin_floor(ctx, maze_data, created_objects, name_suffix, bm=bm, uv_layer=uv_layer, materials=materials, dirty_cells=dirty_cells)
+        
+        bm.to_mesh(floor_obj.data)
+        bm.free()
+        floor_obj.data.update()
+    else:
+        if maze_data.grid_type == 'polar':
+            from .polar_builder import _build_polar_floor
+            _build_polar_floor(ctx, props, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
+        else:
+            if props.wall_mode == 'cube':
+                from .rect_builder import _build_rect_cube_floor
+                _build_rect_cube_floor(ctx, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
+            else:
+                from .rect_builder import _build_rect_thin_floor
+                _build_rect_thin_floor(ctx, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
+
+    # Walls & Caps
+    wall_obj = collection.objects.get(f"FireMaze_Walls{name_suffix}")
+    cap_obj = collection.objects.get(f"FireMaze_WallEndCaps{name_suffix}")
+    
+    bm_wall, uv_wall, wall_materials = None, None, None
+    if wall_obj:
+        bm_wall = bmesh.new()
+        bm_wall.from_mesh(wall_obj.data)
+        cell_layer = bm_wall.faces.layers.int.get("cell_id")
+        if cell_layer is not None:
+            faces_to_delete = [f for f in bm_wall.faces if f[cell_layer] in dirty_cell_ids]
+            bmesh.ops.delete(bm_wall, geom=faces_to_delete, context="FACES")
+            verts_to_delete = [v for v in bm_wall.verts if not v.link_faces]
+            bmesh.ops.delete(bm_wall, geom=verts_to_delete, context="VERTS")
+        uv_wall = bm_wall.loops.layers.uv.active or bm_wall.loops.layers.uv.new("UVMap")
+        wall_materials = list(wall_obj.data.materials)
+        
+    bm_cap, uv_cap, cap_materials = None, None, None
+    if cap_obj:
+        bm_cap = bmesh.new()
+        bm_cap.from_mesh(cap_obj.data)
+        cell_layer_cap = bm_cap.faces.layers.int.get("cell_id")
+        if cell_layer_cap is not None:
+            faces_to_delete = [f for f in bm_cap.faces if f[cell_layer_cap] in dirty_cell_ids]
+            bmesh.ops.delete(bm_cap, geom=faces_to_delete, context="FACES")
+            verts_to_delete = [v for v in bm_cap.verts if not v.link_faces]
+            bmesh.ops.delete(bm_cap, geom=verts_to_delete, context="VERTS")
+        uv_cap = bm_cap.loops.layers.uv.active or bm_cap.loops.layers.uv.new("UVMap")
+        cap_materials = list(cap_obj.data.materials)
+        
+    if maze_data.grid_type == 'polar':
+        from .polar_builder import _build_polar_walls
+        _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix,
+                           bm=bm_wall, uv_layer=uv_wall, materials=wall_materials,
+                           bm_cap=bm_cap, uv_layer_cap=uv_cap, materials_cap=cap_materials,
+                           dirty_cells=dirty_cells)
+    else:
+        if props.wall_mode == 'cube':
+            from .rect_builder import _build_rect_cube_walls
+            _build_rect_cube_walls(ctx, props, maze_data, created_objects, name_suffix,
+                                   bm=bm_wall, uv_layer=uv_wall, materials=wall_materials,
+                                   dirty_cells=dirty_cells)
+        else:
+            from .rect_builder import _build_rect_thin_walls
+            _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix,
+                                   bm=bm_wall, uv_layer=uv_wall, materials=wall_materials,
+                                   bm_cap=bm_cap, uv_layer_cap=uv_cap, materials_cap=cap_materials,
+                                   dirty_cells=dirty_cells)
+                                   
+    if wall_obj and bm_wall:
+        cell_layer_dbg = bm_wall.faces.layers.int.get("cell_id")
+        if cell_layer_dbg is not None:
+            cids = {f[cell_layer_dbg] for f in bm_wall.faces}
+            print("DEBUG __init__: bm_wall cids before to_mesh =", sorted(list(cids)))
+            print(f"DEBUG __init__: bm_wall has {len(bm_wall.faces)} faces")
+            for idx, f in enumerate(bm_wall.faces):
+                if idx >= 180:
+                    print(f"DEBUG __init__: face {idx} cell_id = {f[cell_layer_dbg]}")
+                if f[cell_layer_dbg] == 2003:
+                    print(f"DEBUG __init__: Found face {idx} with cell_id 2003!")
+        bm_wall.to_mesh(wall_obj.data)
+        bm_wall.free()
+        wall_obj.data.update()
+    if cap_obj and bm_cap:
+        bm_cap.to_mesh(cap_obj.data)
+        bm_cap.free()
+        cap_obj.data.update()
+        
+    # Roof
+    roof_obj = collection.objects.get(f"FireMaze_Roof{name_suffix}")
+    if roof_obj:
+        bm = bmesh.new()
+        bm.from_mesh(roof_obj.data)
+        cell_layer = bm.faces.layers.int.get("cell_id")
+        if cell_layer is not None:
+            faces_to_delete = [f for f in bm.faces if f[cell_layer] in dirty_cell_ids]
+            bmesh.ops.delete(bm, geom=faces_to_delete, context="FACES")
+            verts_to_delete = [v for v in bm.verts if not v.link_faces]
+            bmesh.ops.delete(bm, geom=verts_to_delete, context="VERTS")
+        uv_layer = bm.loops.layers.uv.active or bm.loops.layers.uv.new("UVMap")
+        materials = list(roof_obj.data.materials)
+        
+        if maze_data.grid_type == 'polar':
+            from .polar_builder import _build_polar_roof
+            _build_polar_roof(ctx, props, maze_data, created_objects, name_suffix, bm=bm, uv_layer=uv_layer, materials=materials, dirty_cells=dirty_cells)
+        else:
+            if props.wall_mode == 'cube':
+                from .rect_builder import _build_rect_cube_roof
+                _build_rect_cube_roof(ctx, props, maze_data, created_objects, name_suffix, bm=bm, uv_layer=uv_layer, materials=materials, dirty_cells=dirty_cells)
+            else:
+                from .rect_builder import _build_rect_thin_roof
+                _build_rect_thin_roof(ctx, props, maze_data, created_objects, name_suffix, bm=bm, uv_layer=uv_layer, materials=materials, dirty_cells=dirty_cells)
+                
+        bm.to_mesh(roof_obj.data)
+        bm.free()
+        roof_obj.data.update()
+    else:
+        if maze_data.grid_type == 'polar':
+            from .polar_builder import _build_polar_roof
+            _build_polar_roof(ctx, props, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
+        else:
+            if props.wall_mode == 'cube':
+                from .rect_builder import _build_rect_cube_roof
+                _build_rect_cube_roof(ctx, props, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
+            else:
+                from .rect_builder import _build_rect_thin_roof
+                _build_rect_thin_roof(ctx, props, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
+
+    # Stairs
+    stair_obj = collection.objects.get(f"FireMaze_Stairs{name_suffix}")
+    if stair_obj:
+        bm = bmesh.new()
+        bm.from_mesh(stair_obj.data)
+        cell_layer = bm.faces.layers.int.get("cell_id")
+        if cell_layer is not None:
+            faces_to_delete = [f for f in bm.faces if f[cell_layer] in dirty_cell_ids]
+            bmesh.ops.delete(bm, geom=faces_to_delete, context="FACES")
+            verts_to_delete = [v for v in bm.verts if not v.link_faces]
+            bmesh.ops.delete(bm, geom=verts_to_delete, context="VERTS")
+        uv_layer = bm.loops.layers.uv.active or bm.loops.layers.uv.new("UVMap")
+        materials = list(stair_obj.data.materials)
+        
+        if maze_data.grid_type == 'polar':
+            from .polar_builder import _build_polar_stairs
+            _build_polar_stairs(ctx, props, maze_data, created_objects, name_suffix, bm=bm, uv_layer=uv_layer, materials=materials, dirty_cells=dirty_cells)
+        else:
+            from .rect_builder import _build_rect_stairs
+            _build_rect_stairs(ctx, props, maze_data, created_objects, name_suffix, bm=bm, uv_layer=uv_layer, materials=materials, dirty_cells=dirty_cells)
+            
+        bm.to_mesh(stair_obj.data)
+        bm.free()
+        stair_obj.data.update()
+    else:
+        if maze_data.grid_type == 'polar':
+            from .polar_builder import _build_polar_stairs
+            _build_polar_stairs(ctx, props, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
+        else:
+            from .rect_builder import _build_rect_stairs
+            _build_rect_stairs(ctx, props, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
+
+    # Rebuild guide path dynamically
+    guide_obj = collection.objects.get("FireMaze_Guide")
+    if guide_obj:
+        curve = guide_obj.data
+        bpy.data.objects.remove(guide_obj, do_unlink=True)
+        if curve.users == 0:
+            bpy.data.curves.remove(curve)
+            
+    from .bmesh_utils import _build_guide_path
+    _build_guide_path(props, maze_data, collection, ctx['materials'])
+
+    # 2. Update helper object "_FireMaze_Edit_Helper"
+    helper_obj = bpy.data.objects.get("_FireMaze_Edit_Helper")
+    if helper_obj:
+        # Delete old helper to rebuild it from the updated cell data
+        mesh = helper_obj.data
+        bpy.data.objects.remove(helper_obj, do_unlink=True)
+        if mesh.users == 0:
+            bpy.data.meshes.remove(mesh)
+            
+    # Rebuild helper fully
+    build_maze_objects_impl(props, maze_data, context, collection=collection, force_simple=True, name_suffix="_EditHelper")
+

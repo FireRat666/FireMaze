@@ -14,6 +14,8 @@ def is_valid_ref(ref):
 
 def _resolve_cells_3d(cells):
     """Normalize cells to 3D list format [z][y][x] and return (cells_3d, floors)."""
+    if isinstance(cells, dict):
+        cells = cells.get("cells", cells)
     if hasattr(cells, "cells"):
         cells = cells.cells
     if (len(cells) > 0 and isinstance(cells[0], list) and 
@@ -74,6 +76,21 @@ def set_seed(seed):
         s = int(time.time() * 1000)
         shared_rng.seed(s)
         random.seed(s)
+
+
+def get_cell_id(z: int, y: int, x: int) -> int:
+    """Encode 3D coordinates into a single unique integer cell ID."""
+    return z * 1000000 + y * 1000 + x
+
+
+def decode_cell_id(cell_id: int) -> tuple:
+    """Decode a unique integer cell ID back into 3D coordinates (z, y, x)."""
+    z = cell_id // 1000000
+    rem = cell_id % 1000000
+    y = rem // 1000
+    x = rem % 1000
+    return z, y, x
+
 
 
 
