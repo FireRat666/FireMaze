@@ -100,6 +100,28 @@ def _rebuild_maze_incrementally_impl(
                 trigger_full_rebuild = True
             bm_check.free()
             
+    if not trigger_full_rebuild:
+        roof_obj_chk = _find_role_object(collection, "FireMaze_Roof")
+        if roof_obj_chk:
+            bm_check = bmesh.new()
+            bm_check.from_mesh(roof_obj_chk.data)
+            if bm_check.faces.layers.int.get("cell_id") is None:
+                trigger_full_rebuild = True
+            bm_check.free()
+            
+    if not trigger_full_rebuild:
+        stair_obj_chk = _find_role_object(collection, "FireMaze_Stairs")
+        if stair_obj_chk:
+            bm_check = bmesh.new()
+            bm_check.from_mesh(stair_obj_chk.data)
+            if bm_check.faces.layers.int.get("cell_id") is None:
+                trigger_full_rebuild = True
+            bm_check.free()
+            
+    if not trigger_full_rebuild:
+        if _find_role_object(collection, "FireMaze_Merged"):
+            trigger_full_rebuild = True
+            
     if trigger_full_rebuild:
         from ..operators import rebuild_maze_from_collection
         rebuild_maze_from_collection(context, collection)

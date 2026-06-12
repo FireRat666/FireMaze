@@ -290,8 +290,10 @@ def _build_rect_stairs(ctx, props, maze_data, created_objects, name_suffix, bm=N
                     existing_faces = set(bm_stairs.faces)
 
                 style = s.get('type', 'stair')
-                cx = sx * ctx['ts'] + ctx['ts'] / 2
-                cy = sy * ctx['ts'] + ctx['ts'] / 2
+                footprint = s.get('footprint', '1x1')
+                stair_ts = ctx['ts'] * 2 if footprint == '2x2' else ctx['ts']
+                cx = sx * ctx['ts'] + stair_ts / 2
+                cy = sy * ctx['ts'] + stair_ts / 2
                 orient = s.get('orientation', 'N')
                 rot_angle = 0.0
                 if orient == 'E':
@@ -303,17 +305,17 @@ def _build_rect_stairs(ctx, props, maze_data, created_objects, name_suffix, bm=N
                 rot_mat = Matrix.Rotation(rot_angle, 4, 'Z')
 
                 if style == 'ramp' and ctx['custom_ramp_mesh']:
-                    off = ctx['ts'] / 2 if ctx['centered'] else 0
+                    off = stair_ts / 2 if ctx['centered'] else 0
                     mat = Matrix.Translation(Vector((sx * ctx['ts'] + off, sy * ctx['ts'] + off, z_offset))) @ rot_mat @ ctx['mat_floor_offset']
                     _add_mesh_at(bm_stairs, ctx['custom_ramp_mesh'].data if ctx['custom_ramp_mesh'].type == 'MESH' else ctx['custom_ramp_mesh'], mat, uv_stairs, final_materials_list=stair_materials)
                 elif style == 'stair' and ctx['custom_stair_mesh']:
-                    off = ctx['ts'] / 2 if ctx['centered'] else 0
+                    off = stair_ts / 2 if ctx['centered'] else 0
                     mat = Matrix.Translation(Vector((sx * ctx['ts'] + off, sy * ctx['ts'] + off, z_offset))) @ rot_mat @ ctx['mat_floor_offset']
                     _add_mesh_at(bm_stairs, ctx['custom_stair_mesh'].data if ctx['custom_stair_mesh'].type == 'MESH' else ctx['custom_stair_mesh'], mat, uv_stairs, final_materials_list=stair_materials)
                 elif style == 'ramp':
-                    _build_ramp_1x1(bm_stairs, uv_stairs, cx, cy, ctx['ts'], ctx['wh'], z_offset, rot_mat @ ctx['mat_floor_offset'])
+                    _build_ramp_1x1(bm_stairs, uv_stairs, cx, cy, stair_ts, ctx['wh'], z_offset, rot_mat @ ctx['mat_floor_offset'])
                 else:
-                    _build_spiral_stair_1x1(bm_stairs, uv_stairs, cx, cy, ctx['ts'], ctx['wh'], z_offset, rot_mat @ ctx['mat_floor_offset'])
+                    _build_spiral_stair_1x1(bm_stairs, uv_stairs, cx, cy, stair_ts, ctx['wh'], z_offset, rot_mat @ ctx['mat_floor_offset'])
 
                 cell_id = get_cell_id(zstair, sy, sx)
                 if dirty_cells is None:

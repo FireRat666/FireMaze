@@ -1587,6 +1587,47 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                         data_dict['exits'] = [e for e in data_dict['exits']
                                               if len(e) >= 3 and toggled_border != tuple(e[:3])]
                         
+                opened_border = None
+                if min_d == d_N and cy_clamped == depth - 1 and not cells[cy_clamped][cx_clamped][0]:
+                    opened_border = (cx_clamped, cy_clamped, 'N')
+                elif min_d == d_S and cy_clamped == 0 and not cells[cy_clamped][cx_clamped][1]:
+                    opened_border = (cx_clamped, cy_clamped, 'S')
+                elif min_d == d_E and cx_clamped == width - 1 and not cells[cy_clamped][cx_clamped][2]:
+                    opened_border = (cx_clamped, cy_clamped, 'E')
+                elif min_d == d_W and cx_clamped == 0 and not cells[cy_clamped][cx_clamped][3]:
+                    opened_border = (cx_clamped, cy_clamped, 'W')
+                    
+                if opened_border is not None:
+                    floors = data_dict.get('floors', props.floors)
+                    if z_hit == 0:
+                        entrance_val = data_dict.get('entrance')
+                        if entrance_val and len(entrance_val) >= 3:
+                            old_x, old_y, old_d = entrance_val[0], entrance_val[1], entrance_val[2]
+                            if 0 <= old_x < width and 0 <= old_y < depth:
+                                if old_d == 'N':
+                                    cells[old_y][old_x][0] = True
+                                    if old_y + 1 < depth:
+                                        cells[old_y + 1][old_x][1] = True
+                                elif old_d == 'S':
+                                    cells[old_y][old_x][1] = True
+                                    if old_y - 1 >= 0:
+                                        cells[old_y - 1][old_x][0] = True
+                                elif old_d == 'E':
+                                    cells[old_y][old_x][2] = True
+                                    if old_x + 1 < width:
+                                        cells[old_y][old_x + 1][3] = True
+                                elif old_d == 'W':
+                                    cells[old_y][old_x][3] = True
+                                    if old_x - 1 >= 0:
+                                        cells[old_y][old_x - 1][2] = True
+                                self._old_entrance_dirty = (old_x, old_y)
+                        data_dict['entrance'] = [cx_clamped, cy_clamped, opened_border[2]]
+                    elif z_hit == floors - 1:
+                        if 'exits' not in data_dict or data_dict['exits'] is None:
+                            data_dict['exits'] = []
+                        if not any(ex[0] == cx_clamped and ex[1] == cy_clamped for ex in data_dict['exits']):
+                            data_dict['exits'].append([cx_clamped, cy_clamped, opened_border[2]])
+                            
                 data_dict['cells'] = original_cells
                 self.report({'INFO'}, f"Toggled wall at cell ({cx_clamped}, {cy_clamped})")
                 modified = True
@@ -1726,6 +1767,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                             
                             from .mesh_builder import rebuild_maze_incrementally
                             rebuild_maze_incrementally(props, self.maze_data, context, col, dirty_cells)
+                            col["fire_maze_data"] = json.dumps(data_dict)
             return {'RUNNING_MODAL'}
 
         return {'PASS_THROUGH'}
