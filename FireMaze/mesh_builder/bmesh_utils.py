@@ -589,33 +589,39 @@ def _compute_grid_distances(maze_data, wall_mode):
             Nr = ring_sectors[r]
             
             accessible = []
-            # Neighbors in current floor cz
-            if r >= 1 and not cells_3d[cz][r][theta][0]:
-                accessible.append((cz, r, (theta + 1) % Nr))
-            if r >= 1 and not cells_3d[cz][r][(theta - 1) % Nr][0]:
-                accessible.append((cz, r, (theta - 1) % Nr))
-            if r > 0 and not cells_3d[cz][r][theta][1]:
-                N_in = ring_sectors[r - 1]
-                if N_in == Nr:
-                    accessible.append((cz, r - 1, theta))
-                elif N_in == 1:
-                    accessible.append((cz, r - 1, 0))
-                else:
-                    accessible.append((cz, r - 1, theta // 2))
-            if r < rings - 1:
-                N_out = ring_sectors[r + 1]
-                if N_out == Nr:
-                    if not cells_3d[cz][r + 1][theta][1]:
-                        accessible.append((cz, r + 1, theta))
-                elif Nr == 1:
-                    for t in range(N_out):
-                        if not cells_3d[cz][r + 1][t][1]:
-                            accessible.append((cz, r + 1, t))
-                else:
-                    if not cells_3d[cz][r + 1][2 * theta][1]:
-                        accessible.append((cz, r + 1, 2 * theta))
-                    if not cells_3d[cz][r + 1][2 * theta + 1][1]:
-                        accessible.append((cz, r + 1, 2 * theta + 1))
+            if wall_mode == 'cube':
+                from ..pathfinder import _get_polar_neighbors
+                for nr, ntheta in _get_polar_neighbors(r, theta, rings, ring_sectors):
+                    if not cells_3d[cz][nr][ntheta][0]:
+                        accessible.append((cz, nr, ntheta))
+            else:
+                # Neighbors in current floor cz
+                if r >= 1 and not cells_3d[cz][r][theta][0]:
+                    accessible.append((cz, r, (theta + 1) % Nr))
+                if r >= 1 and not cells_3d[cz][r][(theta - 1) % Nr][0]:
+                    accessible.append((cz, r, (theta - 1) % Nr))
+                if r > 0 and not cells_3d[cz][r][theta][1]:
+                    N_in = ring_sectors[r - 1]
+                    if N_in == Nr:
+                        accessible.append((cz, r - 1, theta))
+                    elif N_in == 1:
+                        accessible.append((cz, r - 1, 0))
+                    else:
+                        accessible.append((cz, r - 1, theta // 2))
+                if r < rings - 1:
+                    N_out = ring_sectors[r + 1]
+                    if N_out == Nr:
+                        if not cells_3d[cz][r + 1][theta][1]:
+                            accessible.append((cz, r + 1, theta))
+                    elif Nr == 1:
+                        for t in range(N_out):
+                            if not cells_3d[cz][r + 1][t][1]:
+                                accessible.append((cz, r + 1, t))
+                    else:
+                        if not cells_3d[cz][r + 1][2 * theta][1]:
+                            accessible.append((cz, r + 1, 2 * theta))
+                        if not cells_3d[cz][r + 1][2 * theta + 1][1]:
+                            accessible.append((cz, r + 1, 2 * theta + 1))
                         
             # Stair connections (cz + 1 and cz - 1)
             node = (cz, r, theta)

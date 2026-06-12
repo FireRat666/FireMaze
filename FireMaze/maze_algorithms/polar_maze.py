@@ -301,6 +301,8 @@ def generate_polar_maze(
             candidates = []
             for r in range(1, rings):
                 for theta in range(ring_sectors[r]):
+                    if wall_mode == 'cube' and cells[r][theta][0]:
+                        continue
                     candidates.append((r, theta))
             random.shuffle(candidates)
             num_stairs = max(1, min(stair_count, len(candidates)))

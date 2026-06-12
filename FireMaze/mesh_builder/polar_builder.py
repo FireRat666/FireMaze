@@ -573,8 +573,10 @@ def _add_wall_polar_bend(bm, src_mesh, mat_wall_offset, uv_layer, final_material
         mat_base = Matrix.Translation(Vector((r_mid * math.cos(phi), r_mid * math.sin(phi), z_lifted))) @ Matrix.Rotation(phi, 4, 'Z') @ Matrix.Translation(Vector((0, shift_val, 0)))
         if wall_type == 'CW':
             mat_local = Matrix.Rotation(math.radians(90), 4, 'X')
-        else:  # CCW
+        else: # CCW
             mat_local = Matrix.Rotation(math.radians(180), 4, 'Z') @ Matrix.Rotation(math.radians(90), 4, 'X')
+        if flip_out:
+            mat_local = Matrix.Rotation(math.radians(180), 4, 'Z') @ mat_local
         mat_combined = mat_base @ mat_wall_offset @ mat_local @ cent
         _add_mesh_at(bm, src_mesh, mat_combined, uv_layer, final_materials_list)
     else:
@@ -689,6 +691,8 @@ def _add_wall_polar_trapezoid(bm, src_mesh, mat_wall_offset, uv_layer, final_mat
             mat_local = Matrix.Rotation(math.radians(90), 4, 'X')
         else:  # CCW
             mat_local = Matrix.Rotation(math.radians(180), 4, 'Z') @ Matrix.Rotation(math.radians(90), 4, 'X')
+        if flip_out:
+            mat_local = Matrix.Rotation(math.radians(180), 4, 'Z') @ mat_local
         mat_combined = mat_base @ mat_wall_offset @ mat_local @ cent
         _add_mesh_at(bm, src_mesh, mat_combined, uv_layer, final_materials_list)
     else:
@@ -1140,7 +1144,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
                         active.add('CW_CIRC')
                     if has_in_wall(r_grid, t_idx):
                         active.add('CCW_CIRC')
-                    if has_cw_wall(r_grid, (t_idx - 1) % N_ref):
+                    if has_cw_wall(r_grid, t_idx):
                         active.add('OUT_RAD')
                         
                     # Inward radial wall in ring r_grid - 1
@@ -1149,7 +1153,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
                         ratio = N_ref // N_in
                         if t_idx % ratio == 0:
                             theta_in_boundary = t_idx // ratio
-                            if has_cw_wall(r_grid - 1, (theta_in_boundary - 1) % N_in):
+                            if has_cw_wall(r_grid - 1, theta_in_boundary):
                                 active.add('IN_RAD')
                 else:
                     # r_grid == rings (outermost boundary)
@@ -1160,7 +1164,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
                         active.add('CW_CIRC')
                     if has_out_wall(rings - 1, t_idx):
                         active.add('CCW_CIRC')
-                    if has_cw_wall(rings - 1, (t_idx - 1) % N_ref):
+                    if has_cw_wall(rings - 1, t_idx):
                         active.add('IN_RAD')
                         
                 return active
@@ -1240,7 +1244,8 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
                             
                         if r >= 1 and cw_wall:
                             add_start = should_generate_cap(r, theta) if props.thin_wall_double_sided else False
-                            add_end = should_generate_cap(r + 1, theta) if props.thin_wall_double_sided else False
+                            theta_ref = round(theta * (ring_sectors[min(r + 1, rings - 1)] / ring_sectors[r]))
+                            add_end = should_generate_cap(r + 1, theta_ref) if props.thin_wall_double_sided else False
                             
                             phi = theta * alpha_r
                             r_in = (r - 0.5) * ctx['ts']
@@ -1637,7 +1642,7 @@ def _build_polar_maze_objects_impl(
     _build_polar_stairs(ctx, props, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
 
     # Build guide path if requested
-    if not force_simple:
+    if not force_simple and name_suffix == "":
         guide_obj = _build_guide_path(props, maze_data, ctx['col'], ctx['materials'])
         if guide_obj:
             created_objects.append(guide_obj)
@@ -1674,11 +1679,16 @@ def _build_polar_maze_objects_impl(
     else:
         if props.merge_objects:
             meshes_to_merge = [obj for obj in created_objects if obj.type == 'MESH']
-            _merge_maze_objects(meshes_to_merge, context, name="FireMaze_Merged")
+            merged_obj = _merge_maze_objects(meshes_to_merge, context, name="FireMaze_Merged")
+        else:
+            merged_obj = None
 
     # Post-process
     if not name_suffix and not props.is_editing:
-        visual_meshes = [obj for obj in ctx['col'].objects if obj.type == 'MESH']
+        if props.merge_objects:
+            visual_meshes = [merged_obj] if (merged_obj and merged_obj.type == 'MESH') else []
+        else:
+            visual_meshes = [obj for obj in created_objects if obj.type == 'MESH']
         if props.optimize_coplanar:
             for obj in visual_meshes:
                 _optimize_coplanar_on_obj(obj)

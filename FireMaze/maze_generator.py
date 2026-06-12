@@ -11,6 +11,7 @@ from .maze_algorithms.polar_maze import generate_polar_maze
 from .maze_algorithms.cube_maze import _generate_cube_maze
 from .maze_algorithms.thin_maze import _generate_thin_maze
 from .utils import set_seed
+from .maze_algorithms.common_helpers import _force_cell_open
 
 def generate_maze(
     width: int,

@@ -184,10 +184,12 @@ def _generate_cube_maze(
         walls = []
         for y in range(sub_h):
             for x in range(sub_w):
+                if blocked[y][x]:
+                    continue
                 cells[2 * y + 1][2 * x + 1][0] = False  # Ensure cell center is floor
-                if x + 1 < sub_w:
+                if x + 1 < sub_w and not blocked[y][x + 1]:
                     walls.append(('V', x, y))
-                if y + 1 < sub_h:
+                if y + 1 < sub_h and not blocked[y + 1][x]:
                     walls.append(('H', x, y))
 
         random.shuffle(walls)
@@ -208,11 +210,14 @@ def _generate_cube_maze(
         next_set_id = sub_w
 
         for y in range(sub_h):
-            # Ensure all row cell centers are floor
+            # Ensure all non-blocked row cell centers are floor
             for x in range(sub_w):
-                cells[2 * y + 1][2 * x + 1][0] = False
+                if not blocked[y][x]:
+                    cells[2 * y + 1][2 * x + 1][0] = False
 
             for x in range(sub_w - 1):
+                if blocked[y][x] or blocked[y][x + 1]:
+                    continue
                 if cell_to_room.get((x, y)) is not None and cell_to_room.get((x, y)) == cell_to_room.get((x + 1, y)):
                     s1 = row_sets[x]
                     s2 = row_sets[x + 1]
@@ -224,10 +229,14 @@ def _generate_cube_maze(
 
             if y > 0:
                 for x in range(sub_w):
+                    if blocked[y][x] or blocked[y - 1][x]:
+                        continue
                     if cell_to_room.get((x, y)) is not None and cell_to_room.get((x, y)) == cell_to_room.get((x, y - 1)):
                         cells[2 * y][2 * x + 1][0] = False
 
             for x in range(sub_w - 1):
+                if blocked[y][x] or blocked[y][x + 1]:
+                    continue
                 s1 = row_sets[x]
                 s2 = row_sets[x + 1]
                 if s1 != s2:
@@ -243,11 +252,13 @@ def _generate_cube_maze(
                 next_row_sets = [None] * sub_w
                 set_groups = {}
                 for x, s in enumerate(row_sets):
-                    set_groups.setdefault(s, []).append(x)
+                    if not blocked[y][x]:
+                        set_groups.setdefault(s, []).append(x)
 
                 for s, group in set_groups.items():
+                    valid_group = [col for col in group if not blocked[y + 1][col]]
                     room_up_cols = []
-                    for col in group:
+                    for col in valid_group:
                         if (cell_to_room.get((col, y)) is not None and 
                             cell_to_room.get((col, y)) == cell_to_room.get((col, y + 1))):
                             room_up_cols.append(col)
@@ -257,11 +268,11 @@ def _generate_cube_maze(
                             cells[2 * y + 2][2 * col + 1][0] = False
                             cells[2 * y + 3][2 * col + 1][0] = False
                             next_row_sets[col] = s
-                    else:
-                        random.shuffle(group)
-                        num_carves = random.randint(1, len(group))
+                    elif valid_group:
+                        random.shuffle(valid_group)
+                        num_carves = random.randint(1, len(valid_group))
                         for i in range(num_carves):
-                            col = group[i]
+                            col = valid_group[i]
                             cells[2 * y + 2][2 * col + 1][0] = False
                             cells[2 * y + 3][2 * col + 1][0] = False
                             next_row_sets[col] = s
@@ -274,6 +285,8 @@ def _generate_cube_maze(
 
         y = sub_h - 1
         for x in range(sub_w - 1):
+            if blocked[y][x] or blocked[y][x + 1]:
+                continue
             s1 = row_sets[x]
             s2 = row_sets[x + 1]
             if s1 != s2:
@@ -285,9 +298,11 @@ def _generate_cube_maze(
     elif algorithm == 'binary_tree':
         for y in range(sub_h):
             for x in range(sub_w):
+                if blocked[y][x]:
+                    continue
                 cells[2 * y + 1][2 * x + 1][0] = False
-                can_north = (y < sub_h - 1)
-                can_east = (x < sub_w - 1)
+                can_north = (y < sub_h - 1 and not blocked[y + 1][x])
+                can_east = (x < sub_w - 1 and not blocked[y][x + 1])
                 
                 if can_north and can_east:
                     if random.random() >= direction_bias:
@@ -304,7 +319,7 @@ def _generate_cube_maze(
                     cells[2 * y + 1][2 * x + 3][0] = False
 
     elif algorithm == 'prims':
-        visited = [[False] * sub_w for _ in range(sub_h)]
+        visited = [[blocked[y][x] for x in range(sub_w)] for _ in range(sub_h)]
         frontier_walls = []
 
         def add_frontier_of(cx, cy):
@@ -315,8 +330,7 @@ def _generate_cube_maze(
                     if not visited[ny][nx]:
                         frontier_walls.append((cx, cy, nx, ny))
 
-        sx = random.randrange(sub_w)
-        sy = random.randrange(sub_h)
+        sx, sy = _get_start_cell(blocked, sub_w, sub_h)
         
         r_start = cell_to_room.get((sx, sy))
         if r_start is not None:
@@ -350,10 +364,9 @@ def _generate_cube_maze(
                     add_frontier_of(ux, uy)
 
     elif algorithm == 'hunt_and_kill':
-        visited = [[False] * sub_w for _ in range(sub_h)]
+        visited = [[blocked[y][x] for x in range(sub_w)] for _ in range(sub_h)]
         
-        cx = random.randrange(sub_w)
-        cy = random.randrange(sub_h)
+        cx, cy = _get_start_cell(blocked, sub_w, sub_h)
         
         def mark_visited(x, y):
             """Mark cell (x, y) as visited in cube mode, including room cells and clearing floor."""
@@ -405,7 +418,7 @@ def _generate_cube_maze(
                     if not visited[y][x]:
                         for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
                             nx, ny = x + dx, y + dy
-                            if 0 <= nx < sub_w and 0 <= ny < sub_h and visited[ny][nx]:
+                            if 0 <= nx < sub_w and 0 <= ny < sub_h and visited[ny][nx] and not blocked[ny][nx]:
                                 cells[y + ny + 1][x + nx + 1][0] = False
                                 mark_visited(x, y)
                                 cx, cy = x, y
@@ -420,34 +433,45 @@ def _generate_cube_maze(
                 break
 
     elif algorithm == 'sidewinder':
+        run = []
         for y in range(sub_h):
             for x in range(sub_w):
+                if blocked[y][x]:
+                    if run:
+                        if y < sub_h - 1:
+                            valid_run = [rx for rx in run if not blocked[y + 1][rx]]
+                            if valid_run:
+                                member_x = random.choice(valid_run)
+                                cells[2 * y + 2][2 * member_x + 1][0] = False
+                                cells[2 * y + 3][2 * member_x + 1][0] = False
+                        run = []
+                    continue
+                
                 cells[2 * y + 1][2 * x + 1][0] = False
-            
-            run = []
-            for x in range(sub_w):
                 run.append(x)
                 
                 in_same_room = False
-                if x + 1 < sub_w:
+                if x + 1 < sub_w and not blocked[y][x + 1]:
                     r1 = cell_to_room.get((x, y))
                     r2 = cell_to_room.get((x + 1, y))
                     if r1 is not None and r1 == r2:
                         in_same_room = True
 
-                carve_east = (x < sub_w - 1) and (in_same_room or random.random() < east_bias)
+                carve_east = (x < sub_w - 1) and (not blocked[y][x + 1]) and (in_same_room or random.random() < east_bias)
                 
                 if carve_east:
                     cells[2 * y + 1][2 * x + 2][0] = False
                 else:
                     if y < sub_h - 1:
-                        member_x = random.choice(run)
-                        cells[2 * y + 2][2 * member_x + 1][0] = False
-                        cells[2 * y + 3][2 * member_x + 1][0] = False
+                        valid_run = [rx for rx in run if not blocked[y + 1][rx]]
+                        if valid_run:
+                            member_x = random.choice(valid_run)
+                            cells[2 * y + 2][2 * member_x + 1][0] = False
+                            cells[2 * y + 3][2 * member_x + 1][0] = False
                     run = []
 
     elif algorithm == 'wilsons':
-        visited = [[False] * sub_w for _ in range(sub_h)]
+        visited = [[blocked[y][x] for x in range(sub_w)] for _ in range(sub_h)]
         unvisited_list = []
         
         def mark_visited(x, y):
@@ -461,8 +485,7 @@ def _generate_cube_maze(
                 visited[y][x] = True
                 cells[2 * y + 1][2 * x + 1][0] = False
 
-        sx = random.randrange(sub_w)
-        sy = random.randrange(sub_h)
+        sx, sy = _get_start_cell(blocked, sub_w, sub_h)
         mark_visited(sx, sy)
         
         for y in range(sub_h):
@@ -480,22 +503,29 @@ def _generate_cube_maze(
             
             while not visited[cy][cx]:
                 dirs = [(0, 1), (0, -1), (1, 0), (-1, 0)]
-                dx, dy = random.choice(dirs)
+                valid_dirs = [(dx, dy) for dx, dy in dirs if 0 <= cx + dx < sub_w and 0 <= cy + dy < sub_h and not blocked[cy + dy][cx + dx]]
+                if not valid_dirs:
+                    break
+                dx, dy = random.choice(valid_dirs)
                 nx, ny = cx + dx, cy + dy
-                if 0 <= nx < sub_w and 0 <= ny < sub_h:
-                    if (nx, ny) in walk:
-                        idx = walk.index((nx, ny))
-                        walk = walk[:idx + 1]
-                    else:
-                        walk.append((nx, ny))
-                    cx, cy = nx, ny
+                if (nx, ny) in walk:
+                    idx = walk.index((nx, ny))
+                    walk = walk[:idx + 1]
+                else:
+                    walk.append((nx, ny))
+                cx, cy = nx, ny
             
-            for i in range(len(walk) - 1):
-                x1, y1 = walk[i]
-                x2, y2 = walk[i+1]
-                cells[y1 + y2 + 1][x1 + x2 + 1][0] = False
-                mark_visited(x1, y1)
-            mark_visited(walk[-1][0], walk[-1][1])
+            reached_visited = visited[cy][cx]
+            if reached_visited:
+                for i in range(len(walk) - 1):
+                    x1, y1 = walk[i]
+                    x2, y2 = walk[i+1]
+                    cells[y1 + y2 + 1][x1 + x2 + 1][0] = False
+                    mark_visited(x1, y1)
+                mark_visited(walk[-1][0], walk[-1][1])
+            else:
+                for wx, wy in walk:
+                    visited[wy][wx] = True
 
     elif algorithm == 'recursive_division':
         for y in range(depth):
@@ -559,7 +589,7 @@ def _generate_cube_maze(
         divide(0, 0, sub_w, sub_h, choose_orientation(sub_w, sub_h))
 
     elif algorithm == 'growing_tree':
-        visited = [[False] * sub_w for _ in range(sub_h)]
+        visited = [[blocked[y][x] for x in range(sub_w)] for _ in range(sub_h)]
         active = []
         
         def add_to_active(x, y):
@@ -576,8 +606,7 @@ def _generate_cube_maze(
                 cells[2 * y + 1][2 * x + 1][0] = False
                 active.append((x, y))
 
-        sx = random.randrange(sub_w)
-        sy = random.randrange(sub_h)
+        sx, sy = _get_start_cell(blocked, sub_w, sub_h)
         add_to_active(sx, sy)
         
         while active:
@@ -776,7 +805,7 @@ def _generate_cube_maze(
         # Recompute entrance_list/exit_list and set against final cells state
         entrance_list = [item for item in entrance_list if not cells[0][item[1]][item[0]][0]]
         exit_list = [item for item in exit_list if not cells[0][item[1]][item[0]][0]]
-        maze_data.entrance = entrance_list[0] if entrance_list else (1, 1, 'S')
+        maze_data.entrance = entrance_list[0] if entrance_list else None
         maze_data.exits = exit_list
     
     maze_data.guide_path = find_shortest_path(maze_data, wall_mode='cube')

@@ -173,9 +173,11 @@ def _generate_thin_maze(
         walls = []
         for y in range(depth):
             for x in range(width):
-                if x + 1 < width:
+                if blocked and blocked[y][x]:
+                    continue
+                if x + 1 < width and not (blocked and blocked[y][x + 1]):
                     walls.append(('V', x, y))
-                if y + 1 < depth:
+                if y + 1 < depth and not (blocked and blocked[y + 1][x]):
                     walls.append(('H', x, y))
 
         random.shuffle(walls)
@@ -200,6 +202,8 @@ def _generate_thin_maze(
 
         for y in range(depth):
             for x in range(width - 1):
+                if blocked and (blocked[y][x] or blocked[y][x + 1]):
+                    continue
                 if cell_to_room.get((x, y)) is not None and cell_to_room.get((x, y)) == cell_to_room.get((x + 1, y)):
                     s1 = row_sets[x]
                     s2 = row_sets[x + 1]
@@ -212,11 +216,15 @@ def _generate_thin_maze(
 
             if y > 0:
                 for x in range(width):
+                    if blocked and (blocked[y][x] or blocked[y - 1][x]):
+                        continue
                     if cell_to_room.get((x, y)) is not None and cell_to_room.get((x, y)) == cell_to_room.get((x, y - 1)):
                         cells[y - 1][x][0] = False
                         cells[y][x][1] = False
 
             for x in range(width - 1):
+                if blocked and (blocked[y][x] or blocked[y][x + 1]):
+                    continue
                 s1 = row_sets[x]
                 s2 = row_sets[x + 1]
                 if s1 != s2:
@@ -233,11 +241,13 @@ def _generate_thin_maze(
                 next_row_sets = [None] * width
                 set_groups = {}
                 for x, s in enumerate(row_sets):
-                    set_groups.setdefault(s, []).append(x)
+                    if not (blocked and blocked[y][x]):
+                        set_groups.setdefault(s, []).append(x)
 
                 for s, group in set_groups.items():
+                    valid_group = [col for col in group if not (blocked and blocked[y + 1][col])]
                     room_up_cols = []
-                    for col in group:
+                    for col in valid_group:
                         if (cell_to_room.get((col, y)) is not None and 
                             cell_to_room.get((col, y)) == cell_to_room.get((col, y + 1))):
                             room_up_cols.append(col)
@@ -247,11 +257,11 @@ def _generate_thin_maze(
                             cells[y][col][0] = False
                             cells[y + 1][col][1] = False
                             next_row_sets[col] = s
-                    else:
-                        random.shuffle(group)
-                        num_carves = random.randint(1, len(group))
+                    elif valid_group:
+                        random.shuffle(valid_group)
+                        num_carves = random.randint(1, len(valid_group))
                         for i in range(num_carves):
-                            col = group[i]
+                            col = valid_group[i]
                             cells[y][col][0] = False
                             cells[y + 1][col][1] = False
                             next_row_sets[col] = s
@@ -264,6 +274,8 @@ def _generate_thin_maze(
 
         y = depth - 1
         for x in range(width - 1):
+            if blocked and (blocked[y][x] or blocked[y][x + 1]):
+                continue
             s1 = row_sets[x]
             s2 = row_sets[x + 1]
             if s1 != s2:
@@ -276,8 +288,10 @@ def _generate_thin_maze(
     elif algorithm == 'binary_tree':
         for y in range(depth):
             for x in range(width):
-                can_north = (y < depth - 1)
-                can_east = (x < width - 1)
+                if blocked and blocked[y][x]:
+                    continue
+                can_north = (y < depth - 1 and not (blocked and blocked[y + 1][x]))
+                can_east = (x < width - 1 and not (blocked and blocked[y][x + 1]))
                 
                 if can_north and can_east:
                     if random.random() >= direction_bias:
@@ -294,7 +308,7 @@ def _generate_thin_maze(
                     cells[y][x + 1][3] = False
 
     elif algorithm == 'prims':
-        visited = [[False] * width for _ in range(depth)]
+        visited = [[blocked[y][x] if blocked else False for x in range(width)] for _ in range(depth)]
         frontier_walls = []
 
         def add_frontier_of(cx, cy):
@@ -305,8 +319,7 @@ def _generate_thin_maze(
                     if not visited[ny][nx]:
                         frontier_walls.append((cx, cy, nx, ny, dname))
 
-        sx = random.randrange(width)
-        sy = random.randrange(depth)
+        sx, sy = _get_start_cell(blocked, width, depth)
         
         r_start = cell_to_room.get((sx, sy))
         if r_start is not None:
@@ -338,10 +351,9 @@ def _generate_thin_maze(
                     add_frontier_of(ux, uy)
 
     elif algorithm == 'hunt_and_kill':
-        visited = [[False] * width for _ in range(depth)]
+        visited = [[blocked[y][x] if blocked else False for x in range(width)] for _ in range(depth)]
         
-        cx = random.randrange(width)
-        cy = random.randrange(depth)
+        cx, cy = _get_start_cell(blocked, width, depth)
         
         def mark_visited(x, y):
             """Mark cell (x, y) as visited in 2D mode (Hunt-and-Kill)."""
@@ -391,7 +403,7 @@ def _generate_thin_maze(
                     if not visited[y][x]:
                         for dname, (dx, dy) in [('N', (0, 1)), ('S', (0, -1)), ('E', (1, 0)), ('W', (-1, 0))]:
                             nx, ny = x + dx, y + dy
-                            if 0 <= nx < width and 0 <= ny < depth and visited[ny][nx]:
+                            if 0 <= nx < width and 0 <= ny < depth and visited[ny][nx] and not (blocked and blocked[ny][nx]):
                                 cells[y][x][index[dname]] = False
                                 cells[ny][nx][index[opposites[dname]]] = False
                                 mark_visited(x, y)
@@ -407,32 +419,45 @@ def _generate_thin_maze(
                 break
 
     elif algorithm == 'sidewinder':
+        run = []
         for y in range(depth):
-            run = []
             for x in range(width):
+                if blocked and blocked[y][x]:
+                    if run:
+                        if y < depth - 1:
+                            valid_run = [rx for rx in run if not (blocked and blocked[y + 1][rx])]
+                            if valid_run:
+                                member_x = random.choice(valid_run)
+                                cells[y][member_x][0] = False
+                                cells[y + 1][member_x][1] = False
+                        run = []
+                    continue
+                
                 run.append(x)
                 
                 in_same_room = False
-                if x + 1 < width:
+                if x + 1 < width and not (blocked and blocked[y][x + 1]):
                     r1 = cell_to_room.get((x, y))
                     r2 = cell_to_room.get((x + 1, y))
                     if r1 is not None and r1 == r2:
                         in_same_room = True
 
-                carve_east = (x < width - 1) and (in_same_room or random.random() < east_bias)
+                carve_east = (x < width - 1) and (not (blocked and blocked[y][x + 1])) and (in_same_room or random.random() < east_bias)
                 
                 if carve_east:
                     cells[y][x][2] = False
                     cells[y][x + 1][3] = False
                 else:
                     if y < depth - 1:
-                        member_x = random.choice(run)
-                        cells[y][member_x][0] = False
-                        cells[y + 1][member_x][1] = False
+                        valid_run = [rx for rx in run if not (blocked and blocked[y + 1][rx])]
+                        if valid_run:
+                            member_x = random.choice(valid_run)
+                            cells[y][member_x][0] = False
+                            cells[y + 1][member_x][1] = False
                     run = []
 
     elif algorithm == 'wilsons':
-        visited = [[False] * width for _ in range(depth)]
+        visited = [[blocked[y][x] if blocked else False for x in range(width)] for _ in range(depth)]
         unvisited_list = []
         
         def mark_visited(x, y):
@@ -444,8 +469,7 @@ def _generate_thin_maze(
             else:
                 visited[y][x] = True
 
-        sx = random.randrange(width)
-        sy = random.randrange(depth)
+        sx, sy = _get_start_cell(blocked, width, depth)
         mark_visited(sx, sy)
         
         for y in range(depth):
@@ -464,26 +488,33 @@ def _generate_thin_maze(
             
             while not visited[cy][cx]:
                 dirs = [('N', (0, 1)), ('S', (0, -1)), ('E', (1, 0)), ('W', (-1, 0))]
-                dname, (dx, dy) = random.choice(dirs)
+                valid_dirs = [(dname, (dx, dy)) for dname, (dx, dy) in dirs if 0 <= cx + dx < width and 0 <= cy + dy < depth and not (blocked and blocked[cy + dy][cx + dx])]
+                if not valid_dirs:
+                    break
+                dname, (dx, dy) = random.choice(valid_dirs)
                 nx, ny = cx + dx, cy + dy
-                if 0 <= nx < width and 0 <= ny < depth:
-                    if (nx, ny) in walk:
-                        idx = walk.index((nx, ny))
-                        walk = walk[:idx + 1]
-                        walk_dirs = walk_dirs[:idx]
-                    else:
-                        walk.append((nx, ny))
-                        walk_dirs.append(dname)
-                    cx, cy = nx, ny
+                if (nx, ny) in walk:
+                    idx = walk.index((nx, ny))
+                    walk = walk[:idx + 1]
+                    walk_dirs = walk_dirs[:idx]
+                else:
+                    walk.append((nx, ny))
+                    walk_dirs.append(dname)
+                cx, cy = nx, ny
             
-            for i in range(len(walk) - 1):
-                x1, y1 = walk[i]
-                dname = walk_dirs[i]
-                x2, y2 = walk[i+1]
-                cells[y1][x1][index[dname]] = False
-                cells[y2][x2][index[opposites[dname]]] = False
-                mark_visited(x1, y1)
-            mark_visited(walk[-1][0], walk[-1][1])
+            reached_visited = visited[cy][cx]
+            if reached_visited:
+                for i in range(len(walk) - 1):
+                    x1, y1 = walk[i]
+                    dname = walk_dirs[i]
+                    x2, y2 = walk[i+1]
+                    cells[y1][x1][index[dname]] = False
+                    cells[y2][x2][index[opposites[dname]]] = False
+                    mark_visited(x1, y1)
+                mark_visited(walk[-1][0], walk[-1][1])
+            else:
+                for wx, wy in walk:
+                    visited[wy][wx] = True
 
     elif algorithm == 'recursive_division':
         for y in range(depth):
@@ -542,7 +573,7 @@ def _generate_thin_maze(
         divide(0, 0, width, depth, choose_orientation(width, depth))
 
     elif algorithm == 'growing_tree':
-        visited = [[False] * width for _ in range(depth)]
+        visited = [[blocked[y][x] if blocked else False for x in range(width)] for _ in range(depth)]
         active = []
         
         def add_to_active(x, y):
@@ -557,8 +588,7 @@ def _generate_thin_maze(
                 visited[y][x] = True
                 active.append((x, y))
 
-        sx = random.randrange(width)
-        sy = random.randrange(depth)
+        sx, sy = _get_start_cell(blocked, width, depth)
         add_to_active(sx, sy)
         
         while active:
@@ -692,6 +722,9 @@ def _generate_thin_maze(
                     exit_list.append((x, y, d))
                 carved_count += 1
 
+        if carved_count < count:
+            raise ValueError(f"Failed to carve the requested count of {count} border openings on side {side}.")
+
     carve_borders(num_entrances, entrance_side, is_entrance=True)
     if mode == 'exit':
         carve_borders(num_exits, exit_side, is_entrance=False)
@@ -736,7 +769,7 @@ def _generate_thin_maze(
                     if x - 1 >= 0:
                         cells[y][x - 1][6] = idx
 
-    main_entrance = entrance_list[0] if entrance_list else (0, 0, 'S')
+    main_entrance = entrance_list[0] if entrance_list else None
     main_exits = exit_list
     center = (width // 2, depth // 2)
 
@@ -774,7 +807,7 @@ def _generate_thin_maze(
         # Filter entrances and exits to exclude masked cells
         entrance_list = [item for item in entrance_list if not blocked[item[1]][item[0]]]
         exit_list = [item for item in exit_list if not blocked[item[1]][item[0]]]
-        maze_data.entrance = entrance_list[0] if entrance_list else (0, 0, 'S')
+        maze_data.entrance = entrance_list[0] if entrance_list else None
         maze_data.exits = exit_list
                         
     maze_data.guide_path = find_shortest_path(maze_data, wall_mode='thin')

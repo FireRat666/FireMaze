@@ -445,6 +445,9 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
  
     wall_mode = props.wall_mode
     rng = get_rng()
+
+    cells_3d, floors = _resolve_cells_3d(maze_data.cells)
+    resolved_cells = cells_3d[0]
  
     def place_prop(src_obj, pos, rot_z):
         """Copy a source prop object into the maze collection at the given position and rotation."""
@@ -469,8 +472,8 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                 Nr = ring_sectors[r]
                 alpha_r = 2 * math.pi / Nr
                 for theta in range(Nr):
-                    cw_wall = maze_data.cells[r][theta][0]
-                    in_wall = maze_data.cells[r][theta][1]
+                    cw_wall = resolved_cells[r][theta][0]
+                    in_wall = resolved_cells[r][theta][1]
                     
                     r_mid = r * ts
                     theta_mid = (theta + 0.5) * alpha_r
@@ -518,11 +521,11 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                     Nr = ring_sectors[r]
                     accessible = []
                     
-                    if r >= 1 and not maze_data.cells[r][theta][0]:
+                    if r >= 1 and not resolved_cells[r][theta][0]:
                         accessible.append(('CW', (r, (theta + 1) % Nr)))
-                    if r >= 1 and not maze_data.cells[r][(theta - 1) % Nr][0]:
+                    if r >= 1 and not resolved_cells[r][(theta - 1) % Nr][0]:
                         accessible.append(('CCW', (r, (theta - 1) % Nr)))
-                    if r > 0 and not maze_data.cells[r][theta][1]:
+                    if r > 0 and not resolved_cells[r][theta][1]:
                         N_in = ring_sectors[r - 1]
                         if N_in == Nr:
                             accessible.append(('IN', (r - 1, theta)))
@@ -533,16 +536,16 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                     if r < rings - 1:
                         N_out = ring_sectors[r + 1]
                         if N_out == Nr:
-                            if not maze_data.cells[r + 1][theta][1]:
+                            if not resolved_cells[r + 1][theta][1]:
                                 accessible.append(('OUT', (r + 1, theta)))
                         elif Nr == 1:
                             for t in range(N_out):
-                                if not maze_data.cells[r + 1][t][1]:
+                                if not resolved_cells[r + 1][t][1]:
                                     accessible.append(('OUT', (r + 1, t)))
                         else:
-                            if not maze_data.cells[r + 1][2 * theta][1]:
+                            if not resolved_cells[r + 1][2 * theta][1]:
                                 accessible.append(('OUT', (r + 1, 2 * theta)))
-                            if not maze_data.cells[r + 1][2 * theta + 1][1]:
+                            if not resolved_cells[r + 1][2 * theta + 1][1]:
                                 accessible.append(('OUT', (r + 1, 2 * theta + 1)))
                                 
                     if len(accessible) == 1 and r > 0:
@@ -614,7 +617,7 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
         for y in range(maze_data.depth):
             for x in range(maze_data.width):
                 if wall_mode == 'thin':
-                    c = maze_data.cells[y][x]
+                    c = resolved_cells[y][x]
                     # North wall
                     if c[0] and rng.random() < density:
                         pos = (x * ts + ts/2, (y + 1) * ts - offset, 0.6 * wh)
@@ -632,24 +635,24 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                         pos = (x * ts + offset, y * ts + ts/2, 0.6 * wh)
                         place_prop(torch_src, pos, -math.pi / 2)
                 else: # cube
-                    if maze_data.cells[y][x][0]: # wall cube
+                    if resolved_cells[y][x][0]: # wall cube
                         # North
-                        if y + 1 < maze_data.depth and not maze_data.cells[y+1][x][0]:
+                        if y + 1 < maze_data.depth and not resolved_cells[y+1][x][0]:
                             if rng.random() < density:
                                 pos = (x * ts + ts/2, (y + 1) * ts + offset, 0.6 * wh)
                                 place_prop(torch_src, pos, 0.0)
                         # South
-                        if y - 1 >= 0 and not maze_data.cells[y-1][x][0]:
+                        if y - 1 >= 0 and not resolved_cells[y-1][x][0]:
                             if rng.random() < density:
                                 pos = (x * ts + ts/2, y * ts - offset, 0.6 * wh)
                                 place_prop(torch_src, pos, math.pi)
                         # East
-                        if x + 1 < maze_data.width and not maze_data.cells[y][x+1][0]:
+                        if x + 1 < maze_data.width and not resolved_cells[y][x+1][0]:
                             if rng.random() < density:
                                 pos = ((x + 1) * ts + offset, y * ts + ts/2, 0.6 * wh)
                                 place_prop(torch_src, pos, math.pi / 2)
                         # West
-                        if x - 1 >= 0 and not maze_data.cells[y][x-1][0]:
+                        if x - 1 >= 0 and not resolved_cells[y][x-1][0]:
                             if rng.random() < density:
                                 pos = (x * ts - offset, y * ts + ts/2, 0.6 * wh)
                                 place_prop(torch_src, pos, -math.pi / 2)
@@ -666,7 +669,7 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                 open_dir = None
                 
                 if wall_mode == 'thin':
-                    c = maze_data.cells[y][x]
+                    c = resolved_cells[y][x]
                     if sum(c[:4]) == 3:
                         is_dead = True
                         if not c[0]: open_dir = 'N'
@@ -674,12 +677,12 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                         elif not c[2]: open_dir = 'E'
                         else: open_dir = 'W'
                 else: # cube
-                    if not maze_data.cells[y][x][0]:
+                    if not resolved_cells[y][x][0]:
                         neighbors = []
                         for d, dx, dy in [('N', 0, 1), ('S', 0, -1), ('E', 1, 0), ('W', -1, 0)]:
                             nx, y_neighbor = x + dx, y + dy
                             if 0 <= nx < maze_data.width and 0 <= y_neighbor < maze_data.depth:
-                                if not maze_data.cells[y_neighbor][nx][0]:
+                                if not resolved_cells[y_neighbor][nx][0]:
                                     neighbors.append(d)
                         if len(neighbors) == 1:
                             is_dead = True

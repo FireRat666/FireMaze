@@ -10,7 +10,7 @@ class MazeData:
     width: int
     depth: int
     cells: List  # cells[z][y][x] = [...] (3D for multilevel, 2D for single-floor back-compat)
-    entrance: Tuple[int, int, str]
+    entrance: Optional[Tuple[int, int, str]] = None
     exits: List[Tuple[int, int, str]] = field(default_factory=list)
     center: Tuple[int, int] = (0, 0)
     guide_path: List = field(default_factory=list)  # (z, y, x) 3-tuples or (y, x) 2-tuples back-compat

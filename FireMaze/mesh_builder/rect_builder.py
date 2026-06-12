@@ -395,6 +395,28 @@ def _build_rect_thin_floor(ctx, maze_data, created_objects, name_suffix, bm=None
 
 
 
+def _compute_corner_offsets(a, b, seg_type, h_positions, v_positions, clean_corners, tw):
+    """Compute the left/south and right/north end corner extensions/offsets for thin walls."""
+    if seg_type == 'H':
+        perp_left = ((a, b) in v_positions) + ((a, b - 1) in v_positions)
+        perp_right = ((a + 1, b) in v_positions) + ((a + 1, b - 1) in v_positions)
+        continues_left = (a - 1, b) in h_positions
+        continues_right = (a + 1, b) in h_positions
+        
+        offset_left = tw if (clean_corners and perp_left == 1 and not continues_left) else 0.0
+        offset_right = tw if (clean_corners and perp_right == 1 and not continues_right) else 0.0
+        return offset_left, offset_right, perp_left, perp_right, continues_left, continues_right
+    else:
+        perp_south = ((a, b) in h_positions) + ((a - 1, b) in h_positions)
+        perp_north = ((a, b + 1) in h_positions) + ((a - 1, b + 1) in h_positions)
+        continues_south = (a, b - 1) in v_positions
+        continues_north = (a, b + 1) in v_positions
+        
+        offset_south = tw if (clean_corners and perp_south == 1 and not continues_south) else 0.0
+        offset_north = tw if (clean_corners and perp_north == 1 and not continues_north) else 0.0
+        return offset_south, offset_north, perp_south, perp_north, continues_south, continues_north
+
+
 def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, bm=None, uv_layer=None, materials=None, bm_cap=None, uv_layer_cap=None, materials_cap=None, dirty_cells=None):
     # Walls and caps
     if bm is None:
@@ -506,26 +528,25 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, 
                         else:
                             wall_idx = b % len(ctx['wall_meshes_list']) if len(ctx['wall_meshes_list']) > 0 else -1
 
+                resolved_mesh = None
+                if ctx['wall_meshes_list']:
+                    if isinstance(wall_idx, int) and 0 <= wall_idx < len(ctx['wall_meshes_list']):
+                        resolved_mesh = ctx['wall_meshes_list'][wall_idx]
+                    else:
+                        resolved_mesh = wall_rng.choice(ctx['wall_meshes_list'])
+
                 if seg_type == 'H':
                     x0, x1 = a * ctx['ts'], (a + 1) * ctx['ts']
                     yc = b * ctx['ts']
                     
-                    perp_left = ((a, b) in v_positions) + ((a, b - 1) in v_positions)
-                    perp_right = ((a + 1, b) in v_positions) + ((a + 1, b - 1) in v_positions)
-                    continues_left = (a - 1, b) in h_positions
-                    continues_right = (a + 1, b) in h_positions
-                    
-                    dx_left = tw if (clean_corners and perp_left == 1 and not continues_left) else 0.0
-                    dx_right = tw if (clean_corners and perp_right == 1 and not continues_right) else 0.0
+                    dx_left, dx_right, perp_left, perp_right, continues_left, continues_right = _compute_corner_offsets(
+                        a, b, 'H', h_positions, v_positions, clean_corners, tw
+                    )
                     
                     def add_horizontal_face(direction, offset_rot, custom_mesh_fallback, y_offset, uvs_standard, local_pts):
                         """Place a horizontal wall face (along Y) using a custom mesh or procedural geometry."""
                         if ctx['wall_meshes_list']:
-                            src_mesh = None
-                            if isinstance(wall_idx, int) and 0 <= wall_idx < len(ctx['wall_meshes_list']):
-                                src_mesh = ctx['wall_meshes_list'][wall_idx]
-                            else:
-                                src_mesh = wall_rng.choice(ctx['wall_meshes_list'])
+                            src_mesh = resolved_mesh
                             if clean_corners and (dx_left > 0.0 or dx_right > 0.0):
                                 scale_x = (ctx['ts'] + dx_left + dx_right) / ctx['ts']
                                 shift_x = (dx_right - dx_left) / 2
@@ -576,14 +597,14 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, 
                                                 [(-ctx['ts']/2, -tw, -sh/2), (ctx['ts']/2, -tw, -sh/2), (ctx['ts']/2, -tw, sh/2), (-ctx['ts']/2, -tw, sh/2)])
                         
                         # West end-cap
-                        if not continues_left and (not clean_corners or perp_left <= 1):
+                        if not continues_left and perp_left <= 1:
                             T = Matrix.Translation(Vector((x0 + ctx['ts']/2, yc, hw))) @ ctx['mat_wall_offset']
                             v_pts = [T @ Vector(p) for p in [(-ctx['ts']/2, tw, -sh/2), (-ctx['ts']/2, -tw, -sh/2), (-ctx['ts']/2, -tw, sh/2), (-ctx['ts']/2, tw, sh/2)]]
                             f = bm_cap.faces.new([bm_cap.verts.new(p) for p in v_pts])
                             for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
                                 loop[uv_cap].uv = uv
                         # East end-cap
-                        if not continues_right and (not clean_corners or perp_right <= 1):
+                        if not continues_right and perp_right <= 1:
                             T = Matrix.Translation(Vector((x0 + ctx['ts']/2, yc, hw))) @ ctx['mat_wall_offset']
                             v_pts = [T @ Vector(p) for p in [(ctx['ts']/2, -tw, -sh/2), (ctx['ts']/2, tw, -sh/2), (ctx['ts']/2, tw, sh/2), (ctx['ts']/2, -tw, sh/2)]]
                             f = bm_cap.faces.new([bm_cap.verts.new(p) for p in v_pts])
@@ -607,22 +628,14 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, 
                     xc = a * ctx['ts']
                     y0, y1 = b * ctx['ts'], (b + 1) * ctx['ts']
                     
-                    perp_south = ((a, b) in h_positions) + ((a - 1, b) in h_positions)
-                    perp_north = ((a, b + 1) in h_positions) + ((a - 1, b + 1) in h_positions)
-                    continues_south = (a, b - 1) in v_positions
-                    continues_north = (a, b + 1) in v_positions
-                    
-                    dy_south = tw if (clean_corners and perp_south == 1 and not continues_south) else 0.0
-                    dy_north = tw if (clean_corners and perp_north == 1 and not continues_north) else 0.0
+                    dy_south, dy_north, perp_south, perp_north, continues_south, continues_north = _compute_corner_offsets(
+                        a, b, 'V', h_positions, v_positions, clean_corners, tw
+                    )
                     
                     def add_vertical_face(direction, offset_rot, custom_mesh_fallback, x_offset, uvs_standard, local_pts):
                         """Place a vertical wall face (along X) using a custom mesh or procedural geometry."""
                         if ctx['wall_meshes_list']:
-                            src_mesh = None
-                            if isinstance(wall_idx, int) and 0 <= wall_idx < len(ctx['wall_meshes_list']):
-                                src_mesh = ctx['wall_meshes_list'][wall_idx]
-                            else:
-                                src_mesh = wall_rng.choice(ctx['wall_meshes_list'])
+                            src_mesh = resolved_mesh
                             if clean_corners and (dy_south > 0.0 or dy_north > 0.0):
                                 scale_y = (ctx['ts'] + dy_south + dy_north) / ctx['ts']
                                 shift_y = (dy_north - dy_south) / 2
@@ -673,14 +686,14 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, 
                                               [(-tw, ctx['ts']/2, -sh/2), (-tw, -ctx['ts']/2, -sh/2), (-tw, -ctx['ts']/2, sh/2), (-tw, ctx['ts']/2, sh/2)])
                         
                         # South end-cap
-                        if not continues_south and (not clean_corners or perp_south <= 1):
+                        if not continues_south and perp_south <= 1:
                             T = Matrix.Translation(Vector((xc, y0 + ctx['ts']/2, hw))) @ ctx['mat_wall_offset']
                             v_pts = [T @ Vector(p) for p in [(-tw, -ctx['ts']/2, -sh/2), (tw, -ctx['ts']/2, -sh/2), (tw, -ctx['ts']/2, sh/2), (-tw, -ctx['ts']/2, sh/2)]]
                             f = bm_cap.faces.new([bm_cap.verts.new(p) for p in v_pts])
                             for loop, uv in zip(f.loops, [(0,0),(1,0),(1,1),(0,1)]):
                                 loop[uv_cap].uv = uv
                         # North end-cap
-                        if not continues_north and (not clean_corners or perp_north <= 1):
+                        if not continues_north and perp_north <= 1:
                             T = Matrix.Translation(Vector((xc, y0 + ctx['ts']/2, hw))) @ ctx['mat_wall_offset']
                             v_pts = [T @ Vector(p) for p in [(tw, ctx['ts']/2, -sh/2), (-tw, ctx['ts']/2, -sh/2), (-tw, ctx['ts']/2, sh/2), (tw, ctx['ts']/2, sh/2)]]
                             f = bm_cap.faces.new([bm_cap.verts.new(p) for p in v_pts])
@@ -1038,7 +1051,7 @@ def build_maze_objects_impl(
 
 
     # Build guide path if requested
-    if not force_simple:
+    if not force_simple and name_suffix == "":
         guide_obj = _build_guide_path(props, maze_data, ctx['col'], ctx['materials'])
         if guide_obj:
             created_objects.append(guide_obj)
@@ -1086,7 +1099,10 @@ def build_maze_objects_impl(
 
     # Post-process visual mesh objects (optimize coplanar, vertex paint, lightmap)
     if not name_suffix and not props.is_editing:
-        visual_meshes = [obj for obj in ctx['col'].objects if obj.type == 'MESH']
+        if props.merge_objects:
+            visual_meshes = [merged_obj] if (merged_obj and merged_obj.type == 'MESH') else []
+        else:
+            visual_meshes = [obj for obj in created_objects if obj.type == 'MESH']
         
         # 1. Optimize coplanar faces
         if props.optimize_coplanar:

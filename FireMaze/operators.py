@@ -784,6 +784,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
     def _handle_polar_mesh_cycle(self, context, event, props, col, data_dict, cells, wall_mode, ring_sectors, rings, hit_x, hit_y, ts, r_hit, phi_hit, r_idx, alpha_r, theta, Nr, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells, z_hit):
         modified = False
         rebuilt_text = ""
+        tr, tt = r_idx, theta
         is_wall = cells[r_idx][theta][0] if wall_mode == 'cube' else False
         
         if face_dir == 'ROOF':
@@ -815,8 +816,8 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                         d_in = abs(r_hit - (r_idx - 0.5) * ts)
                         d_out = abs(r_hit - (r_idx + 0.5) * ts)
                         
-                        d_cw = r_hit * _angle_diff(phi_hit, (theta + 1) * alpha_r)
-                        d_ccw = r_hit * _angle_diff(phi_hit, theta * alpha_r)
+                        d_cw = r_hit * _angle_diff(phi_hit, theta * alpha_r)
+                        d_ccw = r_hit * _angle_diff(phi_hit, (theta + 1) * alpha_r)
 
                         if r_idx == 0:
                             min_d = d_out
@@ -829,7 +830,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                         
                         if min_d == d_cw:
                             A = (r_idx, theta)
-                            B = (r_idx, (theta + 1) % Nr)
+                            B = (r_idx, (theta - 1) % Nr)
                             if not cells[A[0]][A[1]][0]:
                                 owner_cell = A
                                 owner_idx_pos = 2
@@ -844,7 +845,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                                 boundary_name = "clockwise radial boundary wall (fallback)"
                         elif min_d == d_ccw:
                             A = (r_idx, theta)
-                            B = (r_idx, (theta - 1) % Nr)
+                            B = (r_idx, (theta + 1) % Nr)
                             if not cells[A[0]][A[1]][0]:
                                 owner_cell = A
                                 owner_idx_pos = 3
@@ -912,13 +913,14 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                             modified = True
                             rebuilt_text = boundary_name
                             r_idx, theta = r_own, theta_own
+                            tr, tt = r_own, theta_own
             else:
                 # Thin wall mode
                 d_in = abs(r_hit - (r_idx - 0.5) * ts)
                 d_out = abs(r_hit - (r_idx + 0.5) * ts)
                 
-                d_cw = r_hit * _angle_diff(phi_hit, (theta + 1) * alpha_r)
-                d_ccw = r_hit * _angle_diff(phi_hit, theta * alpha_r)
+                d_cw = r_hit * _angle_diff(phi_hit, theta * alpha_r)
+                d_ccw = r_hit * _angle_diff(phi_hit, (theta + 1) * alpha_r)
                 
                 if r_idx == 0:
                     min_d = d_out
@@ -927,19 +929,22 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                     
                 if min_d == d_cw:
                     if num_wall_meshes > 0:
+                        tr, tt = r_idx, theta
                         current_idx = cells[r_idx][theta][2] if isinstance(cells[r_idx][theta][2], int) else -1
                         cells[r_idx][theta][2] = (current_idx + 1) % num_wall_meshes
                         modified = True
                         rebuilt_text = "clockwise wall"
                 elif min_d == d_ccw:
                     if num_wall_meshes > 0:
-                        prev_theta = (theta - 1) % Nr
-                        current_idx = cells[r_idx][prev_theta][2] if isinstance(cells[r_idx][prev_theta][2], int) else -1
-                        cells[r_idx][prev_theta][2] = (current_idx + 1) % num_wall_meshes
+                        next_theta = (theta + 1) % Nr
+                        tr, tt = r_idx, next_theta
+                        current_idx = cells[r_idx][next_theta][2] if isinstance(cells[r_idx][next_theta][2], int) else -1
+                        cells[r_idx][next_theta][2] = (current_idx + 1) % num_wall_meshes
                         modified = True
                         rebuilt_text = "counter-clockwise wall"
                 elif min_d == d_in:
                     if num_wall_meshes > 0:
+                        tr, tt = r_idx, theta
                         current_idx = cells[r_idx][theta][3] if isinstance(cells[r_idx][theta][3], int) else -1
                         cells[r_idx][theta][3] = (current_idx + 1) % num_wall_meshes
                         modified = True
@@ -950,11 +955,13 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                             N_out = ring_sectors[r_idx + 1]
                             theta_out = math.floor(phi_hit / (2 * math.pi / N_out))
                             theta_out = max(0, min(theta_out, N_out - 1))
+                            tr, tt = r_idx + 1, theta_out
                             current_idx = cells[r_idx + 1][theta_out][3] if isinstance(cells[r_idx + 1][theta_out][3], int) else -1
                             cells[r_idx + 1][theta_out][3] = (current_idx + 1) % num_wall_meshes
                             modified = True
                             rebuilt_text = "outward wall"
                         else:
+                            tr, tt = r_idx, theta
                             current_idx = cells[r_idx][theta][6] if len(cells[r_idx][theta]) > 6 else (cells[r_idx][theta][3] if isinstance(cells[r_idx][theta][3], int) else -1)
                             if len(cells[r_idx][theta]) > 6:
                                 cells[r_idx][theta][6] = (current_idx + 1) % num_wall_meshes
@@ -965,39 +972,42 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                     
         if modified:
             data_dict['cells'] = original_cells
-            self.report({'INFO'}, f"Swapped {rebuilt_text} mesh at cell ({r_idx}, {theta})")
+            self.report({'INFO'}, f"Swapped {rebuilt_text} mesh at cell ({tr}, {tt})")
             
             # Calculate dirty cells using overlapping sector check
-            dirty_cells = {(z_hit, r_idx, theta)}
-            dirty_cells.add((z_hit, r_idx, (theta - 1) % Nr))
-            dirty_cells.add((z_hit, r_idx, (theta + 1) % Nr))
+            Nr_tr = ring_sectors[tr]
+            dirty_cells = {(z_hit, tr, tt)}
+            dirty_cells.add((z_hit, tr, (tt - 1) % Nr_tr))
+            dirty_cells.add((z_hit, tr, (tt + 1) % Nr_tr))
             
-            alpha_r = 2 * math.pi / Nr
-            A = theta * alpha_r
-            B = (theta + 1) * alpha_r
+            alpha_tr = 2 * math.pi / Nr_tr
+            A = tt * alpha_tr
+            B = (tt + 1) * alpha_tr
             
-            if r_idx > 0:
-                N_in = ring_sectors[r_idx - 1]
+            if tr > 0:
+                N_in = ring_sectors[tr - 1]
                 alpha_in = 2 * math.pi / N_in
                 for t_in in range(N_in):
                     A_in = t_in * alpha_in
                     B_in = (t_in + 1) * alpha_in
-                    if max(A, A_in) < min(B, B_in) - 1e-5:
-                        dirty_cells.add((z_hit, r_idx - 1, t_in))
-            if r_idx < rings - 1:
-                N_out = ring_sectors[r_idx + 1]
+                    if max(A, A_in) < min(B, B_in) + 1e-5:
+                        dirty_cells.add((z_hit, tr - 1, t_in))
+            if tr < rings - 1:
+                N_out = ring_sectors[tr + 1]
                 alpha_out = 2 * math.pi / N_out
                 for t_out in range(N_out):
                     A_out = t_out * alpha_out
                     B_out = (t_out + 1) * alpha_out
-                    if max(A, A_out) < min(B, B_out) - 1e-5:
-                        dirty_cells.add((z_hit, r_idx + 1, t_out))
+                    if max(A, A_out) < min(B, B_out) + 1e-5:
+                        dirty_cells.add((z_hit, tr + 1, t_out))
             return dirty_cells
+        return None
         return None
 
     def _handle_polar_wall_toggle(self, context, event, props, col, data_dict, cells, wall_mode, ring_sectors, rings, hit_x, hit_y, ts, r_hit, phi_hit, r_idx, alpha_r, theta, Nr, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells, z_hit):
         modified = False
         rebuilt_text = ""
+        tr, tt = r_idx, theta
         
         if wall_mode == 'cube':
             target_cell = (r_idx, theta)
@@ -1005,8 +1015,8 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                 d_in = abs(r_hit - (r_idx - 0.5) * ts)
                 d_out = abs(r_hit - (r_idx + 0.5) * ts)
                 
-                d_cw = r_hit * _angle_diff(phi_hit, (theta + 1) * alpha_r)
-                d_ccw = r_hit * _angle_diff(phi_hit, theta * alpha_r)
+                d_cw = r_hit * _angle_diff(phi_hit, theta * alpha_r)
+                d_ccw = r_hit * _angle_diff(phi_hit, (theta + 1) * alpha_r)
 
                 if r_idx == 0:
                     min_d = d_out
@@ -1015,14 +1025,14 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                     
                 if min_d == d_cw:
                     A = (r_idx, theta)
-                    B = (r_idx, (theta + 1) % Nr)
+                    B = (r_idx, (theta - 1) % Nr)
                     if cells[A[0]][A[1]][0]:
                         target_cell = A
                     elif cells[B[0]][B[1]][0]:
                         target_cell = B
                 elif min_d == d_ccw:
                     A = (r_idx, theta)
-                    B = (r_idx, (theta - 1) % Nr)
+                    B = (r_idx, (theta + 1) % Nr)
                     if cells[A[0]][A[1]][0]:
                         target_cell = A
                     elif cells[B[0]][B[1]][0]:
@@ -1114,8 +1124,8 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
             d_in = abs(r_hit - (r_idx - 0.5) * ts)
             d_out = abs(r_hit - (r_idx + 0.5) * ts)
             
-            d_cw = r_hit * _angle_diff(phi_hit, (theta + 1) * alpha_r)
-            d_ccw = r_hit * _angle_diff(phi_hit, theta * alpha_r)
+            d_cw = r_hit * _angle_diff(phi_hit, theta * alpha_r)
+            d_ccw = r_hit * _angle_diff(phi_hit, (theta + 1) * alpha_r)
             
             if r_idx == 0:
                 min_d = d_out
@@ -1123,15 +1133,18 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                 min_d = min(d_in, d_out, d_cw, d_ccw)
                 
             if min_d == d_cw:
+                tr, tt = r_idx, theta
                 cells[r_idx][theta][0] = not cells[r_idx][theta][0]
                 modified = True
                 rebuilt_text = "clockwise wall"
             elif min_d == d_ccw:
-                prev_theta = (theta - 1) % Nr
-                cells[r_idx][prev_theta][0] = not cells[r_idx][prev_theta][0]
+                next_theta = (theta + 1) % Nr
+                tr, tt = r_idx, next_theta
+                cells[r_idx][next_theta][0] = not cells[r_idx][next_theta][0]
                 modified = True
                 rebuilt_text = "counter-clockwise wall"
             elif min_d == d_in:
+                tr, tt = r_idx, theta
                 cells[r_idx][theta][1] = not cells[r_idx][theta][1]
                 modified = True
                 rebuilt_text = "inward wall"
@@ -1140,11 +1153,13 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                     N_out = ring_sectors[r_idx + 1]
                     theta_out = math.floor(phi_hit / (2 * math.pi / N_out))
                     theta_out = max(0, min(theta_out, N_out - 1))
+                    tr, tt = r_idx + 1, theta_out
                     cells[r_idx + 1][theta_out][1] = not cells[r_idx + 1][theta_out][1]
                     modified = True
                     rebuilt_text = "outward wall"
                 else:
                     theta_out = theta
+                    tr, tt = r_idx, theta_out
                     floors = data_dict.get('floors', props.floors)
                     if z_hit == 0:
                         # Floor 0: Edit entrance
@@ -1183,34 +1198,36 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
 
         if modified:
             data_dict['cells'] = original_cells
-            self.report({'INFO'}, f"Toggled {rebuilt_text} at cell ({r_idx}, {theta})")
+            self.report({'INFO'}, f"Toggled {rebuilt_text} at cell ({tr}, {tt})")
             
             # Calculate dirty cells using overlapping sector check
-            dirty_cells = {(z_hit, r_idx, theta)}
-            dirty_cells.add((z_hit, r_idx, (theta - 1) % Nr))
-            dirty_cells.add((z_hit, r_idx, (theta + 1) % Nr))
+            Nr_tr = ring_sectors[tr]
+            dirty_cells = {(z_hit, tr, tt)}
+            dirty_cells.add((z_hit, tr, (tt - 1) % Nr_tr))
+            dirty_cells.add((z_hit, tr, (tt + 1) % Nr_tr))
             
-            alpha_r = 2 * math.pi / Nr
-            A = theta * alpha_r
-            B = (theta + 1) * alpha_r
+            alpha_tr = 2 * math.pi / Nr_tr
+            A = tt * alpha_tr
+            B = (tt + 1) * alpha_tr
             
-            if r_idx > 0:
-                N_in = ring_sectors[r_idx - 1]
+            if tr > 0:
+                N_in = ring_sectors[tr - 1]
                 alpha_in = 2 * math.pi / N_in
                 for t_in in range(N_in):
                     A_in = t_in * alpha_in
                     B_in = (t_in + 1) * alpha_in
-                    if max(A, A_in) < min(B, B_in) - 1e-5:
-                        dirty_cells.add((z_hit, r_idx - 1, t_in))
-            if r_idx < rings - 1:
-                N_out = ring_sectors[r_idx + 1]
+                    if max(A, A_in) < min(B, B_in) + 1e-5:
+                        dirty_cells.add((z_hit, tr - 1, t_in))
+            if tr < rings - 1:
+                N_out = ring_sectors[tr + 1]
                 alpha_out = 2 * math.pi / N_out
                 for t_out in range(N_out):
                     A_out = t_out * alpha_out
                     B_out = (t_out + 1) * alpha_out
-                    if max(A, A_out) < min(B, B_out) - 1e-5:
-                        dirty_cells.add((z_hit, r_idx + 1, t_out))
+                    if max(A, A_out) < min(B, B_out) + 1e-5:
+                        dirty_cells.add((z_hit, tr + 1, t_out))
             return dirty_cells
+        return None
         return None
 
     def _handle_rect_mesh_cycle(self, context, event, props, col, data_dict, cells, wall_mode, hit_x, hit_y, ts, width, depth, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells, z_hit):
