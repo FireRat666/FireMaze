@@ -62,6 +62,7 @@ Pre-carve open room areas within the maze.
 - **Room Count**: The number of rooms to place.
 - **Min / Max Room Size**: Bounds for the randomized width and depth of rooms (measured in cells).
 - Rooms automatically connect to the corridor network and are guaranteed to contain no stray pillars or internal walls in both Thin and Cube modes.
+- Rooms respect the blocked mask — any room placement that overlaps a blocked cell is skipped, ensuring image-masked layouts remain intact.
 - *Note: Rooms are only generated for Rectangular grids.*
 
 ## 5. Loops & Isolated Obstacles
@@ -124,6 +125,7 @@ Replace standard meshes with randomized objects from collections and customize i
 - **Wall Mesh & Wall Collection**: All wall segments are generated from a single optional `Wall Mesh` (or, when `Wall Collection` is set, randomly distributed across all meshes in that collection). There is no separate mesh-per-direction - directional variety comes from the runtime per-face cycling described in the **Independent Face/Tile Swapping** bullet below.
 - **Double-Sided Thin Walls** (Thin Wall Mode only): When enabled, a single-sided custom thin-wall tile is duplicated on both sides of the grid line to fake thickness. Disable this when your custom wall tile already has built-in thickness, so a single centered tile is used.
 - **Instanced Pillars (Pillar Mode)** (Cube Mode only): Enable **Instanced Pillars** to use whole meshes from your Wall Collection as single pillars/cubes rather than assembling them face-by-face. Roof tile generation is automatically suppressed in this mode because each pillar mesh is assumed to already have its own roof. Clicking or Shift-clicking on the top/roof area of these pillars works seamlessly to toggle or cycle them.
+- **Clean Wall Corners (Thin Walls only)**: When enabled, thin wall and roof faces are extended at intersections to close gaps and eliminate visible seams. UV coordinates are adjusted proportionally so textures remain perfectly stretched and seamless. Roof faces may overlap slightly at corners.
 - **Independent Face/Tile Swapping**: In Interactive Edit Mode, `Shift + Left-Clicking` a face cycles its mesh index from the respective collection. Walls themselves do not have separate per-direction (N/S/E/W) assets - rather, the Shift+click action on a given wall face swaps the whole wall in that cell:
   - In **Cube Mode**, raycast hit normals are used to detect the clicked direction, allowing you to cycle the wall assembly on the North, South, East, and West faces of a pillar (when not in Instanced Pillar Mode), as well as the floor tile and roof tile of the cell, completely independently.
   - In **Thin Wall Mode**, distance-to-edge calculations (`d_N`, `d_S`, `d_E`, `d_W`) are used to precisely target and cycle the clicked thin wall segment, floor, or roof. Shared walls between adjacent cells are automatically synchronized to maintain consistent rendering.
@@ -178,7 +180,7 @@ Automatically place decorative objects on wall faces, dead-ends, and entrances/e
 - **Torch Object**: Assign a mesh object (torch, lantern, etc.) to randomly spawn on valid wall faces. Controlled by `Torch Density`.
 - **Chest Object**: Assign a mesh to spawn in dead-end cells. Controlled by `Chest Density`. Chests orient toward the only open direction.
 - **Door Object**: Assign a mesh to spawn at entrance and exit openings.
-- Spawned props are grouped under a `FireMaze_Props` sub-collection and tagged with `fire_maze` for automatic cleanup.
+- Spawned props are grouped under a scoped sub-collection (`FireMaze_Props_{parent_name}`), linked as a child of the maze collection, and tagged with a `fire_maze_data` custom property so they are reliably cleaned up when the maze is cleared.
 
 ## 14. Post-Processing, Cleanups & Colliders
 
