@@ -1506,6 +1506,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                                 old_x, old_y = entrance_val[0], entrance_val[1]
                                 if 0 <= old_x < width and 0 <= old_y < depth:
                                     cells[old_y][old_x][0] = True  # Make it wall again
+                                    self._old_entrance_dirty = (old_x, old_y)
                             data_dict['entrance'] = [tx, ty, d]
                             rebuilt_text = "entrance floor tile (moved)"
                         elif z_hit == floors - 1:
@@ -1597,6 +1598,15 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                     ny, nx = cy_clamped + dy, cx_clamped + dx
                     if 0 <= ny < depth and 0 <= nx < width:
                         dirty_cells.add((z_hit, ny, nx))
+            old_entrance = getattr(self, "_old_entrance_dirty", None)
+            if old_entrance is not None:
+                old_x, old_y = old_entrance
+                for dy in [-1, 0, 1]:
+                    for dx in [-1, 0, 1]:
+                        ny, nx = old_y + dy, old_x + dx
+                        if 0 <= ny < depth and 0 <= nx < width:
+                            dirty_cells.add((z_hit, ny, nx))
+                self._old_entrance_dirty = None
             return dirty_cells
         return None
 

@@ -2,7 +2,7 @@
 
 import copy
 import logging
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 from ..utils import get_rng, _get_stair_footprint_coords
 
 logger = logging.getLogger(__name__)
@@ -153,8 +153,8 @@ def _get_image_mask_data(mask_image, invert: bool, width: int, depth: int) -> Li
     return blocked
 
 
-def _get_start_cell(blocked: List[List[bool]], w: int, h: int) -> Tuple[int, int]:
-    """Find a non-blocked starting cell close to the center."""
+def _get_start_cell(blocked: List[List[bool]], w: int, h: int) -> Optional[Tuple[int, int]]:
+    """Find a non-blocked starting cell close to the center, or None if all cells are blocked."""
     cx, cy = w // 2, h // 2
     for r in range(max(w, h)):
         for dy in range(-r, r + 1):
@@ -163,4 +163,4 @@ def _get_start_cell(blocked: List[List[bool]], w: int, h: int) -> Tuple[int, int
                 if 0 <= nx < w and 0 <= ny < h:
                     if not blocked[ny][nx]:
                         return nx, ny
-    return 0, 0
+    return None

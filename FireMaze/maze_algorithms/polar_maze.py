@@ -49,6 +49,9 @@ def generate_polar_maze(
     Returns:
         A fully populated MazeData instance for a polar grid.
     """
+    if rings <= 0:
+        raise ValueError(f"rings must be > 0, got {rings}")
+
     random = get_rng()
     set_seed(seed)
 

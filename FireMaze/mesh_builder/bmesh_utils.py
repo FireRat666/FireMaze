@@ -426,6 +426,18 @@ def _add_vertical_roof_filler_transformed(bm, uv_layer, xc, yc, wh, tw, y_lo_rel
     for loop, uv in zip(f.loops, [(0,0),(tw,0),(tw,df),(0,df)]):
         loop[uv_layer].uv = uv
 
+def _add_horizontal_roof_filler_transformed(bm, uv_layer, xc, yc, wh, tw, x_lo_rel, x_hi_rel, hx0_rel, hx1_rel, mat_offset):
+    """Fill a roof gap at a wall-end with a procedurally sized quad (horizontal variant)."""
+    T = Matrix.Translation(Vector((xc, yc, wh))) @ mat_offset
+    v0 = T @ Vector((x_lo_rel, hx0_rel, 0))
+    v1 = T @ Vector((x_hi_rel, hx0_rel, 0))
+    v2 = T @ Vector((x_hi_rel, hx1_rel, 0))
+    v3 = T @ Vector((x_lo_rel, hx1_rel, 0))
+    f = bm.faces.new([bm.verts.new(v0), bm.verts.new(v1), bm.verts.new(v2), bm.verts.new(v3)])
+    df = x_hi_rel - x_lo_rel
+    for loop, uv in zip(f.loops, [(0,0),(df,0),(df,tw),(0,tw)]):
+        loop[uv_layer].uv = uv
+
 def _add_cube_roof_face_transformed(bm, uv_layer, cx, cy, sx, sy, sz, mat_offset):
     """Add a single quad roof face centred at (cx, cy) for cube-mode walls."""
     T = Matrix.Translation(Vector((cx, cy, sz))) @ mat_offset

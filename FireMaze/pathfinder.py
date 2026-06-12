@@ -82,9 +82,9 @@ def _find_shortest_path_polar_3d(maze_data: MazeData, wall_mode: str, cells_3d: 
                 if not cells_3d[cz][nr][ntheta][0]:
                     accessible.append((nr, ntheta))
         else:
-            if cr >= 1 and not cells_3d[cz][cr][(ctheta + 1) % Nr][0]:
-                accessible.append((cr, (ctheta + 1) % Nr))
             if cr >= 1 and not cells_3d[cz][cr][ctheta][0]:
+                accessible.append((cr, (ctheta + 1) % Nr))
+            if cr >= 1 and not cells_3d[cz][cr][(ctheta - 1) % Nr][0]:
                 accessible.append((cr, (ctheta - 1) % Nr))
             if cr > 0 and not cells_3d[cz][cr][ctheta][1]:
                 N_in = ring_sectors[cr - 1]
@@ -285,9 +285,9 @@ def _find_shortest_path_polar_2d(maze_data: MazeData, wall_mode: str) -> List:
                 if not cells_2d[nr][ntheta][0]:
                     accessible.append((nr, ntheta))
         else:
-            if r >= 1 and not cells_2d[r][(theta + 1) % Nr][0]:
-                accessible.append((r, (theta + 1) % Nr))
             if r >= 1 and not cells_2d[r][theta][0]:
+                accessible.append((r, (theta + 1) % Nr))
+            if r >= 1 and not cells_2d[r][(theta - 1) % Nr][0]:
                 accessible.append((r, (theta - 1) % Nr))
             if r > 0 and not cells_2d[r][theta][1]:
                 N_in = ring_sectors[r - 1]

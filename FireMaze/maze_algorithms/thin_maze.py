@@ -123,8 +123,11 @@ def _generate_thin_maze(
         visited = [[blocked[y][x] for x in range(width)] for y in range(depth)]
         stack = []
         
-        sx, sy = _get_start_cell(blocked, width, depth)
-        
+        start_cell = _get_start_cell(blocked, width, depth)
+        if start_cell is None:
+            raise ValueError("All cells are blocked; cannot generate maze")
+        sx, sy = start_cell
+
         r_start = cell_to_room.get((sx, sy))
         if r_start is not None:
             for rx, ry in rooms[r_start]:
@@ -331,8 +334,11 @@ def _generate_thin_maze(
                     if not visited[ny][nx]:
                         frontier_walls.append((cx, cy, nx, ny, dname))
 
-        sx, sy = _get_start_cell(blocked, width, depth)
-        
+        start_cell = _get_start_cell(blocked, width, depth)
+        if start_cell is None:
+            raise ValueError("All cells are blocked; cannot generate maze")
+        sx, sy = start_cell
+
         r_start = cell_to_room.get((sx, sy))
         if r_start is not None:
             for rx, ry in rooms[r_start]:
@@ -365,8 +371,11 @@ def _generate_thin_maze(
     elif algorithm == 'hunt_and_kill':
         visited = [[blocked[y][x] if blocked else False for x in range(width)] for y in range(depth)]
         
-        cx, cy = _get_start_cell(blocked, width, depth)
-        
+        start_cell = _get_start_cell(blocked, width, depth)
+        if start_cell is None:
+            raise ValueError("All cells are blocked; cannot generate maze")
+        cx, cy = start_cell
+
         def mark_visited(x, y):
             """Mark cell (x, y) as visited in 2D mode (Hunt-and-Kill)."""
             r = cell_to_room.get((x, y))
@@ -481,7 +490,10 @@ def _generate_thin_maze(
             else:
                 visited[y][x] = True
 
-        sx, sy = _get_start_cell(blocked, width, depth)
+        start_cell = _get_start_cell(blocked, width, depth)
+        if start_cell is None:
+            raise ValueError("All cells are blocked; cannot generate maze")
+        sx, sy = start_cell
         mark_visited(sx, sy)
         
         for y in range(depth):
@@ -609,7 +621,10 @@ def _generate_thin_maze(
                 visited[y][x] = True
                 active.append((x, y))
 
-        sx, sy = _get_start_cell(blocked, width, depth)
+        start_cell = _get_start_cell(blocked, width, depth)
+        if start_cell is None:
+            raise ValueError("All cells are blocked; cannot generate maze")
+        sx, sy = start_cell
         add_to_active(sx, sy)
         
         while active:

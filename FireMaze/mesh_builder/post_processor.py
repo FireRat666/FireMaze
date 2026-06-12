@@ -456,6 +456,15 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
         if not props_col:
             props_col = bpy.data.collections.new(props_col_name)
         parent_collection.children.link(props_col)
+
+    # Remove existing FireMaze props before repopulating
+    for obj in list(props_col.objects):
+        if obj.get("fire_maze") is True:
+            data = obj.data
+            bpy.data.objects.remove(obj, do_unlink=True)
+            if data and data.users == 0:
+                bpy.data.meshes.remove(data)
+
     props_col["fire_maze_data"] = "{}"
  
     ts = props.tile_size

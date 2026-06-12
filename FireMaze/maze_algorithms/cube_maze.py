@@ -133,8 +133,11 @@ def _generate_cube_maze(
         stack = []
         
         # Start cell
-        sx, sy = _get_start_cell(blocked, sub_w, sub_h)
-        
+        start_cell = _get_start_cell(blocked, sub_w, sub_h)
+        if start_cell is None:
+            raise ValueError("All cells are blocked; cannot generate maze")
+        sx, sy = start_cell
+
         r_start = cell_to_room.get((sx, sy))
         if r_start is not None:
             for rx, ry in rooms[r_start]:
@@ -346,8 +349,11 @@ def _generate_cube_maze(
                     if not visited[ny][nx]:
                         frontier_walls.append((cx, cy, nx, ny))
 
-        sx, sy = _get_start_cell(blocked, sub_w, sub_h)
-        
+        start_cell = _get_start_cell(blocked, sub_w, sub_h)
+        if start_cell is None:
+            raise ValueError("All cells are blocked; cannot generate maze")
+        sx, sy = start_cell
+
         r_start = cell_to_room.get((sx, sy))
         if r_start is not None:
             for rx, ry in rooms[r_start]:
@@ -382,8 +388,11 @@ def _generate_cube_maze(
     elif algorithm == 'hunt_and_kill':
         visited = [[blocked[y][x] for x in range(sub_w)] for y in range(sub_h)]
         
-        cx, cy = _get_start_cell(blocked, sub_w, sub_h)
-        
+        start_cell = _get_start_cell(blocked, sub_w, sub_h)
+        if start_cell is None:
+            raise ValueError("All cells are blocked; cannot generate maze")
+        cx, cy = start_cell
+
         def mark_visited(x, y):
             """Mark cell (x, y) as visited in cube mode, including room cells and clearing floor."""
             r = cell_to_room.get((x, y))
@@ -501,7 +510,10 @@ def _generate_cube_maze(
                 visited[y][x] = True
                 cells[2 * y + 1][2 * x + 1][0] = False
 
-        sx, sy = _get_start_cell(blocked, sub_w, sub_h)
+        start_cell = _get_start_cell(blocked, sub_w, sub_h)
+        if start_cell is None:
+            raise ValueError("All cells are blocked; cannot generate maze")
+        sx, sy = start_cell
         mark_visited(sx, sy)
         
         for y in range(sub_h):
@@ -659,7 +671,10 @@ def _generate_cube_maze(
                 cells[2 * y + 1][2 * x + 1][0] = False
                 active.append((x, y))
 
-        sx, sy = _get_start_cell(blocked, sub_w, sub_h)
+        start_cell = _get_start_cell(blocked, sub_w, sub_h)
+        if start_cell is None:
+            raise ValueError("All cells are blocked; cannot generate maze")
+        sx, sy = start_cell
         add_to_active(sx, sy)
         
         while active:

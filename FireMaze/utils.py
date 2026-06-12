@@ -15,6 +15,8 @@ def is_valid_ref(ref):
 def _resolve_cells_3d(cells):
     """Normalize cells to 3D list format [z][y][x] and return (cells_3d, floors)."""
     if isinstance(cells, dict):
+        if "cells" not in cells:
+            raise ValueError("dict payload must contain 'cells' key")
         cells = cells.get("cells", cells)
     if hasattr(cells, "cells"):
         cells = cells.cells
@@ -79,6 +81,7 @@ def set_seed(seed):
 
 
 CELL_AXIS_LIMIT = 1000
+_CELL_AXIS_MULTIPLIER = 10 ** len(str(CELL_AXIS_LIMIT - 1))
 
 
 def get_cell_id(z: int, y: int, x: int) -> int:
@@ -89,7 +92,7 @@ def get_cell_id(z: int, y: int, x: int) -> int:
     if not (0 <= x < CELL_AXIS_LIMIT and 0 <= y < CELL_AXIS_LIMIT and z >= 0):
         raise ValueError(f"Coordinates out of bounds for encoding: x={x}, y={y}, z={z}. "
                          f"x and y must be in [0, {CELL_AXIS_LIMIT-1}] and z >= 0.")
-    return z * 1000000 + y * 1000 + x
+    return z * _CELL_AXIS_MULTIPLIER * _CELL_AXIS_MULTIPLIER + y * _CELL_AXIS_MULTIPLIER + x
 
 
 def decode_cell_id(cell_id: int) -> tuple:
@@ -97,10 +100,10 @@ def decode_cell_id(cell_id: int) -> tuple:
 
     The decoded coordinate ranges are: x in [0, CELL_AXIS_LIMIT-1], y in [0, CELL_AXIS_LIMIT-1], and z >= 0.
     """
-    z = cell_id // 1000000
-    rem = cell_id % 1000000
-    y = rem // 1000
-    x = rem % 1000
+    z = cell_id // (_CELL_AXIS_MULTIPLIER * _CELL_AXIS_MULTIPLIER)
+    rem = cell_id % (_CELL_AXIS_MULTIPLIER * _CELL_AXIS_MULTIPLIER)
+    y = rem // _CELL_AXIS_MULTIPLIER
+    x = rem % _CELL_AXIS_MULTIPLIER
     return z, y, x
 
 
