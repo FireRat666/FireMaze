@@ -8,6 +8,7 @@ from collections import deque
 from mathutils import Vector
 from ..utils import is_valid_ref, _resolve_cells_3d, get_rng
 from .bmesh_utils import _compute_grid_distances, _create_object_from_bm
+from ..pathfinder import _get_polar_neighbors
 
 logger = logging.getLogger(__name__)
 
@@ -206,7 +207,6 @@ def _apply_vertex_painting_on_obj(obj, props, maze_data):
                         accessible_count = 0
                         if wall_mode == 'cube':
                             if not cells_3d[z][r][theta][0]:
-                                from ..pathfinder import _get_polar_neighbors
                                 for nr, ntheta in _get_polar_neighbors(r, theta, rings, ring_sectors):
                                     if not cells_3d[z][nr][ntheta][0]:
                                         accessible_count += 1
@@ -687,7 +687,7 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                 door_src = door_mesh
                 
                 if z == 0 and maze_data.entrance:
-                    er, etheta, eside = maze_data.entrance
+                    er, etheta, _ = maze_data.entrance
                     eNr = ring_sectors[er]
                     ealpha = 2 * math.pi / eNr
                     etheta_mid = (etheta + 0.5) * ealpha
@@ -776,10 +776,14 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                         c = resolved_cells[y][x]
                         if sum(c[:4]) == 3:
                             is_dead = True
-                            if not c[0]: open_dir = 'N'
-                            elif not c[1]: open_dir = 'S'
-                            elif not c[2]: open_dir = 'E'
-                            else: open_dir = 'W'
+                            if not c[0]:
+                                open_dir = 'N'
+                            elif not c[1]:
+                                open_dir = 'S'
+                            elif not c[2]:
+                                open_dir = 'E'
+                            else:
+                                open_dir = 'W'
                     else: # cube
                         if not resolved_cells[y][x][0]:
                             neighbors = []

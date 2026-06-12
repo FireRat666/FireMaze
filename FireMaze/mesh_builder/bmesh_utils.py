@@ -290,6 +290,8 @@ def _merge_bmesh_geometries(src_bm, dst_bm):
     try:
         src_bm.to_mesh(temp_mesh)
         dst_bm.from_mesh(temp_mesh)
+    except Exception as e:
+        logger.error(f"_merge_bmesh_geometries failed: {e}")
     finally:
         bpy.data.meshes.remove(temp_mesh)
 
@@ -487,7 +489,7 @@ def _build_guide_path(props, maze_data, collection, materials):
             if len(coord) == 3:
                 z_coord, y, x = coord
             else:
-                x, y = coord
+                y, x = coord
                 z_coord = 0
             px = x * ts + ts / 2
             py = y * ts + ts / 2
@@ -527,7 +529,7 @@ def _remove_doubles_on_obj(obj):
     if not bm.verts:
         bm.free()
         return
-    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.001)
+    _safe_remove_doubles(bm, dist=0.001)
     bm.normal_update()
     bm.to_mesh(obj.data)
     obj.data.update()

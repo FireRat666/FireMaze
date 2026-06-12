@@ -1017,7 +1017,6 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                         dirty_cells.add((z_hit, tr + 1, t_out))
             return dirty_cells
         return None
-        return None
 
     def _handle_polar_wall_toggle(self, context, event, props, col, data_dict, cells, wall_mode, ring_sectors, rings, hit_x, hit_y, ts, r_hit, phi_hit, r_idx, alpha_r, theta, Nr, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells, z_hit):
         """Toggle a polar wall cell between wall and floor, handling entrance/exit moves."""
@@ -1255,7 +1254,6 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                 add_overlapping_dirty(z_hit, old_r, old_tt, dirty_cells)
             
             return dirty_cells
-        return None
         return None
 
     def _handle_rect_mesh_cycle(self, context, event, props, col, data_dict, cells, wall_mode, hit_x, hit_y, ts, width, depth, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells, z_hit):
@@ -1766,7 +1764,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
             )
             col_floors = self.maze_data.floors
             props.edit_floor_level = max(0, min(props.edit_floor_level, col_floors - 1))
-        except Exception as e:
+        except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
             logger.debug(f"Failed to validate floor level or parse maze data: {e}")
             self.maze_data = None
             self._maze_raw = None

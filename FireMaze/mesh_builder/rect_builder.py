@@ -490,9 +490,6 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, 
                 if dirty_cells is not None and owner_cell not in dirty_cells:
                     continue
 
-                if seg_type == 'V' and a == 3 and b == 2:
-                    print("DEBUG rect_builder: building segment ('V', 3, 2), owner_cell =", owner_cell)
-
                 if dirty_cells is None:
                     start_idx = len(bm_wall.faces)
                     start_cap_idx = len(bm_cap.faces)
@@ -752,11 +749,7 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, 
             if cell_layer and cell_layer_cap:
                 new_f[cell_layer] = f[cell_layer_cap]
 
-    print("DEBUG rect_builder: end of _build_rect_thin_walls, faces =", len(bm_wall.faces))
     cell_layer_dbg = bm_wall.faces.layers.int.get("cell_id")
-    if cell_layer_dbg is not None:
-        cids = {f[cell_layer_dbg] for f in bm_wall.faces}
-        print("DEBUG rect_builder: end of _build_rect_thin_walls cids =", sorted(list(cids)))
 
     if not is_external_bm:
         if props.single_wall_object:
@@ -1080,7 +1073,10 @@ def build_maze_objects_impl(
     # Perform merges and cleanups
     if props.remove_doubles:
         for obj in created_objects:
-            _remove_doubles_on_obj(obj)
+            try:
+                _remove_doubles_on_obj(obj)
+            except Exception as e:
+                print(f"FireMaze Warning: Post-build remove_doubles failed on {obj.name}: {e}")
 
     # Merging logic
     if name_suffix == "_Collider":

@@ -61,6 +61,8 @@ def _add_polar_center_fan(bm, uv_layer, ts, z_base, is_roof=False, flip_normal=F
 
 def _add_polar_floor_wedge(bm, uv_layer, r, theta, Nr, ts, z_base, is_roof=False, flip_normal=False):
     """Build a subdivided wedge quad for a polar floor or roof tile at ring r, sector theta."""
+    if Nr <= 0:
+        return
     R_in = (r - 0.5) * ts
     R_out = (r + 0.5) * ts
     alpha_r = 2 * math.pi / Nr
@@ -407,9 +409,9 @@ def _add_radial_wall_caps(bm_cap, uv_cap, phi, r_in, r_out, wt, h, z_base, add_i
         for loop, uv in zip(f_outer.loops, [(0,0),(1,0),(1,1),(0,1)]):
             loop[uv_cap].uv = uv
 
-def _add_circular_wall_caps(bm_cap, uv_cap, radius, phi_start, phi_end, wt, h, z_base, add_start=True, add_end=True):
+def _add_circular_wall_caps(bm_cap, uv_cap, radius, phi_start, phi_end, wt, h, z_base, ts=1.0, add_start=True, add_end=True):
     """Add end-cap faces for a thick circular wall arc at the start and end angles."""
-    R_a = max(radius - wt / 2, 0.001)
+    R_a = max(radius - wt / 2, ts * 0.01)
     R_b = radius + wt / 2
     
     if add_start:
@@ -515,6 +517,8 @@ def _add_mesh_polar_bend_with_matrix(bm, src_mesh, mat_combined, uv_layer, final
             cuts = min(4, cuts)
         bmesh.ops.subdivide_edges(temp_bm, edges=list(temp_bm.edges), cuts=cuts, use_grid_fill=True)
 
+    if Nr <= 0:
+        return
     r_mid = r * ts
     alpha_r = 2 * math.pi / Nr
     theta_mid = (theta + 0.5) * alpha_r
@@ -561,6 +565,8 @@ def _add_mesh_polar_bend(bm, src_mesh, mat_offset, uv_layer, final_materials_lis
 
 def _add_wall_polar_bend(bm, src_mesh, mat_wall_offset, uv_layer, final_materials_list, wall_type, r, theta, Nr, ts, z_off, centered, cuts=4, flip_out=False, reverse_faces=True, thin_wall_offset=0.0):
     """Place a custom wall mesh on a polar-grid boundary (CW, CCW, IN, or OUT) using bending alignment."""
+    if Nr <= 0:
+        return
     cent = Matrix.Translation(Vector((-ts / 2, -ts / 2, 0))) if not centered else Matrix.Identity(4)
     alpha_r = 2 * math.pi / Nr
     theta_mid = (theta + 0.5) * alpha_r
@@ -612,6 +618,8 @@ def _add_mesh_polar_trapezoid_with_matrix(bm, src_mesh, mat_combined, uv_layer, 
 
     bmesh.ops.transform(temp_bm, matrix=mat_combined, verts=temp_bm.verts)
 
+    if Nr <= 0:
+        return
     r_mid = r * ts
     alpha_r = 2 * math.pi / Nr
     theta_a = theta * alpha_r
@@ -677,6 +685,8 @@ def _add_mesh_polar_trapezoid(bm, src_mesh, mat_offset, uv_layer, final_material
 
 def _add_wall_polar_trapezoid(bm, src_mesh, mat_wall_offset, uv_layer, final_materials_list, wall_type, r, theta, Nr, ts, z_off, centered, flip_out=False, reverse_faces=True, thin_wall_offset=0.0):
     """Place a custom wall mesh on a polar-grid boundary using trapezoidal (scaling) alignment."""
+    if Nr <= 0:
+        return
     cent = Matrix.Translation(Vector((-ts / 2, -ts / 2, 0))) if not centered else Matrix.Identity(4)
     alpha_r = 2 * math.pi / Nr
     theta_mid = (theta + 0.5) * alpha_r
@@ -727,6 +737,8 @@ def _build_polar_floor(ctx, props, maze_data, created_objects, name_suffix, bm=N
         level_cells = ctx['cells_3d'][z]
         for r in range(rings):
             Nr = ring_sectors[r]
+            if Nr <= 0:
+                continue
             alpha_r = 2 * math.pi / Nr
             for theta in range(Nr):
                 if dirty_cells is not None and (z, r, theta) not in dirty_cells:
@@ -767,7 +779,7 @@ def _build_polar_floor(ctx, props, maze_data, created_objects, name_suffix, bm=N
                     elif alignment == 'bend':
                         N_max = ring_sectors[-1]
                         ratio = N_max // Nr if Nr > 0 else 1
-                        cuts = max(1, ratio * 8 - 1)
+                        cuts = min(max(1, ratio * 8 - 1), 8)
                         _add_mesh_polar_bend(bm_floor, src_floor, mat_flipped, uv_floor, floor_materials, r, theta, Nr, ctx['ts'], z_off, ctx['centered'], cuts=cuts, reverse_faces=False)
                 else:
                     _add_polar_floor_wedge(bm_floor, uv_floor, r, theta, Nr, ctx['ts'], z_off, is_roof=False)
@@ -783,6 +795,7 @@ def _build_polar_floor(ctx, props, maze_data, created_objects, name_suffix, bm=N
                             f[cell_layer] = cell_id
 
     if not is_external_bm:
+        _safe_remove_doubles(bm_floor, dist=0.001)
         floor_obj = _create_object_from_bm(bm_floor, f"FireMaze_Floor{name_suffix}", ctx['col'], None)
         for mat in floor_materials:
             floor_obj.data.materials.append(mat)
@@ -830,6 +843,8 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
                 
                 for r in range(rings):
                     Nr = ring_sectors[r]
+                    if Nr <= 0:
+                        continue
                     alpha_r = 2 * math.pi / Nr
                     
                     for theta in range(Nr):
@@ -875,7 +890,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
                                     elif alignment == 'bend':
                                         N_max = ring_sectors[-1]
                                         ratio = N_max // Nr if Nr > 0 else 1
-                                        cuts = max(1, ratio * 8 - 1)
+                                        cuts = min(max(1, ratio * 8 - 1), 8)
                                         _add_mesh_polar_bend(bm_wall, src_mesh, ctx['mat_wall_offset'], uv_wall, wall_materials, r, theta, Nr, ctx['ts'], z_off, ctx['centered'], cuts=cuts)
                             elif r == rings - 1:
                                 src_out_wall = None
@@ -895,7 +910,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
                                     elif alignment == 'bend':
                                         N_max = ring_sectors[-1]
                                         ratio = N_max // Nr if Nr > 0 else 1
-                                        cuts = max(1, ratio * 8 - 1)
+                                        cuts = min(max(1, ratio * 8 - 1), 8)
                                         _add_wall_polar_bend(bm_wall, src_out_wall, ctx['mat_wall_offset'], uv_wall, wall_materials, 'OUT', r, theta, Nr, ctx['ts'], z_off, ctx['centered'], cuts=cuts, flip_out=True)
                                 else:
                                     radius = (r + 0.5) * ctx['ts']
@@ -914,7 +929,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
                                         f[cell_layer] = cell_id
                             continue
                         
-                        if props.cube_mode_pillar and (ctx['wall_meshes_list'] or ctx['custom_wall']) and not props.is_editing:
+                        if props.cube_mode_pillar and (ctx['wall_meshes_list'] or ctx['custom_wall']):
                             continue
                         
                         if len(level_cells[r][theta]) >= 8:
@@ -961,7 +976,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
                                 elif alignment == 'bend':
                                     N_max = ring_sectors[-1]
                                     ratio = N_max // Nr if Nr > 0 else 1
-                                    cuts = max(1, ratio * 8 - 1)
+                                    cuts = min(max(1, ratio * 8 - 1), 8)
                                     _add_wall_polar_bend(bm_wall, src_cw_wall, ctx['mat_wall_offset'], uv_wall, wall_materials, 'CW', r, theta, Nr, ctx['ts'], z_off, ctx['centered'], cuts=cuts)
                             else:
                                 phi = (theta + 1) * alpha_r
@@ -978,7 +993,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
                                 elif alignment == 'bend':
                                     N_max = ring_sectors[-1]
                                     ratio = N_max // Nr if Nr > 0 else 1
-                                    cuts = max(1, ratio * 8 - 1)
+                                    cuts = min(max(1, ratio * 8 - 1), 8)
                                     _add_wall_polar_bend(bm_wall, src_ccw_wall, ctx['mat_wall_offset'], uv_wall, wall_materials, 'CCW', r, theta, Nr, ctx['ts'], z_off, ctx['centered'], cuts=cuts)
                             else:
                                 phi = theta * alpha_r
@@ -998,7 +1013,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
                                     elif alignment == 'bend':
                                         N_max = ring_sectors[-1]
                                         ratio = N_max // Nr if Nr > 0 else 1
-                                        cuts = max(1, ratio * 8 - 1)
+                                        cuts = min(max(1, ratio * 8 - 1), 8)
                                         _add_wall_polar_bend(bm_wall, src_in_wall, ctx['mat_wall_offset'], uv_wall, wall_materials, 'IN', r, theta, Nr, ctx['ts'], z_off, ctx['centered'], cuts=cuts, flip_out=True)
                                 else:
                                     radius = (r - 0.5) * ctx['ts']
@@ -1029,7 +1044,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
                                         elif alignment == 'bend':
                                             N_max = ring_sectors[-1]
                                             ratio = N_max // N_out if N_out > 0 else 1
-                                            cuts = max(1, ratio * 8 - 1)
+                                            cuts = min(max(1, ratio * 8 - 1), 8)
                                             _add_wall_polar_bend(bm_wall, src_out_wall, ctx['mat_wall_offset'], uv_wall, wall_materials, w_type, r_val, ot, N_out, ctx['ts'], z_off, ctx['centered'], cuts=cuts, flip_out=False)
                                     else:
                                         radius = (r + 0.5) * ctx['ts']
@@ -1055,7 +1070,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
                                     elif alignment == 'bend':
                                         N_max = ring_sectors[-1]
                                         ratio = N_max // Nr if Nr > 0 else 1
-                                        cuts = max(1, ratio * 8 - 1)
+                                        cuts = min(max(1, ratio * 8 - 1), 8)
                                         _add_wall_polar_bend(bm_wall, src_out_wall, ctx['mat_wall_offset'], uv_wall, wall_materials, 'OUT', r, theta, Nr, ctx['ts'], z_off, ctx['centered'], cuts=cuts, flip_out=True)
                                 
                                 if src_out_wall and alignment != 'procedural':
@@ -1064,7 +1079,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
                                     elif alignment == 'bend':
                                         N_max = ring_sectors[-1]
                                         ratio = N_max // Nr if Nr > 0 else 1
-                                        cuts = max(1, ratio * 8 - 1)
+                                        cuts = min(max(1, ratio * 8 - 1), 8)
                                         _add_wall_polar_bend(bm_wall, src_out_wall, ctx['mat_wall_offset'], uv_wall, wall_materials, 'OUT', r, theta, Nr, ctx['ts'], z_off, ctx['centered'], cuts=cuts)
                                 else:
                                     radius = (r + 0.5) * ctx['ts']
@@ -1190,6 +1205,8 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
                 
                 for r in range(rings):
                     Nr = ring_sectors[r]
+                    if Nr <= 0:
+                        continue
                     alpha_r = 2 * math.pi / Nr
                     
                     for theta in range(Nr):
@@ -1219,8 +1236,8 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
                         src_out_wall = None
                         
                         if len(level_cells[r][theta]) >= 8:
-                            cw_idx = level_cells[r][theta][2]
-                            in_idx = level_cells[r][theta][3]
+                            cw_idx = level_cells[r][theta][2] if len(level_cells[r][theta]) > 2 else -1
+                            in_idx = level_cells[r][theta][3] if len(level_cells[r][theta]) > 3 else -1
                             out_idx = level_cells[r][theta][6] if len(level_cells[r][theta]) > 6 else in_idx
                         else:
                             cw_idx = level_cells[r][theta][2] if len(level_cells[r][theta]) > 2 else -1
@@ -1264,7 +1281,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
                                     elif alignment == 'bend':
                                         N_max = ring_sectors[-1]
                                         ratio = N_max // Nr if Nr > 0 else 1
-                                        cuts = max(1, ratio * 8 - 1)
+                                        cuts = min(max(1, ratio * 8 - 1), 8)
                                         _add_wall_polar_bend(bm_wall, src_cw_wall, ctx['mat_wall_offset'], uv_wall, wall_materials, 'CCW', r, theta, Nr, ctx['ts'], z_off, ctx['centered'], cuts=cuts, flip_out=False, thin_wall_offset=-ctx['wt']/2)
                                         _add_wall_polar_bend(bm_wall, src_cw_wall, ctx['mat_wall_offset'], uv_wall, wall_materials, 'CCW', r, theta, Nr, ctx['ts'], z_off, ctx['centered'], cuts=cuts, flip_out=True, thin_wall_offset=ctx['wt']/2)
                                     
@@ -1276,7 +1293,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
                                     elif alignment == 'bend':
                                         N_max = ring_sectors[-1]
                                         ratio = N_max // Nr if Nr > 0 else 1
-                                        cuts = max(1, ratio * 8 - 1)
+                                        cuts = min(max(1, ratio * 8 - 1), 8)
                                         _add_wall_polar_bend(bm_wall, src_cw_wall, ctx['mat_wall_offset'], uv_wall, wall_materials, 'CCW', r, theta, Nr, ctx['ts'], z_off, ctx['centered'], cuts=cuts, flip_out=False, thin_wall_offset=0.0)
                             else:
                                 if props.thin_wall_double_sided:
@@ -1300,19 +1317,19 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
                                     elif alignment == 'bend':
                                         N_max = ring_sectors[-1]
                                         ratio = N_max // Nr if Nr > 0 else 1
-                                        cuts = max(1, ratio * 8 - 1)
+                                        cuts = min(max(1, ratio * 8 - 1), 8)
                                         _add_wall_polar_bend(bm_wall, src_in_wall, ctx['mat_wall_offset'], uv_wall, wall_materials, 'IN', r, theta, Nr, ctx['ts'], z_off, ctx['centered'], cuts=cuts, flip_out=False, thin_wall_offset=-ctx['wt']/2)
                                         _add_wall_polar_bend(bm_wall, src_in_wall, ctx['mat_wall_offset'], uv_wall, wall_materials, 'IN', r, theta, Nr, ctx['ts'], z_off, ctx['centered'], cuts=cuts, flip_out=True, thin_wall_offset=ctx['wt']/2)
                                     
                                     if add_start or add_end:
-                                        _add_circular_wall_caps(bm_cap, uv_cap, radius, phi_start, phi_end, ctx['wt'], sh_in, z_off, add_start=add_start, add_end=add_end)
+                                        _add_circular_wall_caps(bm_cap, uv_cap, radius, phi_start, phi_end, ctx['wt'], sh_in, z_off, ts=ctx['ts'], add_start=add_start, add_end=add_end)
                                 else:
                                     if alignment == 'trapezoid':
                                         _add_wall_polar_trapezoid(bm_wall, src_in_wall, ctx['mat_wall_offset'], uv_wall, wall_materials, 'IN', r, theta, Nr, ctx['ts'], z_off, ctx['centered'], flip_out=False, thin_wall_offset=0.0)
                                     elif alignment == 'bend':
                                         N_max = ring_sectors[-1]
                                         ratio = N_max // Nr if Nr > 0 else 1
-                                        cuts = max(1, ratio * 8 - 1)
+                                        cuts = min(max(1, ratio * 8 - 1), 8)
                                         _add_wall_polar_bend(bm_wall, src_in_wall, ctx['mat_wall_offset'], uv_wall, wall_materials, 'IN', r, theta, Nr, ctx['ts'], z_off, ctx['centered'], cuts=cuts, flip_out=False, thin_wall_offset=0.0)
                             else:
                                 if props.thin_wall_double_sided:
@@ -1357,19 +1374,19 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
                                         elif alignment == 'bend':
                                             N_max = ring_sectors[-1]
                                             ratio = N_max // Nr if Nr > 0 else 1
-                                            cuts = max(1, ratio * 8 - 1)
+                                            cuts = min(max(1, ratio * 8 - 1), 8)
                                             _add_wall_polar_bend(bm_wall, src_out_wall, ctx['mat_wall_offset'], uv_wall, wall_materials, 'OUT', r, theta, Nr, ctx['ts'], z_off, ctx['centered'], cuts=cuts, flip_out=False, thin_wall_offset=-ctx['wt']/2)
                                             _add_wall_polar_bend(bm_wall, src_out_wall, ctx['mat_wall_offset'], uv_wall, wall_materials, 'OUT', r, theta, Nr, ctx['ts'], z_off, ctx['centered'], cuts=cuts, flip_out=True, thin_wall_offset=ctx['wt']/2)
                                         
                                         if add_start or add_end:
-                                            _add_circular_wall_caps(bm_cap, uv_cap, radius, phi_start, phi_end, ctx['wt'], sh_out, z_off, add_start=add_start, add_end=add_end)
+                                            _add_circular_wall_caps(bm_cap, uv_cap, radius, phi_start, phi_end, ctx['wt'], sh_out, z_off, ts=ctx['ts'], add_start=add_start, add_end=add_end)
                                     else:
                                         if alignment == 'trapezoid':
                                             _add_wall_polar_trapezoid(bm_wall, src_out_wall, ctx['mat_wall_offset'], uv_wall, wall_materials, 'OUT', r, theta, Nr, ctx['ts'], z_off, ctx['centered'], flip_out=False, thin_wall_offset=0.0)
                                         elif alignment == 'bend':
                                             N_max = ring_sectors[-1]
                                             ratio = N_max // Nr if Nr > 0 else 1
-                                            cuts = max(1, ratio * 8 - 1)
+                                            cuts = min(max(1, ratio * 8 - 1), 8)
                                             _add_wall_polar_bend(bm_wall, src_out_wall, ctx['mat_wall_offset'], uv_wall, wall_materials, 'OUT', r, theta, Nr, ctx['ts'], z_off, ctx['centered'], cuts=cuts, flip_out=False, thin_wall_offset=0.0)
                                 else:
                                     if props.thin_wall_double_sided:
@@ -1477,6 +1494,8 @@ def _build_polar_roof(ctx, props, maze_data, created_objects, name_suffix, bm=No
             level_cells = ctx['cells_3d'][z]
             for r in range(rings):
                 Nr = ring_sectors[r]
+                if Nr <= 0:
+                    continue
                 alpha_r = 2 * math.pi / Nr
                 for theta in range(Nr):
                     if dirty_cells is not None and (z, r, theta) not in dirty_cells:
@@ -1523,7 +1542,7 @@ def _build_polar_roof(ctx, props, maze_data, created_objects, name_suffix, bm=No
                         elif alignment == 'bend':
                             N_max = ring_sectors[-1]
                             ratio = N_max // Nr if Nr > 0 else 1
-                            cuts = max(1, ratio * 8 - 1)
+                            cuts = min(max(1, ratio * 8 - 1), 8)
                             _add_mesh_polar_bend(bm_roof, src_roof, mat_flipped, uv_roof, roof_materials, r, theta, Nr, ctx['ts'], z_off_roof, ctx['centered'], cuts=cuts, reverse_faces=rev_val)
                     else:
                         flip = props.wall_mode == 'thin'
@@ -1540,7 +1559,7 @@ def _build_polar_roof(ctx, props, maze_data, created_objects, name_suffix, bm=No
                                 f[cell_layer] = cell_id
 
         if not is_external_bm:
-            bmesh.ops.remove_doubles(bm_roof, verts=bm_roof.verts, dist=0.001)
+            _safe_remove_doubles(bm_roof, dist=0.001)
             roof_obj = _create_object_from_bm(bm_roof, f"FireMaze_Roof{name_suffix}", ctx['col'], None)
             for mat in roof_materials:
                 roof_obj.data.materials.append(mat)
@@ -1586,6 +1605,8 @@ def _build_polar_stairs(ctx, props, maze_data, created_objects, name_suffix, bm=
                 
                 # Polar coordinates translation and rotation alignment
                 Nr = ring_sectors[sy]
+                if Nr <= 0:
+                    continue
                 alpha_r = 2 * math.pi / Nr
                 theta_mid = (sx + 0.5) * alpha_r
                 r_mid = sy * ctx['ts']
@@ -1627,7 +1648,7 @@ def _build_polar_stairs(ctx, props, maze_data, created_objects, name_suffix, bm=
 
         if not is_external_bm:
             if bm_stairs.verts:
-                bmesh.ops.remove_doubles(bm_stairs, verts=bm_stairs.verts, dist=0.001)
+                _safe_remove_doubles(bm_stairs, dist=0.001)
                 stair_obj = _create_object_from_bm(bm_stairs, f"FireMaze_Stairs{name_suffix}", ctx['col'], None)
                 for mat in stair_materials:
                     stair_obj.data.materials.append(mat)
@@ -1671,7 +1692,10 @@ def _build_polar_maze_objects_impl(
 
     if props.remove_doubles:
         for obj in created_objects:
-            _remove_doubles_on_obj(obj)
+            try:
+                _remove_doubles_on_obj(obj)
+            except Exception as e:
+                print(f"FireMaze Warning: Post-build remove_doubles failed on {obj.name}: {e}")
 
     if name_suffix == "_Collider":
         if props.merge_colliders:

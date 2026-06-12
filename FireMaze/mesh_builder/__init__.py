@@ -72,6 +72,39 @@ def _rebuild_maze_incrementally_impl(
     dirty_cell_ids = {get_cell_id(z, y, x) for (z, y, x) in dirty_cells}
     ctx = _prepare_maze_building_context(props, maze_data, context, collection, force_simple=False)
     
+    # Check if cell_id layer is missing on any existing objects
+    trigger_full_rebuild = False
+    floor_obj_chk = _find_role_object(collection, "FireMaze_Floor")
+    if floor_obj_chk:
+        bm_check = bmesh.new()
+        bm_check.from_mesh(floor_obj_chk.data)
+        if bm_check.faces.layers.int.get("cell_id") is None:
+            trigger_full_rebuild = True
+        bm_check.free()
+        
+    if not trigger_full_rebuild:
+        wall_obj_chk = _find_role_object(collection, "FireMaze_Walls")
+        if wall_obj_chk:
+            bm_check = bmesh.new()
+            bm_check.from_mesh(wall_obj_chk.data)
+            if bm_check.faces.layers.int.get("cell_id") is None:
+                trigger_full_rebuild = True
+            bm_check.free()
+            
+    if not trigger_full_rebuild:
+        cap_obj_chk = _find_role_object(collection, "FireMaze_WallEndCaps")
+        if cap_obj_chk:
+            bm_check = bmesh.new()
+            bm_check.from_mesh(cap_obj_chk.data)
+            if bm_check.faces.layers.int.get("cell_id") is None:
+                trigger_full_rebuild = True
+            bm_check.free()
+            
+    if trigger_full_rebuild:
+        from ..operators import rebuild_maze_from_collection
+        rebuild_maze_from_collection(context, collection)
+        return
+    
     # 1. Update the visual objects (name_suffix="")
     name_suffix = ""
     created_objects = []
@@ -167,15 +200,6 @@ def _rebuild_maze_incrementally_impl(
                                    
     if wall_obj and bm_wall:
         cell_layer_dbg = bm_wall.faces.layers.int.get("cell_id")
-        if cell_layer_dbg is not None:
-            cids = {f[cell_layer_dbg] for f in bm_wall.faces}
-            print("DEBUG __init__: bm_wall cids before to_mesh =", sorted(list(cids)))
-            print(f"DEBUG __init__: bm_wall has {len(bm_wall.faces)} faces")
-            for idx, f in enumerate(bm_wall.faces):
-                if idx >= 180:
-                    print(f"DEBUG __init__: face {idx} cell_id = {f[cell_layer_dbg]}")
-                if f[cell_layer_dbg] == 2003:
-                    print(f"DEBUG __init__: Found face {idx} with cell_id 2003!")
         bm_wall.to_mesh(wall_obj.data)
         bm_wall.free()
         wall_obj.data.update()
