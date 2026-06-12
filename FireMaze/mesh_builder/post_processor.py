@@ -20,38 +20,39 @@ def _generate_lightmap_on_obj(obj, context, method='smart'):
     original_active = context.view_layer.objects.active
     original_selected = list(context.selected_objects)
     original_mode = context.object.mode if context.object else 'OBJECT'
+    original_active_uv = None
     
-    # Make sure we are in object mode before adding UV map
-    if original_mode != 'OBJECT':
-        try:
-            bpy.ops.object.mode_set(mode='OBJECT')
-        except Exception as e:
-            logger.debug(f"Failed to switch to Object mode: {e}")
-            
-    # Add a new UV map named 'Lightmap'
-    uv_map = obj.data.uv_layers.get("Lightmap")
-    if not uv_map:
-        uv_map = obj.data.uv_layers.new(name="Lightmap")
-    
-    # Set the new UV map as active for unwrapping
-    original_active_uv = obj.data.uv_layers.active
-    obj.data.uv_layers.active = uv_map
-    
-    # Select only this object and make it active
-    bpy.ops.object.select_all(action='DESELECT')
     try:
-        obj.select_set(True)
-    except RuntimeError:
-        # Object may not be in the active ViewLayer; try linking it
+        # Make sure we are in object mode before adding UV map
+        if original_mode != 'OBJECT':
+            try:
+                bpy.ops.object.mode_set(mode='OBJECT')
+            except Exception as e:
+                logger.debug(f"Failed to switch to Object mode: {e}")
+                
+        # Add a new UV map named 'Lightmap'
+        uv_map = obj.data.uv_layers.get("Lightmap")
+        if not uv_map:
+            uv_map = obj.data.uv_layers.new(name="Lightmap")
+        
+        # Set the new UV map as active for unwrapping
+        original_active_uv = obj.data.uv_layers.active
+        obj.data.uv_layers.active = uv_map
+        
+        # Select only this object and make it active
+        bpy.ops.object.select_all(action='DESELECT')
         try:
-            context.view_layer.layer_collection.collection.objects.link(obj)
             obj.select_set(True)
-        except Exception as e:
-            logger.debug(f"Failed to link or select object: {e}")
-            return
-    context.view_layer.objects.active = obj
-    
-    try:
+        except RuntimeError:
+            # Object may not be in the active ViewLayer; try linking it
+            try:
+                context.view_layer.layer_collection.collection.objects.link(obj)
+                obj.select_set(True)
+            except Exception as e:
+                logger.debug(f"Failed to link or select object: {e}")
+                raise e
+        context.view_layer.objects.active = obj
+        
         # Switch to Edit Mode
         bpy.ops.object.mode_set(mode='EDIT')
         # Select all geometry
@@ -74,25 +75,33 @@ def _generate_lightmap_on_obj(obj, context, method='smart'):
             bpy.ops.object.mode_set(mode='OBJECT')
         except Exception as cleanup_err:
             logger.debug(f"Failed to restore Object mode after lightmap error: {cleanup_err}")
+    finally:
+        # Restore original active UV map
+        if original_active_uv:
+            try:
+                obj.data.uv_layers.active = original_active_uv
+            except Exception as e:
+                logger.debug(f"Failed to restore active UV map: {e}")
             
-    # Restore original active UV map
-    if original_active_uv:
-        obj.data.uv_layers.active = original_active_uv
-        
-    # Restore original active object and selection
-    bpy.ops.object.select_all(action='DESELECT')
-    for o in original_selected:
+        # Restore original active object and selection
         try:
-            o.select_set(True)
+            bpy.ops.object.select_all(action='DESELECT')
+            for o in original_selected:
+                try:
+                    if o and o.name in bpy.data.objects:
+                        o.select_set(True)
+                except Exception as e:
+                    logger.debug(f"Failed to restore object selection: {e}")
         except Exception as e:
-            logger.debug(f"Failed to restore object selection: {e}")
-    context.view_layer.objects.active = original_active
+            logger.debug(f"Failed during selection restore: {e}")
+            
+        context.view_layer.objects.active = original_active
 
-    if original_active:
-        try:
-            bpy.ops.object.mode_set(mode=original_mode)
-        except Exception as e:
-            logger.debug(f"Failed to restore original mode: {e}")
+        if original_active:
+            try:
+                bpy.ops.object.mode_set(mode=original_mode)
+            except Exception as e:
+                logger.debug(f"Failed to restore original mode: {e}")
 
 def _merge_maze_objects(objects, context, name="FireMaze_Merged"):
     """Join a list of mesh objects into a single mesh object using the join operator."""
@@ -439,11 +448,15 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
     if not (torch_mesh or chest_mesh or door_mesh):
         return
  
-    # Create or get props collection
-    props_col = bpy.data.collections.get("FireMaze_Props")
+    # Create or get props collection scoped to the current parent collection
+    props_col_name = f"FireMaze_Props_{parent_collection.name}"
+    props_col = parent_collection.children.get(props_col_name)
     if not props_col:
-        props_col = bpy.data.collections.new("FireMaze_Props")
+        props_col = bpy.data.collections.get(props_col_name)
+        if not props_col:
+            props_col = bpy.data.collections.new(props_col_name)
         parent_collection.children.link(props_col)
+    props_col["fire_maze_data"] = "{}"
  
     ts = props.tile_size
     wh = props.wall_height

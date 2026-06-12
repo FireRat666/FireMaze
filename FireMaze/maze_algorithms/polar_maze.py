@@ -6,7 +6,7 @@ import logging
 from typing import List, Tuple
 from ..maze_data import MazeData, UnionFind
 from ..pathfinder import find_shortest_path, _get_polar_neighbors
-from ..utils import get_rng
+from ..utils import get_rng, set_seed
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,7 @@ def generate_polar_maze(
         A fully populated MazeData instance for a polar grid.
     """
     random = get_rng()
+    set_seed(seed)
 
     # Only DFS has a dedicated polar implementation; all other algorithms use a
     # random spanning tree (Kruskal-style) which produces similar perfect-maze results.
