@@ -30,6 +30,18 @@ def build_maze_objects(
         )
 
 
+def _find_role_object(collection, base_name):
+    if not collection:
+        return None
+    obj = collection.objects.get(base_name)
+    if obj:
+        return obj
+    for obj in collection.objects:
+        if obj.name == base_name or obj.name.startswith(base_name + "."):
+            return obj
+    return None
+
+
 def rebuild_maze_incrementally(
     props: bpy.types.PropertyGroup,
     maze_data: MazeData,
@@ -63,7 +75,7 @@ def _rebuild_maze_incrementally_impl(
     created_objects = []
     
     # Floor
-    floor_obj = collection.objects.get(f"FireMaze_Floor{name_suffix}")
+    floor_obj = _find_role_object(collection, f"FireMaze_Floor{name_suffix}")
     if floor_obj:
         bm = bmesh.new()
         bm.from_mesh(floor_obj.data)
@@ -103,8 +115,8 @@ def _rebuild_maze_incrementally_impl(
                 _build_rect_thin_floor(ctx, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
 
     # Walls & Caps
-    wall_obj = collection.objects.get(f"FireMaze_Walls{name_suffix}")
-    cap_obj = collection.objects.get(f"FireMaze_WallEndCaps{name_suffix}")
+    wall_obj = _find_role_object(collection, f"FireMaze_Walls{name_suffix}")
+    cap_obj = _find_role_object(collection, f"FireMaze_WallEndCaps{name_suffix}")
     
     bm_wall, uv_wall, wall_materials = None, None, None
     if wall_obj:
@@ -171,7 +183,7 @@ def _rebuild_maze_incrementally_impl(
         cap_obj.data.update()
         
     # Roof
-    roof_obj = collection.objects.get(f"FireMaze_Roof{name_suffix}")
+    roof_obj = _find_role_object(collection, f"FireMaze_Roof{name_suffix}")
     if roof_obj:
         bm = bmesh.new()
         bm.from_mesh(roof_obj.data)
@@ -211,7 +223,7 @@ def _rebuild_maze_incrementally_impl(
                 _build_rect_thin_roof(ctx, props, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
 
     # Stairs
-    stair_obj = collection.objects.get(f"FireMaze_Stairs{name_suffix}")
+    stair_obj = _find_role_object(collection, f"FireMaze_Stairs{name_suffix}")
     if stair_obj:
         bm = bmesh.new()
         bm.from_mesh(stair_obj.data)
@@ -243,7 +255,7 @@ def _rebuild_maze_incrementally_impl(
             _build_rect_stairs(ctx, props, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
 
     # Rebuild guide path dynamically
-    guide_obj = collection.objects.get("FireMaze_Guide")
+    guide_obj = _find_role_object(collection, "FireMaze_Guide")
     if guide_obj:
         curve = guide_obj.data
         bpy.data.objects.remove(guide_obj, do_unlink=True)
@@ -254,7 +266,7 @@ def _rebuild_maze_incrementally_impl(
     _build_guide_path(props, maze_data, collection, ctx['materials'])
 
     # 2. Update helper object "_FireMaze_Edit_Helper"
-    helper_obj = bpy.data.objects.get("_FireMaze_Edit_Helper")
+    helper_obj = _find_role_object(bpy.data, "_FireMaze_Edit_Helper")
     if helper_obj:
         # Delete old helper to rebuild it from the updated cell data
         mesh = helper_obj.data

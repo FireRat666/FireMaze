@@ -68,7 +68,7 @@ def get_rng():
 
 def set_seed(seed):
     """Set seed for the shared random instance and global random state."""
-    if seed:
+    if seed is not None:
         shared_rng.seed(seed)
         random.seed(seed)
     else:

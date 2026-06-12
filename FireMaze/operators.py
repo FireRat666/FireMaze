@@ -769,16 +769,30 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
 
         # Calculate dirty cells
         dirty_cells = set()
-        width = data_dict['width']
-        depth = data_dict['depth']
-        for z in [z_hit, z_hit + 1]:
-            if 0 <= z < props.floors:
-                dirty_cells.add((z, cy_clamped, cx_clamped))
-                for dy in [-1, 0, 1]:
-                    for dx in [-1, 0, 1]:
-                        ny, nx = cy_clamped + dy, cx_clamped + dx
-                        if 0 <= ny < depth and 0 <= nx < width:
-                            dirty_cells.add((z, ny, nx))
+        if grid_type == 'polar':
+            rings = data_dict.get('polar_rings', 5)
+            ring_sectors = data_dict.get('ring_sectors')
+            for z in [z_hit, z_hit + 1]:
+                if 0 <= z < props.floors:
+                    dirty_cells.add((z, cy_clamped, cx_clamped))
+                    for dy in [-1, 0, 1]:
+                        for dx in [-1, 0, 1]:
+                            ny, nx = cy_clamped + dy, cx_clamped + dx
+                            if 0 <= ny < rings:
+                                Nr = ring_sectors[ny]
+                                nx_wrapped = nx % Nr
+                                dirty_cells.add((z, ny, nx_wrapped))
+        else:
+            width = data_dict['width']
+            depth = data_dict['depth']
+            for z in [z_hit, z_hit + 1]:
+                if 0 <= z < props.floors:
+                    dirty_cells.add((z, cy_clamped, cx_clamped))
+                    for dy in [-1, 0, 1]:
+                        for dx in [-1, 0, 1]:
+                            ny, nx = cy_clamped + dy, cx_clamped + dx
+                            if 0 <= ny < depth and 0 <= nx < width:
+                                dirty_cells.add((z, ny, nx))
         return dirty_cells
 
     def _handle_polar_mesh_cycle(self, context, event, props, col, data_dict, cells, wall_mode, ring_sectors, rings, hit_x, hit_y, ts, r_hit, phi_hit, r_idx, alpha_r, theta, Nr, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells, z_hit):
@@ -833,30 +847,30 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                             B = (r_idx, (theta - 1) % Nr)
                             if not cells[A[0]][A[1]][0]:
                                 owner_cell = A
-                                owner_idx_pos = 2
+                                owner_idx_pos = 3
                                 boundary_name = "clockwise radial boundary wall"
                             elif not cells[B[0]][B[1]][0]:
                                 owner_cell = B
-                                owner_idx_pos = 3
+                                owner_idx_pos = 2
                                 boundary_name = "counter-clockwise radial boundary wall"
                             else:
                                 owner_cell = A
-                                owner_idx_pos = 2
+                                owner_idx_pos = 3
                                 boundary_name = "clockwise radial boundary wall (fallback)"
                         elif min_d == d_ccw:
                             A = (r_idx, theta)
                             B = (r_idx, (theta + 1) % Nr)
                             if not cells[A[0]][A[1]][0]:
                                 owner_cell = A
-                                owner_idx_pos = 3
+                                owner_idx_pos = 2
                                 boundary_name = "counter-clockwise radial boundary wall"
                             elif not cells[B[0]][B[1]][0]:
                                 owner_cell = B
-                                owner_idx_pos = 2
+                                owner_idx_pos = 3
                                 boundary_name = "clockwise radial boundary wall"
                             else:
                                 owner_cell = A
-                                owner_idx_pos = 3
+                                owner_idx_pos = 2
                                 boundary_name = "counter-clockwise radial boundary wall (fallback)"
                         elif min_d == d_in:
                             if r_idx > 0:
@@ -1005,6 +1019,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
         return None
 
     def _handle_polar_wall_toggle(self, context, event, props, col, data_dict, cells, wall_mode, ring_sectors, rings, hit_x, hit_y, ts, r_hit, phi_hit, r_idx, alpha_r, theta, Nr, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells, z_hit):
+        self._old_entrance_dirty = None
         modified = False
         rebuilt_text = ""
         tr, tt = r_idx, theta
@@ -1089,6 +1104,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                             old_r, old_tt = entrance_val[0], entrance_val[1]
                             if 0 <= old_r < len(cells) and 0 <= old_tt < len(cells[old_r]):
                                 cells[old_r][old_tt][0] = True # Make it wall again
+                                self._old_entrance_dirty = (old_r, old_tt)
                         
                         data_dict['entrance'] = [tr, tt, 'OUT']
                         rebuilt_text = "entrance floor tile (moved)"
@@ -1201,31 +1217,40 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
             self.report({'INFO'}, f"Toggled {rebuilt_text} at cell ({tr}, {tt})")
             
             # Calculate dirty cells using overlapping sector check
-            Nr_tr = ring_sectors[tr]
-            dirty_cells = {(z_hit, tr, tt)}
-            dirty_cells.add((z_hit, tr, (tt - 1) % Nr_tr))
-            dirty_cells.add((z_hit, tr, (tt + 1) % Nr_tr))
+            dirty_cells = set()
             
-            alpha_tr = 2 * math.pi / Nr_tr
-            A = tt * alpha_tr
-            B = (tt + 1) * alpha_tr
+            def add_overlapping_dirty(z, r, theta, dirty_set):
+                Nr = ring_sectors[r]
+                dirty_set.add((z, r, theta))
+                dirty_set.add((z, r, (theta - 1) % Nr))
+                dirty_set.add((z, r, (theta + 1) % Nr))
+                
+                alpha = 2 * math.pi / Nr
+                A = theta * alpha
+                B = (theta + 1) * alpha
+                
+                if r > 0:
+                    N_in = ring_sectors[r - 1]
+                    alpha_in = 2 * math.pi / N_in
+                    for t_in in range(N_in):
+                        A_in = t_in * alpha_in
+                        B_in = (t_in + 1) * alpha_in
+                        if max(A, A_in) < min(B, B_in) + 1e-5:
+                            dirty_set.add((z, r - 1, t_in))
+                if r < rings - 1:
+                    N_out = ring_sectors[r + 1]
+                    alpha_out = 2 * math.pi / N_out
+                    for t_out in range(N_out):
+                        A_out = t_out * alpha_out
+                        B_out = (t_out + 1) * alpha_out
+                        if max(A, A_out) < min(B, B_out) + 1e-5:
+                            dirty_set.add((z, r + 1, t_out))
+
+            add_overlapping_dirty(z_hit, tr, tt, dirty_cells)
+            if getattr(self, "_old_entrance_dirty", None) is not None:
+                old_r, old_tt = self._old_entrance_dirty
+                add_overlapping_dirty(z_hit, old_r, old_tt, dirty_cells)
             
-            if tr > 0:
-                N_in = ring_sectors[tr - 1]
-                alpha_in = 2 * math.pi / N_in
-                for t_in in range(N_in):
-                    A_in = t_in * alpha_in
-                    B_in = (t_in + 1) * alpha_in
-                    if max(A, A_in) < min(B, B_in) + 1e-5:
-                        dirty_cells.add((z_hit, tr - 1, t_in))
-            if tr < rings - 1:
-                N_out = ring_sectors[tr + 1]
-                alpha_out = 2 * math.pi / N_out
-                for t_out in range(N_out):
-                    A_out = t_out * alpha_out
-                    B_out = (t_out + 1) * alpha_out
-                    if max(A, A_out) < min(B, B_out) + 1e-5:
-                        dirty_cells.add((z_hit, tr + 1, t_out))
             return dirty_cells
         return None
         return None
@@ -1674,6 +1699,10 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
             logger.debug(f"Failed to validate floor level or parse maze data: {e}")
             self.maze_data = None
             self._maze_raw = None
+            props.is_editing = False
+            context.workspace.status_text_set(None)
+            set_other_mazes_visibility(context, True)
+            return {'CANCELLED'}
 
         rebuild_maze_from_collection(context, col)
         if props.floors > 1:

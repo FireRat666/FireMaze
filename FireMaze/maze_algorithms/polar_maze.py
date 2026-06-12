@@ -271,11 +271,6 @@ def generate_polar_maze(
         else:
             exits = [(rings - 1, ring_sectors[rings - 1] // 2, 'OUT')]
 
-    if wall_mode == 'cube':
-        cells[entrance[0]][entrance[1]][0] = False
-        for ex in exits:
-            cells[ex[0]][ex[1]][0] = False
-
     guide_path = []
 
     for r in range(rings):
@@ -349,6 +344,11 @@ def generate_polar_maze(
     else:
         cells = [cells]
         stairs_placed = []
+
+    if wall_mode == 'cube':
+        cells[0][entrance[0]][entrance[1]][0] = False
+        for ex in exits:
+            cells[floors - 1][ex[0]][ex[1]][0] = False
 
     maze_data = MazeData(
         width=rings,

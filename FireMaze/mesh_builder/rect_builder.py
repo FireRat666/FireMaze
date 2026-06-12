@@ -759,7 +759,7 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, 
 
     if not is_external_bm:
         if props.single_wall_object:
-            if bm_cap.verts:
+            if bm_cap.verts and not is_external_cap:
                 bm_cap.free()
             wall_obj = _create_object_from_bm(bm_wall, f"FireMaze_Walls{name_suffix}", ctx['col'], None)
             for mat in wall_materials:
@@ -771,22 +771,26 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, 
                 wall_obj.data.materials.append(mat)
             created_objects.append(wall_obj)
             if bm_cap.verts:
+                if not is_external_cap:
+                    cap_obj = _create_object_from_bm(bm_cap, f"FireMaze_WallEndCaps{name_suffix}", ctx['col'], None)
+                    for mat in cap_materials:
+                        cap_obj.data.materials.append(mat)
+                    created_objects.append(cap_obj)
+            elif not is_external_cap:
+                bm_cap.free()
+    else:
+        if props.single_wall_object and bm_cap.verts:
+            if not is_external_cap:
+                bm_cap.free()
+        elif not props.single_wall_object and bm_cap.verts:
+            if not is_external_cap:
                 cap_obj = _create_object_from_bm(bm_cap, f"FireMaze_WallEndCaps{name_suffix}", ctx['col'], None)
                 for mat in cap_materials:
                     cap_obj.data.materials.append(mat)
                 created_objects.append(cap_obj)
-            else:
-                bm_cap.free()
-    else:
-        if props.single_wall_object and bm_cap.verts:
-            bm_cap.free()
-        elif not props.single_wall_object and bm_cap.verts:
-            cap_obj = _create_object_from_bm(bm_cap, f"FireMaze_WallEndCaps{name_suffix}", ctx['col'], None)
-            for mat in cap_materials:
-                cap_obj.data.materials.append(mat)
-            created_objects.append(cap_obj)
         elif not bm_cap.verts:
-            bm_cap.free()
+            if not is_external_cap:
+                bm_cap.free()
 
 
 

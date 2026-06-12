@@ -1435,8 +1435,18 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
             else:
                 bm_cap.free()
     else:
-        if props.single_wall_object and bm_cap.verts and not is_external_cap:
-            bm_cap.free()
+        if not is_external_cap:
+            if props.single_wall_object:
+                if bm_cap.verts:
+                    bm_cap.free()
+            else:
+                if bm_cap.verts:
+                    cap_obj = _create_object_from_bm(bm_cap, f"FireMaze_WallEndCaps{name_suffix}", ctx['col'], None)
+                    for mat in cap_materials:
+                        cap_obj.data.materials.append(mat)
+                    created_objects.append(cap_obj)
+                else:
+                    bm_cap.free()
 
 
 def _build_polar_roof(ctx, props, maze_data, created_objects, name_suffix, bm=None, uv_layer=None, materials=None, dirty_cells=None):

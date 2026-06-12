@@ -64,8 +64,8 @@ def _generate_thin_maze(
         for _ in range(rooms_count * 5):
             if len(rooms) >= rooms_count:
                 break
-            rw = random.randint(min_room_size, max_room_size)
-            rh = random.randint(min_room_size, max_room_size)
+            rw = random.randint(min(min_room_size, width), min(max_room_size, width))
+            rh = random.randint(min(min_room_size, depth), min(max_room_size, depth))
             rx = random.randint(0, width - rw)
             ry = random.randint(0, depth - rh)
 

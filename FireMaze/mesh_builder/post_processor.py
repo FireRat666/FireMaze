@@ -195,32 +195,39 @@ def _apply_vertex_painting_on_obj(obj, props, maze_data):
                     for theta in range(ring_sectors[r]):
                         Nr = ring_sectors[r]
                         accessible_count = 0
-                        if r >= 1 and not cells_3d[z][r][theta][0]:
-                            accessible_count += 1
-                        if r >= 1 and not cells_3d[z][r][(theta - 1) % Nr][0]:
-                            accessible_count += 1
-                        if r > 0 and not cells_3d[z][r][theta][1]:
-                            N_in = ring_sectors[r - 1]
-                            if N_in == Nr:
-                                accessible_count += 1
-                            elif N_in == 1:
-                                accessible_count += 1
-                            else:
-                                accessible_count += 1
-                        if r < rings - 1:
-                            N_out = ring_sectors[r + 1]
-                            if N_out == Nr:
-                                if not cells_3d[z][r + 1][theta][1]:
-                                    accessible_count += 1
-                            elif Nr == 1:
-                                for t in range(N_out):
-                                    if not cells_3d[z][r + 1][t][1]:
+                        if wall_mode == 'cube':
+                            if not cells_3d[z][r][theta][0]:
+                                from ..pathfinder import _get_polar_neighbors
+                                for nr, ntheta in _get_polar_neighbors(r, theta, rings, ring_sectors):
+                                    if not cells_3d[z][nr][ntheta][0]:
                                         accessible_count += 1
-                            else:
-                                if not cells_3d[z][r + 1][2 * theta][1]:
+                        else:
+                            if r >= 1 and not cells_3d[z][r][theta][0]:
+                                accessible_count += 1
+                            if r >= 1 and not cells_3d[z][r][(theta - 1) % Nr][0]:
+                                accessible_count += 1
+                            if r > 0 and not cells_3d[z][r][theta][1]:
+                                N_in = ring_sectors[r - 1]
+                                if N_in == Nr:
                                     accessible_count += 1
-                                if not cells_3d[z][r + 1][2 * theta + 1][1]:
+                                elif N_in == 1:
                                     accessible_count += 1
+                                else:
+                                    accessible_count += 1
+                            if r < rings - 1:
+                                N_out = ring_sectors[r + 1]
+                                if N_out == Nr:
+                                    if not cells_3d[z][r + 1][theta][1]:
+                                        accessible_count += 1
+                                elif Nr == 1:
+                                    for t in range(N_out):
+                                        if not cells_3d[z][r + 1][t][1]:
+                                            accessible_count += 1
+                                else:
+                                    if not cells_3d[z][r + 1][2 * theta][1]:
+                                        accessible_count += 1
+                                    if not cells_3d[z][r + 1][2 * theta + 1][1]:
+                                        accessible_count += 1
                         if accessible_count == 1:
                             # Exclude entrance and exits (on active floors)
                             is_ent_or_exit = False
@@ -474,43 +481,92 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                     Nr = ring_sectors[r]
                     alpha_r = 2 * math.pi / Nr
                     for theta in range(Nr):
-                        cw_wall = resolved_cells[r][theta][0]
-                        in_wall = resolved_cells[r][theta][1]
-                        
                         r_mid = r * ts
                         theta_mid = (theta + 0.5) * alpha_r
                         
-                        # Clockwise wall torch
-                        if cw_wall and rng.random() < density:
+                        if wall_mode == 'cube':
+                            # CW boundary check
+                            cw_wall_cell = resolved_cells[r][(theta + 1) % Nr][0]
+                            this_cell_wall = resolved_cells[r][theta][0]
                             phi_cw = (theta + 1) * alpha_r
-                            pos_x = r_mid * math.cos(phi_cw) + offset * math.sin(phi_cw)
-                            pos_y = r_mid * math.sin(phi_cw) - offset * math.cos(phi_cw)
-                            pos = (pos_x, pos_y, z * wh + 0.6 * wh)
-                            place_prop(torch_src, pos, phi_cw - math.pi / 2)
                             
-                        # Inward wall torch
-                        if in_wall and rng.random() < density:
+                            if this_cell_wall and not cw_wall_cell:
+                                # Torch on CW boundary of this wall cell, facing CW
+                                if rng.random() < density:
+                                    pos_x = r_mid * math.cos(phi_cw) + offset * math.sin(phi_cw)
+                                    pos_y = r_mid * math.sin(phi_cw) - offset * math.cos(phi_cw)
+                                    pos = (pos_x, pos_y, z * wh + 0.6 * wh)
+                                    place_prop(torch_src, pos, phi_cw - math.pi / 2)
+                            elif not this_cell_wall and cw_wall_cell:
+                                # Torch on CW boundary of open cell, facing CCW/inward
+                                if rng.random() < density:
+                                    pos_x = r_mid * math.cos(phi_cw) - offset * math.sin(phi_cw)
+                                    pos_y = r_mid * math.sin(phi_cw) + offset * math.cos(phi_cw)
+                                    pos = (pos_x, pos_y, z * wh + 0.6 * wh)
+                                    place_prop(torch_src, pos, phi_cw + math.pi / 2)
+                                    
+                            # IN boundary check
+                            N_in = ring_sectors[r - 1]
+                            if N_in == Nr:
+                                inner_theta = theta
+                            elif N_in == 1:
+                                inner_theta = 0
+                            else:
+                                inner_theta = theta // 2
+                            
+                            in_wall_cell = resolved_cells[r - 1][inner_theta][0]
                             r_in = (r - 0.5) * ts
-                            pos_x = (r_in + offset) * math.cos(theta_mid)
-                            pos_y = (r_in + offset) * math.sin(theta_mid)
-                            pos = (pos_x, pos_y, z * wh + 0.6 * wh)
-                            place_prop(torch_src, pos, theta_mid)
+                            
+                            if this_cell_wall and not in_wall_cell:
+                                # Torch on IN boundary of this wall cell, facing IN
+                                if rng.random() < density:
+                                    pos_x = (r_in - offset) * math.cos(theta_mid)
+                                    pos_y = (r_in - offset) * math.sin(theta_mid)
+                                    pos = (pos_x, pos_y, z * wh + 0.6 * wh)
+                                    place_prop(torch_src, pos, theta_mid + math.pi)
+                            elif not this_cell_wall and in_wall_cell:
+                                # Torch on IN boundary of open cell, facing OUT
+                                if rng.random() < density:
+                                    pos_x = (r_in + offset) * math.cos(theta_mid)
+                                    pos_y = (r_in + offset) * math.sin(theta_mid)
+                                    pos = (pos_x, pos_y, z * wh + 0.6 * wh)
+                                    place_prop(torch_src, pos, theta_mid)
+                        else:
+                            cw_wall = resolved_cells[r][theta][0]
+                            in_wall = resolved_cells[r][theta][1]
+                            
+                            # Clockwise wall torch
+                            if cw_wall and rng.random() < density:
+                                phi_cw = (theta + 1) * alpha_r
+                                pos_x = r_mid * math.cos(phi_cw) + offset * math.sin(phi_cw)
+                                pos_y = r_mid * math.sin(phi_cw) - offset * math.cos(phi_cw)
+                                pos = (pos_x, pos_y, z * wh + 0.6 * wh)
+                                place_prop(torch_src, pos, phi_cw - math.pi / 2)
+                                
+                            # Inward wall torch
+                            if in_wall and rng.random() < density:
+                                r_in = (r - 0.5) * ts
+                                pos_x = (r_in + offset) * math.cos(theta_mid)
+                                pos_y = (r_in + offset) * math.sin(theta_mid)
+                                pos = (pos_x, pos_y, z * wh + 0.6 * wh)
+                                place_prop(torch_src, pos, theta_mid)
 
                         # Outer boundary torch
                         if r == rings - 1:
-                            is_entrance = (z == 0 and theta == 0)
-                            is_exit = False
-                            if z == floors - 1 and maze_data.exits:
-                                for ex_r, ex_theta, _ in maze_data.exits:
-                                    if ex_r == r and ex_theta == theta:
-                                        is_exit = True
-                                        break
-                            if not is_entrance and not is_exit and rng.random() < density:
-                                r_out = (r + 0.5) * ts
-                                pos_x = (r_out - offset) * math.cos(theta_mid)
-                                pos_y = (r_out - offset) * math.sin(theta_mid)
-                                pos = (pos_x, pos_y, z * wh + 0.6 * wh)
-                                place_prop(torch_src, pos, theta_mid + math.pi)
+                            if wall_mode != 'cube' or not resolved_cells[r][theta][0]:
+                                is_entrance = (z == 0 and theta == 0)
+                                is_exit = False
+                                if z == floors - 1 and maze_data.exits:
+                                    for ex_r, ex_theta, _ in maze_data.exits:
+                                        if ex_r == r and ex_theta == theta:
+                                            is_exit = True
+                                            break
+                                if not is_entrance and not is_exit and rng.random() < density:
+                                    r_out = (r + 0.5) * ts
+                                    pos_x = (r_out - offset) * math.cos(theta_mid)
+                                    pos_y = (r_out - offset) * math.sin(theta_mid)
+                                    pos = (pos_x, pos_y, z * wh + 0.6 * wh)
+                                    place_prop(torch_src, pos, theta_mid + math.pi)
 
             # 2. Chests
             if chest_mesh:
@@ -523,32 +579,63 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                         Nr = ring_sectors[r]
                         accessible = []
                         
-                        if r >= 1 and not resolved_cells[r][theta][0]:
-                            accessible.append(('CW', (r, (theta + 1) % Nr)))
-                        if r >= 1 and not resolved_cells[r][(theta - 1) % Nr][0]:
-                            accessible.append(('CCW', (r, (theta - 1) % Nr)))
-                        if r > 0 and not resolved_cells[r][theta][1]:
-                            N_in = ring_sectors[r - 1]
-                            if N_in == Nr:
-                                accessible.append(('IN', (r - 1, theta)))
-                            elif N_in == 1:
-                                accessible.append(('IN', (r - 1, 0)))
-                            else:
-                                accessible.append(('IN', (r - 1, theta // 2)))
-                        if r < rings - 1:
-                            N_out = ring_sectors[r + 1]
-                            if N_out == Nr:
-                                if not resolved_cells[r + 1][theta][1]:
-                                    accessible.append(('OUT', (r + 1, theta)))
-                            elif Nr == 1:
-                                for t in range(N_out):
-                                    if not resolved_cells[r + 1][t][1]:
-                                        accessible.append(('OUT', (r + 1, t)))
-                            else:
-                                if not resolved_cells[r + 1][2 * theta][1]:
-                                    accessible.append(('OUT', (r + 1, 2 * theta)))
-                                if not resolved_cells[r + 1][2 * theta + 1][1]:
-                                    accessible.append(('OUT', (r + 1, 2 * theta + 1)))
+                        if wall_mode == 'cube':
+                            if not resolved_cells[r][theta][0]:
+                                if r >= 1 and not resolved_cells[r][(theta + 1) % Nr][0]:
+                                    accessible.append(('CW', (r, (theta + 1) % Nr)))
+                                if r >= 1 and not resolved_cells[r][(theta - 1) % Nr][0]:
+                                    accessible.append(('CCW', (r, (theta - 1) % Nr)))
+                                if r > 0:
+                                    N_in = ring_sectors[r - 1]
+                                    if N_in == Nr:
+                                        in_cell = (r - 1, theta)
+                                    elif N_in == 1:
+                                        in_cell = (r - 1, 0)
+                                    else:
+                                        in_cell = (r - 1, theta // 2)
+                                    if not resolved_cells[in_cell[0]][in_cell[1]][0]:
+                                        accessible.append(('IN', in_cell))
+                                if r < rings - 1:
+                                    N_out = ring_sectors[r + 1]
+                                    if N_out == Nr:
+                                        if not resolved_cells[r + 1][theta][0]:
+                                            accessible.append(('OUT', (r + 1, theta)))
+                                    elif Nr == 1:
+                                        for t in range(N_out):
+                                            if not resolved_cells[r + 1][t][0]:
+                                                accessible.append(('OUT', (r + 1, t)))
+                                    else:
+                                        if not resolved_cells[r + 1][2 * theta][0]:
+                                            accessible.append(('OUT', (r + 1, 2 * theta)))
+                                        if not resolved_cells[r + 1][2 * theta + 1][0]:
+                                            accessible.append(('OUT', (r + 1, 2 * theta + 1)))
+                        else:
+                            if r >= 1 and not resolved_cells[r][theta][0]:
+                                accessible.append(('CW', (r, (theta + 1) % Nr)))
+                            if r >= 1 and not resolved_cells[r][(theta - 1) % Nr][0]:
+                                accessible.append(('CCW', (r, (theta - 1) % Nr)))
+                            if r > 0 and not resolved_cells[r][theta][1]:
+                                N_in = ring_sectors[r - 1]
+                                if N_in == Nr:
+                                    accessible.append(('IN', (r - 1, theta)))
+                                elif N_in == 1:
+                                    accessible.append(('IN', (r - 1, 0)))
+                                else:
+                                    accessible.append(('IN', (r - 1, theta // 2)))
+                            if r < rings - 1:
+                                N_out = ring_sectors[r + 1]
+                                if N_out == Nr:
+                                    if not resolved_cells[r + 1][theta][1]:
+                                        accessible.append(('OUT', (r + 1, theta)))
+                                elif Nr == 1:
+                                    for t in range(N_out):
+                                        if not resolved_cells[r + 1][t][1]:
+                                            accessible.append(('OUT', (r + 1, t)))
+                                else:
+                                    if not resolved_cells[r + 1][2 * theta][1]:
+                                        accessible.append(('OUT', (r + 1, 2 * theta)))
+                                    if not resolved_cells[r + 1][2 * theta + 1][1]:
+                                        accessible.append(('OUT', (r + 1, 2 * theta + 1)))
                                     
                         if len(accessible) == 1 and r > 0:
                             is_ent_or_exit = False
