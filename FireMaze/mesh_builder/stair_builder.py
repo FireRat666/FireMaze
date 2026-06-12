@@ -39,14 +39,14 @@ def _build_spiral_stair_1x1(
     # Platform Top Face
     v_top_plat = [bm.verts.new(p_plat[4]), bm.verts.new(p_plat[5]), bm.verts.new(p_plat[6]), bm.verts.new(p_plat[7])]
     f_top_plat = bm.faces.new(v_top_plat)
-    for loop in f_top_plat.loops:
-        loop[uv_layer].uv = (0.0, 0.0)
+    for loop, uv in zip(f_top_plat.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
+        loop[uv_layer].uv = uv
 
     # Platform Bottom Face
     v_bot_plat = [bm.verts.new(p_plat[3]), bm.verts.new(p_plat[2]), bm.verts.new(p_plat[1]), bm.verts.new(p_plat[0])]
     f_bot_plat = bm.faces.new(v_bot_plat)
-    for loop in f_bot_plat.loops:
-        loop[uv_layer].uv = (0.0, 0.0)
+    for loop, uv in zip(f_bot_plat.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
+        loop[uv_layer].uv = uv
 
     # Platform Side Faces (South, East, North, West)
     sides = [
@@ -58,8 +58,8 @@ def _build_spiral_stair_1x1(
     for side_verts in sides:
         v_side = [bm.verts.new(pt) for pt in side_verts]
         f_side = bm.faces.new(v_side)
-        for loop in f_side.loops:
-            loop[uv_layer].uv = (0.0, 0.0)
+        for loop, uv in zip(f_side.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
+            loop[uv_layer].uv = uv
 
     # Central post (starts at z_offset, extends to z_offset + wh)
     posts_verts = []
@@ -74,8 +74,8 @@ def _build_spiral_stair_1x1(
         v = [bm.verts.new(posts_verts[i0]), bm.verts.new(posts_verts[i1]),
              bm.verts.new(posts_verts[i1 + 1]), bm.verts.new(posts_verts[i0 + 1])]
         f = bm.faces.new(v)
-        for loop in f.loops:
-            loop[uv_layer].uv = (0.5, 0.5)
+        for loop, uv in zip(f.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
+            loop[uv_layer].uv = uv
 
     # Steps
     for i in range(steps):
@@ -101,38 +101,38 @@ def _build_spiral_stair_1x1(
         # Top face (Winding corrected to point UP)
         v_top = [bm.verts.new(p4), bm.verts.new(p5), bm.verts.new(p6), bm.verts.new(p7)]
         f_top = bm.faces.new(v_top)
-        for loop in f_top.loops:
-            loop[uv_layer].uv = ((i % 2), 0.5)
+        for loop, uv in zip(f_top.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
+            loop[uv_layer].uv = uv
 
         # Bottom face (normal points DOWN)
         v_bot = [bm.verts.new(p0), bm.verts.new(p3), bm.verts.new(p2), bm.verts.new(p1)]
         f_bot = bm.faces.new(v_bot)
-        for loop in f_bot.loops:
-            loop[uv_layer].uv = (0, 0)
+        for loop, uv in zip(f_bot.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
+            loop[uv_layer].uv = uv
 
         # Outer riser
         v_outer = [bm.verts.new(p1), bm.verts.new(p2), bm.verts.new(p6), bm.verts.new(p5)]
         f_outer = bm.faces.new(v_outer)
-        for loop in f_outer.loops:
-            loop[uv_layer].uv = (0, 0)
+        for loop, uv in zip(f_outer.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
+            loop[uv_layer].uv = uv
 
         # Inner riser
         v_inner = [bm.verts.new(p3), bm.verts.new(p0), bm.verts.new(p4), bm.verts.new(p7)]
         f_inner = bm.faces.new(v_inner)
-        for loop in f_inner.loops:
-            loop[uv_layer].uv = (0, 0)
+        for loop, uv in zip(f_inner.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
+            loop[uv_layer].uv = uv
 
         # CW side (Start-angle face / back riser)
         v_cw = [bm.verts.new(p0), bm.verts.new(p1), bm.verts.new(p5), bm.verts.new(p4)]
         f_cw = bm.faces.new(v_cw)
-        for loop in f_cw.loops:
-            loop[uv_layer].uv = (0, 0)
+        for loop, uv in zip(f_cw.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
+            loop[uv_layer].uv = uv
 
         # CCW side (End-angle face / front riser)
         v_ccw = [bm.verts.new(p2), bm.verts.new(p3), bm.verts.new(p7), bm.verts.new(p6)]
         f_ccw = bm.faces.new(v_ccw)
-        for loop in f_ccw.loops:
-            loop[uv_layer].uv = (0, 0)
+        for loop, uv in zip(f_ccw.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
+            loop[uv_layer].uv = uv
 
 
 def _build_ramp_1x1(
@@ -165,14 +165,14 @@ def _build_ramp_1x1(
     # Ramp top face
     v = [bm.verts.new(p0), bm.verts.new(p1), bm.verts.new(p2), bm.verts.new(p3)]
     f = bm.faces.new(v)
-    for loop in f.loops:
-        loop[uv_layer].uv = (0, 0)
+    for loop, uv in zip(f.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
+        loop[uv_layer].uv = uv
 
     # Bottom face
     v = [bm.verts.new(p7), bm.verts.new(p6), bm.verts.new(p5), bm.verts.new(p4)]
     f = bm.faces.new(v)
-    for loop in f.loops:
-        loop[uv_layer].uv = (0, 0)
+    for loop, uv in zip(f.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
+        loop[uv_layer].uv = uv
 
     # Left side panel (solid wedge at x = -t2)
     p_back_bottom_L = T_base @ Vector((-t2, -t2, z_offset))
@@ -180,8 +180,8 @@ def _build_ramp_1x1(
     p_front_top_L = T_base @ Vector((-t2, t2, z_offset + hw))
     v = [bm.verts.new(p_back_bottom_L), bm.verts.new(p_front_top_L), bm.verts.new(p_front_bottom_L)]
     f = bm.faces.new(v)
-    for loop in f.loops:
-        loop[uv_layer].uv = (0, 0)
+    for loop, uv in zip(f.loops, [(0, 0), (1, 1), (0, 1)]):
+        loop[uv_layer].uv = uv
 
     # Right side panel (solid wedge at x = t2)
     p_back_bottom_R = T_base @ Vector((t2, -t2, z_offset))
@@ -189,11 +189,11 @@ def _build_ramp_1x1(
     p_front_top_R = T_base @ Vector((t2, t2, z_offset + hw))
     v = [bm.verts.new(p_back_bottom_R), bm.verts.new(p_front_bottom_R), bm.verts.new(p_front_top_R)]
     f = bm.faces.new(v)
-    for loop in f.loops:
-        loop[uv_layer].uv = (0, 0)
+    for loop, uv in zip(f.loops, [(0, 0), (1, 0), (1, 1)]):
+        loop[uv_layer].uv = uv
 
     # Back face (vertical wall at y = t2)
     v_back = [bm.verts.new(p_front_bottom_R), bm.verts.new(p_front_bottom_L), bm.verts.new(p_front_top_L), bm.verts.new(p_front_top_R)]
     f_back = bm.faces.new(v_back)
-    for loop in f_back.loops:
-        loop[uv_layer].uv = (0, 0)
+    for loop, uv in zip(f_back.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
+        loop[uv_layer].uv = uv

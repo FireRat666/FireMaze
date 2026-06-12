@@ -661,47 +661,48 @@ def _generate_thin_maze(
                         cells[y][x][2] = False
                         cells[y][x + 1][3] = False
 
-    if isolated_wall_prob > 0:
+    if isolated_wall_prob > 0 and width >= 3 and depth >= 3:
         max_isolated = int((width * depth) * isolated_wall_prob * 0.1)
-        placed = 0
-        for _ in range(max_isolated * 3):
-            if placed >= max_isolated:
-                break
-            wx = random.randint(1, width - 2)
-            wy = random.randint(1, depth - 2)
-            is_horiz = random.random() < 0.5
-            
-            if is_horiz:
-                cells[wy][wx][0] = True
-                cells[wy + 1][wx][1] = True
-                cells[wy][wx - 1][0] = False
-                cells[wy + 1][wx - 1][1] = False
-                cells[wy][wx + 1][0] = False
-                cells[wy + 1][wx + 1][1] = False
-                cells[wy][wx][2] = False
-                cells[wy][wx + 1][3] = False
-                cells[wy + 1][wx][2] = False
-                cells[wy + 1][wx + 1][3] = False
-                cells[wy][wx - 1][2] = False
-                cells[wy][wx][3] = False
-                cells[wy + 1][wx - 1][2] = False
-                cells[wy + 1][wx][3] = False
-            else:
-                cells[wy][wx][2] = True
-                cells[wy][wx + 1][3] = True
-                cells[wy - 1][wx][2] = False
-                cells[wy - 1][wx + 1][3] = False
-                cells[wy + 1][wx][2] = False
-                cells[wy + 1][wx + 1][3] = False
-                cells[wy][wx][0] = False
-                cells[wy + 1][wx][1] = False
-                cells[wy][wx + 1][0] = False
-                cells[wy + 1][wx + 1][1] = False
-                cells[wy - 1][wx][0] = False
-                cells[wy][wx][1] = False
-                cells[wy - 1][wx + 1][0] = False
-                cells[wy][wx + 1][1] = False
-            placed += 1
+        if max_isolated > 0:
+            placed = 0
+            for _ in range(max_isolated * 3):
+                if placed >= max_isolated:
+                    break
+                wx = random.randint(1, width - 2)
+                wy = random.randint(1, depth - 2)
+                is_horiz = random.random() < 0.5
+                
+                if is_horiz:
+                    cells[wy][wx][0] = True
+                    cells[wy + 1][wx][1] = True
+                    cells[wy][wx - 1][0] = False
+                    cells[wy + 1][wx - 1][1] = False
+                    cells[wy][wx + 1][0] = False
+                    cells[wy + 1][wx + 1][1] = False
+                    cells[wy][wx][2] = False
+                    cells[wy][wx + 1][3] = False
+                    cells[wy + 1][wx][2] = False
+                    cells[wy + 1][wx + 1][3] = False
+                    cells[wy][wx - 1][2] = False
+                    cells[wy][wx][3] = False
+                    cells[wy + 1][wx - 1][2] = False
+                    cells[wy + 1][wx][3] = False
+                else:
+                    cells[wy][wx][2] = True
+                    cells[wy][wx + 1][3] = True
+                    cells[wy - 1][wx][2] = False
+                    cells[wy - 1][wx + 1][3] = False
+                    cells[wy + 1][wx][2] = False
+                    cells[wy + 1][wx + 1][3] = False
+                    cells[wy][wx][0] = False
+                    cells[wy + 1][wx][1] = False
+                    cells[wy][wx + 1][0] = False
+                    cells[wy + 1][wx + 1][1] = False
+                    cells[wy - 1][wx][0] = False
+                    cells[wy][wx][1] = False
+                    cells[wy - 1][wx + 1][0] = False
+                    cells[wy][wx + 1][1] = False
+                placed += 1
 
     entrance_list = []
     exit_list = []

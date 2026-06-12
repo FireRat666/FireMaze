@@ -9,6 +9,7 @@ from collections import deque
 from contextlib import contextmanager
 from mathutils import Matrix, Vector
 from ..utils import is_valid_ref, _resolve_cells_3d, _get_stair_footprint_coords
+from ..pathfinder import _get_polar_neighbors
 
 logger = logging.getLogger(__name__)
 
@@ -607,7 +608,6 @@ def _compute_grid_distances(maze_data, wall_mode):
             
             accessible = []
             if wall_mode == 'cube':
-                from ..pathfinder import _get_polar_neighbors
                 for nr, ntheta in _get_polar_neighbors(r, theta, rings, ring_sectors):
                     if not cells_3d[cz][nr][ntheta][0]:
                         accessible.append((cz, nr, ntheta))

@@ -291,7 +291,11 @@ def _build_rect_stairs(ctx, props, maze_data, created_objects, name_suffix, bm=N
 
                 style = s.get('type', 'stair')
                 footprint = s.get('footprint', '1x1')
+                # Geometry is built only at the base cell (sx,sy). For 1x2
+                # footprints, the extra cells are intentionally left empty
+                # to provide headroom clearance — not for duplicate stairs.
                 stair_ts = ctx['ts'] * 2 if footprint == '2x2' else ctx['ts']
+                # 2x2 footprints center + scale a single stair to fill the block
                 cx = sx * ctx['ts'] + stair_ts / 2
                 cy = sy * ctx['ts'] + stair_ts / 2
                 orient = s.get('orientation', 'N')
