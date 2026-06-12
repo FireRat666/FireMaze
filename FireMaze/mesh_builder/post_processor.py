@@ -204,7 +204,7 @@ def _apply_vertex_painting_on_obj(obj, props, maze_data):
                         else:
                             if r >= 1 and not cells_3d[z][r][theta][0]:
                                 accessible_count += 1
-                            if r >= 1 and not cells_3d[z][r][(theta - 1) % Nr][0]:
+                            if r >= 1 and not cells_3d[z][r][(theta + 1) % Nr][0]:
                                 accessible_count += 1
                             if r > 0 and not cells_3d[z][r][theta][1]:
                                 N_in = ring_sectors[r - 1]
@@ -610,10 +610,10 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                                         if not resolved_cells[r + 1][2 * theta + 1][0]:
                                             accessible.append(('OUT', (r + 1, 2 * theta + 1)))
                         else:
+                            if r >= 1 and not resolved_cells[r][(theta + 1) % Nr][0]:
+                                accessible.append(('CCW', (r, (theta + 1) % Nr)))
                             if r >= 1 and not resolved_cells[r][theta][0]:
-                                accessible.append(('CW', (r, (theta + 1) % Nr)))
-                            if r >= 1 and not resolved_cells[r][(theta - 1) % Nr][0]:
-                                accessible.append(('CCW', (r, (theta - 1) % Nr)))
+                                accessible.append(('CW', (r, (theta - 1) % Nr)))
                             if r > 0 and not resolved_cells[r][theta][1]:
                                 N_in = ring_sectors[r - 1]
                                 if N_in == Nr:

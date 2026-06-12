@@ -556,6 +556,9 @@ def _safe_remove_doubles(bm, dist=0.001):
 
 def _compute_grid_distances(maze_data, wall_mode):
     """BFS distance from entrance to every reachable cell (used for distance-gradient vertex paint)."""
+    if maze_data.entrance is None:
+        return {}
+        
     cells_3d, floors = _resolve_cells_3d(maze_data.cells)
     
     if maze_data.grid_type == 'polar':
@@ -596,9 +599,9 @@ def _compute_grid_distances(maze_data, wall_mode):
                         accessible.append((cz, nr, ntheta))
             else:
                 # Neighbors in current floor cz
-                if r >= 1 and not cells_3d[cz][r][theta][0]:
+                if r >= 1 and not cells_3d[cz][r][(theta + 1) % Nr][0]:
                     accessible.append((cz, r, (theta + 1) % Nr))
-                if r >= 1 and not cells_3d[cz][r][(theta - 1) % Nr][0]:
+                if r >= 1 and not cells_3d[cz][r][theta][0]:
                     accessible.append((cz, r, (theta - 1) % Nr))
                 if r > 0 and not cells_3d[cz][r][theta][1]:
                     N_in = ring_sectors[r - 1]

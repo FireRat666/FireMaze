@@ -1474,7 +1474,9 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                         
             tx, ty = target_cell
             if 0 <= tx < width and 0 <= ty < depth:
-                cells[ty][tx][0] = not cells[ty][tx][0]
+                was_wall = cells[ty][tx][0]
+                floors = data_dict.get('floors', props.floors)
+                cells[ty][tx][0] = not was_wall
                 if cells[ty][tx][0]:
                     if num_wall_meshes > 0:
                         cells[ty][tx][1] = random.randrange(num_wall_meshes)
@@ -1486,8 +1488,54 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                 else:
                     if num_floor_meshes > 0:
                         cells[ty][tx][5] = random.randrange(num_floor_meshes)
+                
+                is_perimeter = (tx == 0 or tx == width - 1 or ty == 0 or ty == depth - 1)
+                if is_perimeter:
+                    if was_wall:  # Toggled from wall to floor -> Move entrance/exit here
+                        if ty == depth - 1:
+                            d = 'N'
+                        elif ty == 0:
+                            d = 'S'
+                        elif tx == width - 1:
+                            d = 'E'
+                        else:
+                            d = 'W'
+                            
+                        if z_hit == 0:
+                            # Move entrance here
+                            entrance_val = data_dict.get('entrance')
+                            if entrance_val and len(entrance_val) >= 2:
+                                old_x, old_y = entrance_val[0], entrance_val[1]
+                                if 0 <= old_x < width and 0 <= old_y < depth:
+                                    cells[old_y][old_x][0] = True  # Make it wall again
+                            data_dict['entrance'] = [tx, ty, d]
+                            rebuilt_text = "entrance floor tile (moved)"
+                        elif z_hit == floors - 1:
+                            # Add to exits
+                            if 'exits' not in data_dict or data_dict['exits'] is None:
+                                data_dict['exits'] = []
+                            if not any(ex[0] == tx and ex[1] == ty for ex in data_dict['exits']):
+                                data_dict['exits'].append([tx, ty, d])
+                            rebuilt_text = "exit floor tile"
+                        else:
+                            rebuilt_text = "floor tile (middle floor)"
+                    else:  # Toggled from floor to wall -> Close/remove entrance/exit
+                        if z_hit == 0:
+                            entrance_val = data_dict.get('entrance')
+                            if entrance_val and len(entrance_val) >= 2 and entrance_val[0] == tx and entrance_val[1] == ty:
+                                data_dict['entrance'] = None
+                            rebuilt_text = "entrance wall tile (closed)"
+                        elif z_hit == floors - 1:
+                            if 'exits' in data_dict and data_dict['exits'] is not None:
+                                data_dict['exits'] = [ex for ex in data_dict['exits'] if not (ex[0] == tx and ex[1] == ty)]
+                            rebuilt_text = "exit wall tile (closed)"
+                        else:
+                            rebuilt_text = "wall tile (middle floor)"
+                else:
+                    rebuilt_text = "wall tile" if cells[ty][tx][0] else "floor tile"
+                
                 data_dict['cells'] = original_cells
-                self.report({'INFO'}, f"Toggled wall tile at ({tx}, {ty})")
+                self.report({'INFO'}, f"Toggled {rebuilt_text} at ({tx}, {ty})")
                 modified = True
                 cx_clamped, cy_clamped = tx, ty
         else:
@@ -1521,6 +1569,24 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                     cells[cy_clamped][cx_clamped][3] = not cells[cy_clamped][cx_clamped][3]
                     if cx_clamped - 1 >= 0:
                         cells[cy_clamped][cx_clamped - 1][2] = cells[cy_clamped][cx_clamped][3]
+                        
+                toggled_border = None
+                if min_d == d_N and cy_clamped == depth - 1 and cells[cy_clamped][cx_clamped][0]:
+                    toggled_border = (cx_clamped, cy_clamped, 'N')
+                elif min_d == d_S and cy_clamped == 0 and cells[cy_clamped][cx_clamped][1]:
+                    toggled_border = (cx_clamped, cy_clamped, 'S')
+                elif min_d == d_E and cx_clamped == width - 1 and cells[cy_clamped][cx_clamped][2]:
+                    toggled_border = (cx_clamped, cy_clamped, 'E')
+                elif min_d == d_W and cx_clamped == 0 and cells[cy_clamped][cx_clamped][3]:
+                    toggled_border = (cx_clamped, cy_clamped, 'W')
+                    
+                if toggled_border is not None:
+                    ent = data_dict.get('entrance')
+                    if ent and len(ent) >= 3 and toggled_border == tuple(ent[:3]):
+                        data_dict['entrance'] = None
+                    if data_dict.get('exits'):
+                        data_dict['exits'] = [e for e in data_dict['exits']
+                                              if len(e) >= 3 and toggled_border != tuple(e[:3])]
                         
                 data_dict['cells'] = original_cells
                 self.report({'INFO'}, f"Toggled wall at cell ({cx_clamped}, {cy_clamped})")

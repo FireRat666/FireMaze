@@ -81,6 +81,18 @@ def _generate_thin_maze(
                     break
 
             if not overlap:
+                if blocked:
+                    room_blocked = False
+                    for y in range(ry, ry + rh):
+                        for x in range(rx, rx + rw):
+                            if blocked[y][x]:
+                                room_blocked = True
+                                break
+                        if room_blocked:
+                            break
+                    if room_blocked:
+                        continue
+
                 room_cells = []
                 r_idx = len(rooms)
                 for y in range(ry, ry + rh):
@@ -308,7 +320,7 @@ def _generate_thin_maze(
                     cells[y][x + 1][3] = False
 
     elif algorithm == 'prims':
-        visited = [[blocked[y][x] if blocked else False for x in range(width)] for _ in range(depth)]
+        visited = [[blocked[y][x] if blocked else False for x in range(width)] for y in range(depth)]
         frontier_walls = []
 
         def add_frontier_of(cx, cy):
@@ -351,7 +363,7 @@ def _generate_thin_maze(
                     add_frontier_of(ux, uy)
 
     elif algorithm == 'hunt_and_kill':
-        visited = [[blocked[y][x] if blocked else False for x in range(width)] for _ in range(depth)]
+        visited = [[blocked[y][x] if blocked else False for x in range(width)] for y in range(depth)]
         
         cx, cy = _get_start_cell(blocked, width, depth)
         
@@ -457,7 +469,7 @@ def _generate_thin_maze(
                     run = []
 
     elif algorithm == 'wilsons':
-        visited = [[blocked[y][x] if blocked else False for x in range(width)] for _ in range(depth)]
+        visited = [[blocked[y][x] if blocked else False for x in range(width)] for y in range(depth)]
         unvisited_list = []
         
         def mark_visited(x, y):
@@ -582,7 +594,7 @@ def _generate_thin_maze(
         divide(0, 0, width, depth, choose_orientation(width, depth))
 
     elif algorithm == 'growing_tree':
-        visited = [[blocked[y][x] if blocked else False for x in range(width)] for _ in range(depth)]
+        visited = [[blocked[y][x] if blocked else False for x in range(width)] for y in range(depth)]
         active = []
         
         def add_to_active(x, y):
@@ -789,6 +801,14 @@ def _generate_thin_maze(
             stair_count=stair_count, stair_footprint=stair_footprint,
             stair_style=stair_style, stair_direction=stair_direction
         )
+        # Close cloned entrance/exit openings on non-applicable floors
+        for z in range(floors):
+            if z != 0:
+                for ex, ey, ed in entrance_list:
+                    cells[z][ey][ex][index[ed]] = True
+            if z != floors - 1:
+                for ex, ey, ed in exit_list:
+                    cells[z][ey][ex][index[ed]] = True
     else:
         cells = [cells]
         stairs_placed = []

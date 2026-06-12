@@ -1421,7 +1421,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
 
     if not is_external_bm:
         if props.single_wall_object:
-            if bm_cap.verts:
+            if not is_external_cap:
                 bm_cap.free()
             wall_obj = _create_object_from_bm(bm_wall, f"FireMaze_Walls{name_suffix}", ctx['col'], None)
             for mat in wall_materials:
@@ -1442,8 +1442,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
     else:
         if not is_external_cap:
             if props.single_wall_object:
-                if bm_cap.verts:
-                    bm_cap.free()
+                bm_cap.free()
             else:
                 if bm_cap.verts:
                     cap_obj = _create_object_from_bm(bm_cap, f"FireMaze_WallEndCaps{name_suffix}", ctx['col'], None)

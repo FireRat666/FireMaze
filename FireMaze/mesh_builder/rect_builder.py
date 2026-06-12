@@ -760,7 +760,7 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, 
 
     if not is_external_bm:
         if props.single_wall_object:
-            if bm_cap.verts and not is_external_cap:
+            if not is_external_cap:
                 bm_cap.free()
             wall_obj = _create_object_from_bm(bm_wall, f"FireMaze_Walls{name_suffix}", ctx['col'], None)
             for mat in wall_materials:
@@ -780,7 +780,7 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, 
             elif not is_external_cap:
                 bm_cap.free()
     else:
-        if props.single_wall_object and bm_cap.verts:
+        if props.single_wall_object:
             if not is_external_cap:
                 bm_cap.free()
         elif not props.single_wall_object and bm_cap.verts:

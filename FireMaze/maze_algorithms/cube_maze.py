@@ -85,6 +85,18 @@ def _generate_cube_maze(
                     break
 
             if not overlap:
+                if blocked:
+                    room_blocked = False
+                    for y in range(ry, ry + rh):
+                        for x in range(rx, rx + rw):
+                            if blocked[y][x]:
+                                room_blocked = True
+                                break
+                        if room_blocked:
+                            break
+                    if room_blocked:
+                        continue
+
                 room_cells = []
                 r_idx = len(rooms)
                 for y in range(ry, ry + rh):
@@ -109,6 +121,10 @@ def _generate_cube_maze(
             for gy in range(gy_start, gy_end + 1):
                 for gx in range(gx_start, gx_end + 1):
                     if gx < width and gy < depth:
+                        sub_x = (gx - 1) // 2
+                        sub_y = (gy - 1) // 2
+                        if blocked and 0 <= sub_x < sub_w and 0 <= sub_y < sub_h and blocked[sub_y][sub_x]:
+                            continue
                         cells[gy][gx][0] = False
 
     # Run maze carving algorithms directly on the path cells
@@ -319,7 +335,7 @@ def _generate_cube_maze(
                     cells[2 * y + 1][2 * x + 3][0] = False
 
     elif algorithm == 'prims':
-        visited = [[blocked[y][x] for x in range(sub_w)] for _ in range(sub_h)]
+        visited = [[blocked[y][x] for x in range(sub_w)] for y in range(sub_h)]
         frontier_walls = []
 
         def add_frontier_of(cx, cy):
@@ -364,7 +380,7 @@ def _generate_cube_maze(
                     add_frontier_of(ux, uy)
 
     elif algorithm == 'hunt_and_kill':
-        visited = [[blocked[y][x] for x in range(sub_w)] for _ in range(sub_h)]
+        visited = [[blocked[y][x] for x in range(sub_w)] for y in range(sub_h)]
         
         cx, cy = _get_start_cell(blocked, sub_w, sub_h)
         
@@ -471,7 +487,7 @@ def _generate_cube_maze(
                     run = []
 
     elif algorithm == 'wilsons':
-        visited = [[blocked[y][x] for x in range(sub_w)] for _ in range(sub_h)]
+        visited = [[blocked[y][x] for x in range(sub_w)] for y in range(sub_h)]
         unvisited_list = []
         
         def mark_visited(x, y):
@@ -626,7 +642,7 @@ def _generate_cube_maze(
         divide(0, 0, sub_w, sub_h, choose_orientation(sub_w, sub_h))
 
     elif algorithm == 'growing_tree':
-        visited = [[blocked[y][x] for x in range(sub_w)] for _ in range(sub_h)]
+        visited = [[blocked[y][x] for x in range(sub_w)] for y in range(sub_h)]
         active = []
         
         def add_to_active(x, y):
@@ -816,6 +832,30 @@ def _generate_cube_maze(
             stair_count=stair_count, stair_footprint=stair_footprint,
             stair_style=stair_style, stair_direction=stair_direction
         )
+        # Close cloned entrance/exit openings on non-applicable floors
+        for z in range(floors):
+            if z != 0:
+                for ex, ey, ed in entrance_list:
+                    cells[z][ey][ex][0] = True
+                    if ed == 'N' and ey - 1 >= 0:
+                        cells[z][ey - 1][ex][0] = True
+                    elif ed == 'S' and ey + 1 < depth:
+                        cells[z][ey + 1][ex][0] = True
+                    elif ed == 'E' and ex - 1 >= 0:
+                        cells[z][ey][ex - 1][0] = True
+                    elif ed == 'W' and ex + 1 < width:
+                        cells[z][ey][ex + 1][0] = True
+            if z != floors - 1:
+                for ex, ey, ed in exit_list:
+                    cells[z][ey][ex][0] = True
+                    if ed == 'N' and ey - 1 >= 0:
+                        cells[z][ey - 1][ex][0] = True
+                    elif ed == 'S' and ey + 1 < depth:
+                        cells[z][ey + 1][ex][0] = True
+                    elif ed == 'E' and ex - 1 >= 0:
+                        cells[z][ey][ex - 1][0] = True
+                    elif ed == 'W' and ex + 1 < width:
+                        cells[z][ey][ex + 1][0] = True
     else:
         cells = [cells]
         stairs_placed = []
