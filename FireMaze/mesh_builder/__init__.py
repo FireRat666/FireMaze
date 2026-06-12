@@ -31,6 +31,7 @@ def build_maze_objects(
 
 
 def _find_role_object(collection, base_name):
+    """Find object by exact name in collection, falling back to prefix match for Blender's .001 suffixes."""
     if not collection:
         return None
     obj = collection.objects.get(base_name)
@@ -61,6 +62,7 @@ def _rebuild_maze_incrementally_impl(
     collection: bpy.types.Collection,
     dirty_cells: set,
 ):
+    """Incremental rebuild core: delete dirty faces from existing objects then rebuild only those cells."""
     import bmesh
     from ..utils import get_cell_id
     from .post_processor import _merge_maze_objects

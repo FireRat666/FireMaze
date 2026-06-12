@@ -33,7 +33,7 @@ from .post_processor import (
 from .polar_builder import _build_polar_maze_objects_impl
 
 def _build_rect_cube_floor(ctx, maze_data, created_objects, name_suffix, bm=None, uv_layer=None, materials=None, dirty_cells=None):
-    # Floor
+    """Build cube-mode floor tiles for a rectangular grid, optionally updating an existing BMesh."""
     if bm is None:
         bm_floor, uv_floor, floor_materials = _create_bmesh_element("floor", ctx['materials'])
         is_external_bm = False
@@ -96,7 +96,7 @@ def _build_rect_cube_floor(ctx, maze_data, created_objects, name_suffix, bm=None
 
 
 def _build_rect_cube_walls(ctx, props, maze_data, created_objects, name_suffix, bm=None, uv_layer=None, materials=None, dirty_cells=None):
-    # Walls
+    """Build cube-mode wall geometry for a rectangular grid, optionally updating an existing BMesh."""
     if bm is None:
         bm_wall, uv_wall, wall_materials = _create_bmesh_element("wall", ctx['materials'])
         is_external_bm = False
@@ -144,6 +144,7 @@ def _build_rect_cube_walls(ctx, props, maze_data, created_objects, name_suffix, 
                         else:
                             # Face Assembled Mode
                             def place_wall_face(direction, offset_trans_rot, fallback_mesh, f_idx):
+                                """Place a single cube-mode wall face using mesh library, custom mesh, or procedural geometry."""
                                 if ctx['wall_meshes_list'] and isinstance(f_idx, int) and 0 <= f_idx < len(ctx['wall_meshes_list']):
                                     m = ctx['wall_meshes_list'][f_idx]
                                     mat_base = Matrix.Translation(Vector((cx + ctx['ts']/2, cy + ctx['ts']/2, hw))) @ offset_trans_rot @ cent
@@ -193,7 +194,7 @@ def _build_rect_cube_walls(ctx, props, maze_data, created_objects, name_suffix, 
 
 
 def _build_rect_cube_roof(ctx, props, maze_data, created_objects, name_suffix, bm=None, uv_layer=None, materials=None, dirty_cells=None):
-    # Roof
+    """Build cube-mode roof tiles for a rectangular grid, optionally updating an existing BMesh."""
     if not props.cube_mode_pillar or name_suffix in {"_EditHelper", "_Collider"}:
         if bm is None:
             bm_roof, uv_roof, roof_materials = _create_bmesh_element("roof", ctx['materials'])
@@ -259,7 +260,7 @@ def _build_rect_cube_roof(ctx, props, maze_data, created_objects, name_suffix, b
 
 
 def _build_rect_stairs(ctx, props, maze_data, created_objects, name_suffix, bm=None, uv_layer=None, materials=None, dirty_cells=None):
-    # Stairs (cube & thin modes share identical building structure)
+    """Build stair/ramp geometry for a rectangular grid, shared by cube and thin wall modes."""
     if maze_data.stairs:
         if bm is None:
             bm_stairs, uv_stairs, stair_materials = _create_bmesh_element("wall", ctx['materials'])
@@ -337,7 +338,7 @@ def _build_rect_stairs(ctx, props, maze_data, created_objects, name_suffix, bm=N
 
 
 def _build_rect_thin_floor(ctx, maze_data, created_objects, name_suffix, bm=None, uv_layer=None, materials=None, dirty_cells=None):
-    # Floor (all levels combined into one BMesh)
+    """Build thin-mode floor tiles for a rectangular grid, optionally updating an existing BMesh."""
     if bm is None:
         bm_floor, uv_floor, floor_materials = _create_bmesh_element("floor", ctx['materials'])
         is_external_bm = False
@@ -418,7 +419,7 @@ def _compute_corner_offsets(a, b, seg_type, h_positions, v_positions, clean_corn
 
 
 def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, bm=None, uv_layer=None, materials=None, bm_cap=None, uv_layer_cap=None, materials_cap=None, dirty_cells=None):
-    # Walls and caps
+    """Build thin-mode wall and end-cap geometry for a rectangular grid, optionally updating an existing BMesh."""
     if bm is None:
         bm_wall, uv_wall, wall_materials = _create_bmesh_element("wall", ctx['materials'])
         is_external_bm = False
@@ -795,7 +796,7 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, 
 
 
 def _build_rect_thin_roof(ctx, props, maze_data, created_objects, name_suffix, bm=None, uv_layer=None, materials=None, dirty_cells=None):
-    # Roof
+    """Build thin-mode roof tiles for a rectangular grid, optionally updating an existing BMesh."""
     if name_suffix != "_EditHelper":
         if bm is None:
             bm_roof, uv_roof, roof_materials = _create_bmesh_element("roof", ctx['materials'])

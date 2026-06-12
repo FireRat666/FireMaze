@@ -796,6 +796,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
         return dirty_cells
 
     def _handle_polar_mesh_cycle(self, context, event, props, col, data_dict, cells, wall_mode, ring_sectors, rings, hit_x, hit_y, ts, r_hit, phi_hit, r_idx, alpha_r, theta, Nr, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells, z_hit):
+        """Cycle wall/floor/roof mesh index on a polar cell under Shift+click."""
         modified = False
         rebuilt_text = ""
         tr, tt = r_idx, theta
@@ -1019,6 +1020,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
         return None
 
     def _handle_polar_wall_toggle(self, context, event, props, col, data_dict, cells, wall_mode, ring_sectors, rings, hit_x, hit_y, ts, r_hit, phi_hit, r_idx, alpha_r, theta, Nr, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells, z_hit):
+        """Toggle a polar wall cell between wall and floor, handling entrance/exit moves."""
         self._old_entrance_dirty = None
         modified = False
         rebuilt_text = ""
@@ -1220,6 +1222,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
             dirty_cells = set()
             
             def add_overlapping_dirty(z, r, theta, dirty_set):
+                """Add (z, r, theta) and all overlapping neighbours in adjacent rings to dirty_set."""
                 Nr = ring_sectors[r]
                 dirty_set.add((z, r, theta))
                 dirty_set.add((z, r, (theta - 1) % Nr))
@@ -1256,6 +1259,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
         return None
 
     def _handle_rect_mesh_cycle(self, context, event, props, col, data_dict, cells, wall_mode, hit_x, hit_y, ts, width, depth, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells, z_hit):
+        """Cycle wall/floor/roof mesh index on a rectangular cell under Shift+click."""
         cx = math.floor(hit_x / ts)
         cy = math.floor(hit_y / ts)
         if -1 <= cx <= width and -1 <= cy <= depth:
@@ -1442,6 +1446,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
         return None
 
     def _handle_rect_wall_toggle(self, context, event, props, col, data_dict, cells, wall_mode, hit_x, hit_y, ts, width, depth, face_dir, num_wall_meshes, num_floor_meshes, num_roof_meshes, original_cells, z_hit):
+        """Toggle a rectangular wall cell between wall and floor, handling entrance/exit moves."""
         modified = False
         if wall_mode == 'cube':
             cx = math.floor(hit_x / ts)

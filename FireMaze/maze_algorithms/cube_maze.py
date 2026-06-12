@@ -529,6 +529,7 @@ def _generate_cube_maze(
 
     elif algorithm == 'recursive_division':
         def is_grid_blocked(x, y):
+            """Check if the doubled-grid cell (x, y) falls on or adjacent to a blocked sub-cell."""
             if not blocked:
                 return False
             if x % 2 == 0 and y % 2 == 0:

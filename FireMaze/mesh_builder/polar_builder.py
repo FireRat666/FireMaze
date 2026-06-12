@@ -705,7 +705,7 @@ def _add_wall_polar_trapezoid(bm, src_mesh, mat_wall_offset, uv_layer, final_mat
         _add_mesh_polar_trapezoid_with_matrix(bm, src_mesh, mat_combined, uv_layer, final_materials_list, r, theta, Nr, ts, z_lifted, scale_angular=True, reverse_faces=False)
 
 def _build_polar_floor(ctx, props, maze_data, created_objects, name_suffix, bm=None, uv_layer=None, materials=None, dirty_cells=None):
-    # Floor
+    """Build polar floor wedges and optional mesh-based tiles, optionally updating an existing BMesh."""
     if bm is None:
         bm_floor, uv_floor, floor_materials = _create_bmesh_element("floor", ctx['materials'])
         is_external_bm = False
@@ -791,7 +791,7 @@ def _build_polar_floor(ctx, props, maze_data, created_objects, name_suffix, bm=N
 
 
 def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=None, uv_layer=None, materials=None, bm_cap=None, uv_layer_cap=None, materials_cap=None, dirty_cells=None):
-    # Walls
+    """Build polar wall and end-cap geometry, optionally updating an existing BMesh."""
     if bm is None:
         bm_wall, uv_wall, wall_materials = _create_bmesh_element("wall", ctx['materials'])
         is_external_bm = False
@@ -1093,6 +1093,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
             level_cells = ctx['cells_3d'][z]
  
             def has_cw_wall(r_val, t_val):
+                """Check if the clockwise (CW) wall exists at (r_val, t_val) for the current level."""
                 if r_val < 1 or r_val >= rings:
                     return False
                 Nr_val = ring_sectors[r_val]
@@ -1102,6 +1103,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
                 return level_cells[r_val][t_val][0]
  
             def has_in_wall(r_val, t_val):
+                """Check if the inward (IN) wall exists at (r_val, t_val) for the current level."""
                 if r_val < 1 or r_val >= rings:
                     return False
                 Nr_val = ring_sectors[r_val]
@@ -1111,6 +1113,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
                 return level_cells[r_val][t_val][1]
  
             def has_out_wall(r_val, t_val):
+                """Check if the outward (OUT) wall exists at the outer boundary, accounting for entrance/exits."""
                 if r_val != rings - 1:
                     return has_in_wall(r_val + 1, t_val)
                 Nr_val = ring_sectors[r_val]
@@ -1135,6 +1138,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
                 return False
  
             def get_junction_active(r_grid, theta_grid):
+                """Return the set of active wall directions (CW_CIRC, CCW_CIRC, OUT_RAD, IN_RAD) at a junction."""
                 active = set()
                 if r_grid < rings:
                     N_ref = ring_sectors[r_grid]
@@ -1170,6 +1174,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
                 return active
  
             def should_generate_cap(r_grid, theta_grid):
+                """Determine whether an end-cap face should be generated at this junction based on active walls."""
                 active = get_junction_active(r_grid, theta_grid)
                 count = len(active)
                 if count == 1:
@@ -1450,7 +1455,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
 
 
 def _build_polar_roof(ctx, props, maze_data, created_objects, name_suffix, bm=None, uv_layer=None, materials=None, dirty_cells=None):
-    # Roof
+    """Build polar roof wedges and optional mesh-based tiles, optionally updating an existing BMesh."""
     if not (props.is_editing and props.wall_mode == 'thin' and name_suffix != "_Collider" and not props.edit_roof):
         if bm is None:
             bm_roof, uv_roof, roof_materials = _create_bmesh_element("roof", ctx['materials'])
@@ -1544,7 +1549,7 @@ def _build_polar_roof(ctx, props, maze_data, created_objects, name_suffix, bm=No
 
 
 def _build_polar_stairs(ctx, props, maze_data, created_objects, name_suffix, bm=None, uv_layer=None, materials=None, dirty_cells=None):
-    # Stairs (polar mode)
+    """Build stair/ramp geometry for a polar grid, optionally updating an existing BMesh."""
     if maze_data.stairs:
         if bm is None:
             bm_stairs, uv_stairs, stair_materials = _create_bmesh_element("wall", ctx['materials'])
