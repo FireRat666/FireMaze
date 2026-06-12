@@ -29,8 +29,8 @@ class UnionFind:
         self.parent = list(range(size))
 
     def find(self, i: int) -> int:
-        path = []
         """Find the root representative of element i with path compression."""
+        path = []
         while self.parent[i] != i:
             path.append(i)
             i = self.parent[i]

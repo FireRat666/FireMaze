@@ -780,6 +780,13 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, 
     else:
         if props.single_wall_object and bm_cap.verts:
             bm_cap.free()
+        elif not props.single_wall_object and bm_cap.verts:
+            cap_obj = _create_object_from_bm(bm_cap, f"FireMaze_WallEndCaps{name_suffix}", ctx['col'], None)
+            for mat in cap_materials:
+                cap_obj.data.materials.append(mat)
+            created_objects.append(cap_obj)
+        elif not bm_cap.verts:
+            bm_cap.free()
 
 
 

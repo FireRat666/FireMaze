@@ -78,13 +78,25 @@ def set_seed(seed):
         random.seed(s)
 
 
+CELL_AXIS_LIMIT = 1000
+
+
 def get_cell_id(z: int, y: int, x: int) -> int:
-    """Encode 3D coordinates into a single unique integer cell ID."""
+    """Encode 3D coordinates into a single unique integer cell ID.
+
+    Coordinates x and y must be within [0, CELL_AXIS_LIMIT-1], and z must be non-negative.
+    """
+    if not (0 <= x < CELL_AXIS_LIMIT and 0 <= y < CELL_AXIS_LIMIT and z >= 0):
+        raise ValueError(f"Coordinates out of bounds for encoding: x={x}, y={y}, z={z}. "
+                         f"x and y must be in [0, {CELL_AXIS_LIMIT-1}] and z >= 0.")
     return z * 1000000 + y * 1000 + x
 
 
 def decode_cell_id(cell_id: int) -> tuple:
-    """Decode a unique integer cell ID back into 3D coordinates (z, y, x)."""
+    """Decode a unique integer cell ID back into 3D coordinates (z, y, x).
+
+    The decoded coordinate ranges are: x in [0, CELL_AXIS_LIMIT-1], y in [0, CELL_AXIS_LIMIT-1], and z >= 0.
+    """
     z = cell_id // 1000000
     rem = cell_id % 1000000
     y = rem // 1000

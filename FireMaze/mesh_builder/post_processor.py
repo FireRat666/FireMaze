@@ -462,265 +462,287 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
         rings = maze_data.polar_rings
         ring_sectors = maze_data.ring_sectors
         
+        for z in range(floors):
+            resolved_cells = cells_3d[z]
+            # 1. Torches
+            if torch_mesh:
+                torch_src = torch_mesh
+                density = props.prop_torch_density
+                offset = 0.02 * ts
+                
+                for r in range(1, rings):
+                    Nr = ring_sectors[r]
+                    alpha_r = 2 * math.pi / Nr
+                    for theta in range(Nr):
+                        cw_wall = resolved_cells[r][theta][0]
+                        in_wall = resolved_cells[r][theta][1]
+                        
+                        r_mid = r * ts
+                        theta_mid = (theta + 0.5) * alpha_r
+                        
+                        # Clockwise wall torch
+                        if cw_wall and rng.random() < density:
+                            phi_cw = (theta + 1) * alpha_r
+                            pos_x = r_mid * math.cos(phi_cw) + offset * math.sin(phi_cw)
+                            pos_y = r_mid * math.sin(phi_cw) - offset * math.cos(phi_cw)
+                            pos = (pos_x, pos_y, z * wh + 0.6 * wh)
+                            place_prop(torch_src, pos, phi_cw - math.pi / 2)
+                            
+                        # Inward wall torch
+                        if in_wall and rng.random() < density:
+                            r_in = (r - 0.5) * ts
+                            pos_x = (r_in + offset) * math.cos(theta_mid)
+                            pos_y = (r_in + offset) * math.sin(theta_mid)
+                            pos = (pos_x, pos_y, z * wh + 0.6 * wh)
+                            place_prop(torch_src, pos, theta_mid)
+
+                        # Outer boundary torch
+                        if r == rings - 1:
+                            is_entrance = (z == 0 and theta == 0)
+                            is_exit = False
+                            if z == floors - 1 and maze_data.exits:
+                                for ex_r, ex_theta, _ in maze_data.exits:
+                                    if ex_r == r and ex_theta == theta:
+                                        is_exit = True
+                                        break
+                            if not is_entrance and not is_exit and rng.random() < density:
+                                r_out = (r + 0.5) * ts
+                                pos_x = (r_out - offset) * math.cos(theta_mid)
+                                pos_y = (r_out - offset) * math.sin(theta_mid)
+                                pos = (pos_x, pos_y, z * wh + 0.6 * wh)
+                                place_prop(torch_src, pos, theta_mid + math.pi)
+
+            # 2. Chests
+            if chest_mesh:
+                chest_src = chest_mesh
+                density = props.prop_chest_density
+                chest_offset = 0.15 * ts
+                
+                for r in range(rings):
+                    for theta in range(ring_sectors[r]):
+                        Nr = ring_sectors[r]
+                        accessible = []
+                        
+                        if r >= 1 and not resolved_cells[r][theta][0]:
+                            accessible.append(('CW', (r, (theta + 1) % Nr)))
+                        if r >= 1 and not resolved_cells[r][(theta - 1) % Nr][0]:
+                            accessible.append(('CCW', (r, (theta - 1) % Nr)))
+                        if r > 0 and not resolved_cells[r][theta][1]:
+                            N_in = ring_sectors[r - 1]
+                            if N_in == Nr:
+                                accessible.append(('IN', (r - 1, theta)))
+                            elif N_in == 1:
+                                accessible.append(('IN', (r - 1, 0)))
+                            else:
+                                accessible.append(('IN', (r - 1, theta // 2)))
+                        if r < rings - 1:
+                            N_out = ring_sectors[r + 1]
+                            if N_out == Nr:
+                                if not resolved_cells[r + 1][theta][1]:
+                                    accessible.append(('OUT', (r + 1, theta)))
+                            elif Nr == 1:
+                                for t in range(N_out):
+                                    if not resolved_cells[r + 1][t][1]:
+                                        accessible.append(('OUT', (r + 1, t)))
+                            else:
+                                if not resolved_cells[r + 1][2 * theta][1]:
+                                    accessible.append(('OUT', (r + 1, 2 * theta)))
+                                if not resolved_cells[r + 1][2 * theta + 1][1]:
+                                    accessible.append(('OUT', (r + 1, 2 * theta + 1)))
+                                    
+                        if len(accessible) == 1 and r > 0:
+                            is_ent_or_exit = False
+                            if z == 0 and maze_data.entrance and (r, theta) == maze_data.entrance[0:2]:
+                                is_ent_or_exit = True
+                            if z == floors - 1 and maze_data.exits:
+                                for ex_r, ex_theta, _ in maze_data.exits:
+                                    if (r, theta) == (ex_r, ex_theta):
+                                        is_ent_or_exit = True
+                            
+                            if not is_ent_or_exit and rng.random() < density:
+                                direction = accessible[0][0]
+                                r_mid = r * ts
+                                alpha_r = 2 * math.pi / Nr
+                                theta_mid = (theta + 0.5) * alpha_r
+                                
+                                if direction == 'IN':
+                                    pos_x = (r_mid + chest_offset) * math.cos(theta_mid)
+                                    pos_y = (r_mid + chest_offset) * math.sin(theta_mid)
+                                    place_prop(chest_src, (pos_x, pos_y, z * wh), theta_mid + math.pi)
+                                elif direction == 'OUT':
+                                    pos_x = (r_mid - chest_offset) * math.cos(theta_mid)
+                                    pos_y = (r_mid - chest_offset) * math.sin(theta_mid)
+                                    place_prop(chest_src, (pos_x, pos_y, z * wh), theta_mid)
+                                elif direction == 'CW':
+                                    pos_x = r_mid * math.cos(theta_mid - alpha_r / 4)
+                                    pos_y = r_mid * math.sin(theta_mid - alpha_r / 4)
+                                    place_prop(chest_src, (pos_x, pos_y, z * wh), theta_mid - math.pi / 2)
+                                else: # CCW
+                                    pos_x = r_mid * math.cos(theta_mid + alpha_r / 4)
+                                    pos_y = r_mid * math.sin(theta_mid + alpha_r / 4)
+                                    place_prop(chest_src, (pos_x, pos_y, z * wh), theta_mid + math.pi / 2)
+
+            # 3. Doors
+            if door_mesh:
+                door_src = door_mesh
+                
+                if z == 0 and maze_data.entrance:
+                    er, etheta, eside = maze_data.entrance
+                    eNr = ring_sectors[er]
+                    ealpha = 2 * math.pi / eNr
+                    etheta_mid = (etheta + 0.5) * ealpha
+                    r_door = (er + 0.5) * ts
+                    pos_x = r_door * math.cos(etheta_mid)
+                    pos_y = r_door * math.sin(etheta_mid)
+                    place_prop(door_src, (pos_x, pos_y, z * wh), etheta_mid)
+                    
+                if z == floors - 1 and maze_data.exits:
+                    for ex_r, ex_theta, ex_side in maze_data.exits:
+                        exNr = ring_sectors[ex_r]
+                        exalpha = 2 * math.pi / exNr
+                        extheta_mid = (ex_theta + 0.5) * exalpha
+                        if ex_side == 'CENTER':
+                            r_door = 0.5 * ts
+                        else:
+                            r_door = (ex_r + 0.5) * ts
+                        pos_x = r_door * math.cos(extheta_mid)
+                        pos_y = r_door * math.sin(extheta_mid)
+                        place_prop(door_src, (pos_x, pos_y, z * wh), extheta_mid)
+        return
+
+    for z in range(floors):
+        resolved_cells = cells_3d[z]
         # 1. Torches
         if torch_mesh:
             torch_src = torch_mesh
             density = props.prop_torch_density
             offset = 0.02 * ts
             
-            for r in range(1, rings):
-                Nr = ring_sectors[r]
-                alpha_r = 2 * math.pi / Nr
-                for theta in range(Nr):
-                    cw_wall = resolved_cells[r][theta][0]
-                    in_wall = resolved_cells[r][theta][1]
-                    
-                    r_mid = r * ts
-                    theta_mid = (theta + 0.5) * alpha_r
-                    
-                    # Clockwise wall torch
-                    if cw_wall and rng.random() < density:
-                        phi_cw = (theta + 1) * alpha_r
-                        pos_x = r_mid * math.cos(phi_cw) + offset * math.sin(phi_cw)
-                        pos_y = r_mid * math.sin(phi_cw) - offset * math.cos(phi_cw)
-                        pos = (pos_x, pos_y, 0.6 * wh)
-                        place_prop(torch_src, pos, phi_cw - math.pi / 2)
-                        
-                    # Inward wall torch
-                    if in_wall and rng.random() < density:
-                        r_in = (r - 0.5) * ts
-                        pos_x = (r_in + offset) * math.cos(theta_mid)
-                        pos_y = (r_in + offset) * math.sin(theta_mid)
-                        pos = (pos_x, pos_y, 0.6 * wh)
-                        place_prop(torch_src, pos, theta_mid)
- 
-                    # Outer boundary torch
-                    if r == rings - 1:
-                        is_entrance = (theta == 0)
-                        is_exit = False
-                        if maze_data.exits:
-                            for ex_r, ex_theta, _ in maze_data.exits:
-                                if ex_r == r and ex_theta == theta:
-                                    is_exit = True
-                                    break
-                        if not is_entrance and not is_exit and rng.random() < density:
-                            r_out = (r + 0.5) * ts
-                            pos_x = (r_out - offset) * math.cos(theta_mid)
-                            pos_y = (r_out - offset) * math.sin(theta_mid)
-                            pos = (pos_x, pos_y, 0.6 * wh)
-                            place_prop(torch_src, pos, theta_mid + math.pi)
- 
-        # 2. Chests
+            for y in range(maze_data.depth):
+                for x in range(maze_data.width):
+                    if wall_mode == 'thin':
+                        c = resolved_cells[y][x]
+                        # North wall
+                        if c[0] and rng.random() < density:
+                            pos = (x * ts + ts/2, (y + 1) * ts - offset, z * wh + 0.6 * wh)
+                            place_prop(torch_src, pos, math.pi)
+                        # South wall
+                        if c[1] and rng.random() < density:
+                            pos = (x * ts + ts/2, y * ts + offset, z * wh + 0.6 * wh)
+                            place_prop(torch_src, pos, 0.0)
+                        # East wall
+                        if c[2] and rng.random() < density:
+                            pos = ((x + 1) * ts - offset, y * ts + ts/2, z * wh + 0.6 * wh)
+                            place_prop(torch_src, pos, math.pi / 2)
+                        # West wall
+                        if c[3] and rng.random() < density:
+                            pos = (x * ts + offset, y * ts + ts/2, z * wh + 0.6 * wh)
+                            place_prop(torch_src, pos, -math.pi / 2)
+                    else: # cube
+                        if resolved_cells[y][x][0]: # wall cube
+                            # North
+                            if y + 1 < maze_data.depth and not resolved_cells[y+1][x][0]:
+                                if rng.random() < density:
+                                    pos = (x * ts + ts/2, (y + 1) * ts + offset, z * wh + 0.6 * wh)
+                                    place_prop(torch_src, pos, 0.0)
+                            # South
+                            if y - 1 >= 0 and not resolved_cells[y-1][x][0]:
+                                if rng.random() < density:
+                                    pos = (x * ts + ts/2, y * ts - offset, z * wh + 0.6 * wh)
+                                    place_prop(torch_src, pos, math.pi)
+                            # East
+                            if x + 1 < maze_data.width and not resolved_cells[y][x+1][0]:
+                                if rng.random() < density:
+                                    pos = ((x + 1) * ts + offset, y * ts + ts/2, z * wh + 0.6 * wh)
+                                    place_prop(torch_src, pos, math.pi / 2)
+                            # West
+                            if x - 1 >= 0 and not resolved_cells[y][x-1][0]:
+                                if rng.random() < density:
+                                    pos = (x * ts - offset, y * ts + ts/2, z * wh + 0.6 * wh)
+                                    place_prop(torch_src, pos, -math.pi / 2)
+
+        # 2. Chests (Dead-Ends)
         if chest_mesh:
             chest_src = chest_mesh
             density = props.prop_chest_density
             chest_offset = 0.15 * ts
             
-            for r in range(rings):
-                for theta in range(ring_sectors[r]):
-                    Nr = ring_sectors[r]
-                    accessible = []
+            for y in range(maze_data.depth):
+                for x in range(maze_data.width):
+                    is_dead = False
+                    open_dir = None
                     
-                    if r >= 1 and not resolved_cells[r][theta][0]:
-                        accessible.append(('CW', (r, (theta + 1) % Nr)))
-                    if r >= 1 and not resolved_cells[r][(theta - 1) % Nr][0]:
-                        accessible.append(('CCW', (r, (theta - 1) % Nr)))
-                    if r > 0 and not resolved_cells[r][theta][1]:
-                        N_in = ring_sectors[r - 1]
-                        if N_in == Nr:
-                            accessible.append(('IN', (r - 1, theta)))
-                        elif N_in == 1:
-                            accessible.append(('IN', (r - 1, 0)))
-                        else:
-                            accessible.append(('IN', (r - 1, theta // 2)))
-                    if r < rings - 1:
-                        N_out = ring_sectors[r + 1]
-                        if N_out == Nr:
-                            if not resolved_cells[r + 1][theta][1]:
-                                accessible.append(('OUT', (r + 1, theta)))
-                        elif Nr == 1:
-                            for t in range(N_out):
-                                if not resolved_cells[r + 1][t][1]:
-                                    accessible.append(('OUT', (r + 1, t)))
-                        else:
-                            if not resolved_cells[r + 1][2 * theta][1]:
-                                accessible.append(('OUT', (r + 1, 2 * theta)))
-                            if not resolved_cells[r + 1][2 * theta + 1][1]:
-                                accessible.append(('OUT', (r + 1, 2 * theta + 1)))
+                    if wall_mode == 'thin':
+                        c = resolved_cells[y][x]
+                        if sum(c[:4]) == 3:
+                            is_dead = True
+                            if not c[0]: open_dir = 'N'
+                            elif not c[1]: open_dir = 'S'
+                            elif not c[2]: open_dir = 'E'
+                            else: open_dir = 'W'
+                    else: # cube
+                        if not resolved_cells[y][x][0]:
+                            neighbors = []
+                            for d, dx, dy in [('N', 0, 1), ('S', 0, -1), ('E', 1, 0), ('W', -1, 0)]:
+                                nx, y_neighbor = x + dx, y + dy
+                                if 0 <= nx < maze_data.width and 0 <= y_neighbor < maze_data.depth:
+                                    if not resolved_cells[y_neighbor][nx][0]:
+                                        neighbors.append(d)
+                            if len(neighbors) == 1:
+                                is_dead = True
+                                open_dir = neighbors[0]
                                 
-                    if len(accessible) == 1 and r > 0:
+                    if is_dead:
                         is_ent_or_exit = False
-                        if maze_data.entrance and (r, theta) == maze_data.entrance[0:2]:
+                        if z == 0 and maze_data.entrance and (x, y) == (maze_data.entrance[0], maze_data.entrance[1]):
                             is_ent_or_exit = True
-                        if maze_data.exits:
-                            for ex_r, ex_theta, _ in maze_data.exits:
-                                if (r, theta) == (ex_r, ex_theta):
+                        if z == floors - 1 and maze_data.exits:
+                            for ex_x, ex_y, _ in maze_data.exits:
+                                if (x, y) == (ex_x, ex_y):
                                     is_ent_or_exit = True
                         
                         if not is_ent_or_exit and rng.random() < density:
-                            direction = accessible[0][0]
-                            r_mid = r * ts
-                            alpha_r = 2 * math.pi / Nr
-                            theta_mid = (theta + 0.5) * alpha_r
-                            
-                            if direction == 'IN':
-                                pos_x = (r_mid + chest_offset) * math.cos(theta_mid)
-                                pos_y = (r_mid + chest_offset) * math.sin(theta_mid)
-                                place_prop(chest_src, (pos_x, pos_y, 0.0), theta_mid + math.pi)
-                            elif direction == 'OUT':
-                                pos_x = (r_mid - chest_offset) * math.cos(theta_mid)
-                                pos_y = (r_mid - chest_offset) * math.sin(theta_mid)
-                                place_prop(chest_src, (pos_x, pos_y, 0.0), theta_mid)
-                            elif direction == 'CW':
-                                pos_x = r_mid * math.cos(theta_mid - alpha_r / 4)
-                                pos_y = r_mid * math.sin(theta_mid - alpha_r / 4)
-                                place_prop(chest_src, (pos_x, pos_y, 0.0), theta_mid - math.pi / 2)
-                            else: # CCW
-                                pos_x = r_mid * math.cos(theta_mid + alpha_r / 4)
-                                pos_y = r_mid * math.sin(theta_mid + alpha_r / 4)
-                                place_prop(chest_src, (pos_x, pos_y, 0.0), theta_mid + math.pi / 2)
+                            if open_dir == 'N':
+                                pos = (x * ts + ts/2, y * ts + chest_offset, z * wh)
+                                place_prop(chest_src, pos, 0.0)
+                            elif open_dir == 'S':
+                                pos = (x * ts + ts/2, (y + 1) * ts - chest_offset, z * wh)
+                                place_prop(chest_src, pos, math.pi)
+                            elif open_dir == 'E':
+                                pos = (x * ts + chest_offset, y * ts + ts/2, z * wh)
+                                place_prop(chest_src, pos, math.pi / 2)
+                            elif open_dir == 'W':
+                                pos = ((x + 1) * ts - chest_offset, y * ts + ts/2, z * wh)
+                                place_prop(chest_src, pos, -math.pi / 2)
 
-        # 3. Doors
+        # 3. Doors (Entrance / Exits)
         if door_mesh:
             door_src = door_mesh
-            
-            if maze_data.entrance:
-                er, etheta, eside = maze_data.entrance
-                eNr = ring_sectors[er]
-                ealpha = 2 * math.pi / eNr
-                etheta_mid = (etheta + 0.5) * ealpha
-                r_door = (er + 0.5) * ts
-                pos_x = r_door * math.cos(etheta_mid)
-                pos_y = r_door * math.sin(etheta_mid)
-                place_prop(door_src, (pos_x, pos_y, 0.0), etheta_mid)
-                
-            if maze_data.exits:
-                for ex_r, ex_theta, ex_side in maze_data.exits:
-                    exNr = ring_sectors[ex_r]
-                    exalpha = 2 * math.pi / exNr
-                    extheta_mid = (ex_theta + 0.5) * exalpha
-                    if ex_side == 'CENTER':
-                        r_door = 0.5 * ts
-                    else:
-                        r_door = (ex_r + 0.5) * ts
-                    pos_x = r_door * math.cos(extheta_mid)
-                    pos_y = r_door * math.sin(extheta_mid)
-                    place_prop(door_src, (pos_x, pos_y, 0.0), extheta_mid)
-        return
-
-    # 1. Torches
-    if torch_mesh:
-        torch_src = torch_mesh
-        density = props.prop_torch_density
-        offset = 0.02 * ts
-        
-        for y in range(maze_data.depth):
-            for x in range(maze_data.width):
-                if wall_mode == 'thin':
-                    c = resolved_cells[y][x]
-                    # North wall
-                    if c[0] and rng.random() < density:
-                        pos = (x * ts + ts/2, (y + 1) * ts - offset, 0.6 * wh)
-                        place_prop(torch_src, pos, math.pi)
-                    # South wall
-                    if c[1] and rng.random() < density:
-                        pos = (x * ts + ts/2, y * ts + offset, 0.6 * wh)
-                        place_prop(torch_src, pos, 0.0)
-                    # East wall
-                    if c[2] and rng.random() < density:
-                        pos = ((x + 1) * ts - offset, y * ts + ts/2, 0.6 * wh)
-                        place_prop(torch_src, pos, math.pi / 2)
-                    # West wall
-                    if c[3] and rng.random() < density:
-                        pos = (x * ts + offset, y * ts + ts/2, 0.6 * wh)
-                        place_prop(torch_src, pos, -math.pi / 2)
-                else: # cube
-                    if resolved_cells[y][x][0]: # wall cube
-                        # North
-                        if y + 1 < maze_data.depth and not resolved_cells[y+1][x][0]:
-                            if rng.random() < density:
-                                pos = (x * ts + ts/2, (y + 1) * ts + offset, 0.6 * wh)
-                                place_prop(torch_src, pos, 0.0)
-                        # South
-                        if y - 1 >= 0 and not resolved_cells[y-1][x][0]:
-                            if rng.random() < density:
-                                pos = (x * ts + ts/2, y * ts - offset, 0.6 * wh)
-                                place_prop(torch_src, pos, math.pi)
-                        # East
-                        if x + 1 < maze_data.width and not resolved_cells[y][x+1][0]:
-                            if rng.random() < density:
-                                pos = ((x + 1) * ts + offset, y * ts + ts/2, 0.6 * wh)
-                                place_prop(torch_src, pos, math.pi / 2)
-                        # West
-                        if x - 1 >= 0 and not resolved_cells[y][x-1][0]:
-                            if rng.random() < density:
-                                pos = (x * ts - offset, y * ts + ts/2, 0.6 * wh)
-                                place_prop(torch_src, pos, -math.pi / 2)
-
-    # 2. Chests (Dead-Ends)
-    if chest_mesh:
-        chest_src = chest_mesh
-        density = props.prop_chest_density
-        chest_offset = 0.15 * ts
-        
-        for y in range(maze_data.depth):
-            for x in range(maze_data.width):
-                is_dead = False
-                open_dir = None
-                
-                if wall_mode == 'thin':
-                    c = resolved_cells[y][x]
-                    if sum(c[:4]) == 3:
-                        is_dead = True
-                        if not c[0]: open_dir = 'N'
-                        elif not c[1]: open_dir = 'S'
-                        elif not c[2]: open_dir = 'E'
-                        else: open_dir = 'W'
-                else: # cube
-                    if not resolved_cells[y][x][0]:
-                        neighbors = []
-                        for d, dx, dy in [('N', 0, 1), ('S', 0, -1), ('E', 1, 0), ('W', -1, 0)]:
-                            nx, y_neighbor = x + dx, y + dy
-                            if 0 <= nx < maze_data.width and 0 <= y_neighbor < maze_data.depth:
-                                if not resolved_cells[y_neighbor][nx][0]:
-                                    neighbors.append(d)
-                        if len(neighbors) == 1:
-                            is_dead = True
-                            open_dir = neighbors[0]
-                            
-                if is_dead and rng.random() < density:
-                    if open_dir == 'N':
-                        pos = (x * ts + ts/2, y * ts + chest_offset, 0.0)
-                        place_prop(chest_src, pos, 0.0)
-                    elif open_dir == 'S':
-                        pos = (x * ts + ts/2, (y + 1) * ts - chest_offset, 0.0)
-                        place_prop(chest_src, pos, math.pi)
-                    elif open_dir == 'E':
-                        pos = (x * ts + chest_offset, y * ts + ts/2, 0.0)
-                        place_prop(chest_src, pos, math.pi / 2)
-                    elif open_dir == 'W':
-                        pos = ((x + 1) * ts - chest_offset, y * ts + ts/2, 0.0)
-                        place_prop(chest_src, pos, -math.pi / 2)
-
-    # 3. Doors (Entrance / Exits)
-    if door_mesh:
-        door_src = door_mesh
-        entries = []
-        if maze_data.entrance:
-            entries.append(maze_data.entrance)
-        if maze_data.exits:
-            entries.extend(maze_data.exits)
-            
-        for ex, ey, side in entries:
-            if side == 'N':
-                pos = (ex * ts + ts/2, (ey + 1) * ts, 0.0)
-                place_prop(door_src, pos, 0.0)
-            elif side == 'S':
-                pos = (ex * ts + ts/2, ey * ts, 0.0)
-                place_prop(door_src, pos, 0.0)
-            elif side == 'E':
-                pos = ((ex + 1) * ts, ey * ts + ts/2, 0.0)
-                place_prop(door_src, pos, math.pi / 2)
-            elif side == 'W':
-                pos = (ex * ts, ey * ts + ts/2, 0.0)
-                place_prop(door_src, pos, -math.pi / 2)
+            if z == 0 and maze_data.entrance:
+                ex, ey, side = maze_data.entrance
+                if side == 'N':
+                    pos = (ex * ts + ts/2, (ey + 1) * ts, z * wh)
+                    place_prop(door_src, pos, 0.0)
+                elif side == 'S':
+                    pos = (ex * ts + ts/2, ey * ts, z * wh)
+                    place_prop(door_src, pos, 0.0)
+                elif side == 'E':
+                    pos = ((ex + 1) * ts, ey * ts + ts/2, z * wh)
+                    place_prop(door_src, pos, math.pi / 2)
+                elif side == 'W':
+                    pos = (ex * ts, ey * ts + ts/2, z * wh)
+                    place_prop(door_src, pos, -math.pi / 2)
+            if z == floors - 1 and maze_data.exits:
+                for ex, ey, side in maze_data.exits:
+                    if side == 'N':
+                        pos = (ex * ts + ts/2, (ey + 1) * ts, z * wh)
+                        place_prop(door_src, pos, 0.0)
+                    elif side == 'S':
+                        pos = (ex * ts + ts/2, ey * ts, z * wh)
+                        place_prop(door_src, pos, 0.0)
+                    elif side == 'E':
+                        pos = ((ex + 1) * ts, ey * ts + ts/2, z * wh)
+                        place_prop(door_src, pos, math.pi / 2)
+                    elif side == 'W':
+                        pos = (ex * ts, ey * ts + ts/2, z * wh)
+                        place_prop(door_src, pos, -math.pi / 2)

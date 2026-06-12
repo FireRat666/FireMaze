@@ -85,7 +85,7 @@ def generate_polar_maze(
     else:
         for r in range(rings):
             row = []
-            for theta in range(ring_sectors[r]):
+            for _ in range(ring_sectors[r]):
                 if r == 0:
                     row.append([False, False, -1, -1, -1, -1, -1])
                 else:

@@ -94,7 +94,7 @@ def _generate_cube_maze(
                 rooms.append(room_cells)
 
         # Carve room regions on the actual grid (make them completely floor/False)
-        for r_idx, room_cells in enumerate(rooms):
+        for _, room_cells in enumerate(rooms):
             rx_coords = [c[0] for c in room_cells]
             ry_coords = [c[1] for c in room_cells]
             x_min, x_max = min(rx_coords), max(rx_coords)

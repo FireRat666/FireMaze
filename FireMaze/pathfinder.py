@@ -157,7 +157,7 @@ def _find_shortest_path_2d(maze_data: MazeData, wall_mode: str, cells_2d: List) 
                 curr = parent[curr]
             path.reverse()
             return path
-        for dname, dx, dy, wall_idx in dirs:
+        for _, dx, dy, wall_idx in dirs:
             nx, ny = cx + dx, cy + dy
             if 0 <= nx < maze_data.width and 0 <= ny < maze_data.depth:
                 nn = (nx, ny)
@@ -218,7 +218,7 @@ def _find_shortest_path_3d(maze_data: MazeData, wall_mode: str, cells_3d: List) 
             path.reverse()
             return path
 
-        for dname, dy, dx, wall_idx in dirs:
+        for _, dy, dx, wall_idx in dirs:
             ny, nx = cy + dy, cx + dx
             if 0 <= nx < maze_data.width and 0 <= ny < maze_data.depth:
                 nn = (cz, ny, nx)
