@@ -36,28 +36,29 @@ def _build_spiral_stair_1x1(
         T_base @ Vector((0, ts/2, z_offset + wh)),
     ]
 
+    p_verts = [bm.verts.new(pt) for pt in p_plat]
+
     # Platform Top Face
-    v_top_plat = [bm.verts.new(p_plat[4]), bm.verts.new(p_plat[5]), bm.verts.new(p_plat[6]), bm.verts.new(p_plat[7])]
+    v_top_plat = [p_verts[4], p_verts[5], p_verts[6], p_verts[7]]
     f_top_plat = bm.faces.new(v_top_plat)
     for loop, uv in zip(f_top_plat.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
         loop[uv_layer].uv = uv
 
     # Platform Bottom Face
-    v_bot_plat = [bm.verts.new(p_plat[3]), bm.verts.new(p_plat[2]), bm.verts.new(p_plat[1]), bm.verts.new(p_plat[0])]
+    v_bot_plat = [p_verts[3], p_verts[2], p_verts[1], p_verts[0]]
     f_bot_plat = bm.faces.new(v_bot_plat)
     for loop, uv in zip(f_bot_plat.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
         loop[uv_layer].uv = uv
 
     # Platform Side Faces (South, East, North, West)
     sides = [
-        [p_plat[0], p_plat[1], p_plat[5], p_plat[4]], # South
-        [p_plat[1], p_plat[2], p_plat[6], p_plat[5]], # East
-        [p_plat[2], p_plat[3], p_plat[7], p_plat[6]], # North
-        [p_plat[3], p_plat[0], p_plat[4], p_plat[7]], # West
+        [p_verts[0], p_verts[1], p_verts[5], p_verts[4]], # South
+        [p_verts[1], p_verts[2], p_verts[6], p_verts[5]], # East
+        [p_verts[2], p_verts[3], p_verts[7], p_verts[6]], # North
+        [p_verts[3], p_verts[0], p_verts[4], p_verts[7]], # West
     ]
     for side_verts in sides:
-        v_side = [bm.verts.new(pt) for pt in side_verts]
-        f_side = bm.faces.new(v_side)
+        f_side = bm.faces.new(side_verts)
         for loop, uv in zip(f_side.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
             loop[uv_layer].uv = uv
 

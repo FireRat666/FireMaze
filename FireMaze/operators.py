@@ -17,7 +17,6 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 from .maze_generator import generate_maze, find_shortest_path, MazeData
 from .mesh_builder import build_maze_objects
 from .utils import is_valid_ref, _resolve_cells_3d, get_rng
-random = get_rng()
 
 logger = logging.getLogger(__name__)
 
@@ -1080,20 +1079,21 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
             was_wall = cells[tr][tt][0]
             floors = data_dict.get('floors', props.floors)
             
+            rng = get_rng()
             cells[tr][tt][0] = not was_wall
             if cells[tr][tt][0]:
                 if num_wall_meshes > 0:
-                    cells[tr][tt][2] = random.randrange(num_wall_meshes)
-                    cells[tr][tt][3] = random.randrange(num_wall_meshes)
+                    cells[tr][tt][2] = rng.randrange(num_wall_meshes)
+                    cells[tr][tt][3] = rng.randrange(num_wall_meshes)
                     if len(cells[tr][tt]) > 7:
-                        cells[tr][tt][7] = random.randrange(num_wall_meshes)
+                        cells[tr][tt][7] = rng.randrange(num_wall_meshes)
                     if len(cells[tr][tt]) > 8:
-                        cells[tr][tt][8] = random.randrange(num_wall_meshes)
+                        cells[tr][tt][8] = rng.randrange(num_wall_meshes)
                 if num_roof_meshes > 0 and len(cells[tr][tt]) > 5:
-                    cells[tr][tt][5] = random.randrange(num_roof_meshes)
+                    cells[tr][tt][5] = rng.randrange(num_roof_meshes)
             else:
                 if num_floor_meshes > 0 and len(cells[tr][tt]) > 4:
-                    cells[tr][tt][4] = random.randrange(num_floor_meshes)
+                    cells[tr][tt][4] = rng.randrange(num_floor_meshes)
             
             if is_perimeter:
                 if was_wall: # Now floor cell (was wall)
@@ -1474,18 +1474,19 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
             if 0 <= tx < width and 0 <= ty < depth:
                 was_wall = cells[ty][tx][0]
                 floors = data_dict.get('floors', props.floors)
+                rng = get_rng()
                 cells[ty][tx][0] = not was_wall
                 if cells[ty][tx][0]:
                     if num_wall_meshes > 0:
-                        cells[ty][tx][1] = random.randrange(num_wall_meshes)
-                        cells[ty][tx][2] = random.randrange(num_wall_meshes)
-                        cells[ty][tx][3] = random.randrange(num_wall_meshes)
-                        cells[ty][tx][4] = random.randrange(num_wall_meshes)
+                        cells[ty][tx][1] = rng.randrange(num_wall_meshes)
+                        cells[ty][tx][2] = rng.randrange(num_wall_meshes)
+                        cells[ty][tx][3] = rng.randrange(num_wall_meshes)
+                        cells[ty][tx][4] = rng.randrange(num_wall_meshes)
                     if num_roof_meshes > 0:
-                        cells[ty][tx][6] = random.randrange(num_roof_meshes)
+                        cells[ty][tx][6] = rng.randrange(num_roof_meshes)
                 else:
                     if num_floor_meshes > 0:
-                        cells[ty][tx][5] = random.randrange(num_floor_meshes)
+                        cells[ty][tx][5] = rng.randrange(num_floor_meshes)
                 
                 is_perimeter = (tx == 0 or tx == width - 1 or ty == 0 or ty == depth - 1)
                 if is_perimeter:
@@ -1765,9 +1766,9 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                             self.maze_data.guide_path = find_shortest_path(self.maze_data, wall_mode=wall_mode)
                             data_dict['guide_path'] = self.maze_data.guide_path
                             
+                            col["fire_maze_data"] = json.dumps(data_dict)
                             from .mesh_builder import rebuild_maze_incrementally
                             rebuild_maze_incrementally(props, self.maze_data, context, col, dirty_cells)
-                            col["fire_maze_data"] = json.dumps(data_dict)
             return {'RUNNING_MODAL'}
 
         return {'PASS_THROUGH'}

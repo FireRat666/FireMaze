@@ -123,6 +123,28 @@ def _rebuild_maze_incrementally_impl(
             trigger_full_rebuild = True
             
     if trigger_full_rebuild:
+        import json
+        data_dict = {}
+        if "fire_maze_data" in collection:
+            try:
+                data_dict = json.loads(collection["fire_maze_data"])
+            except Exception:
+                pass
+        data_dict.update({
+            'width': maze_data.width,
+            'depth': maze_data.depth,
+            'cells': maze_data.cells,
+            'entrance': maze_data.entrance,
+            'exits': maze_data.exits,
+            'center': maze_data.center,
+            'guide_path': maze_data.guide_path,
+            'grid_type': maze_data.grid_type,
+            'polar_rings': maze_data.polar_rings,
+            'ring_sectors': maze_data.ring_sectors,
+            'floors': maze_data.floors,
+            'stairs': maze_data.stairs,
+        })
+        collection["fire_maze_data"] = json.dumps(data_dict)
         from ..operators import rebuild_maze_from_collection
         rebuild_maze_from_collection(context, collection)
         return

@@ -196,6 +196,9 @@ def _apply_vertex_painting_on_obj(obj, props, maze_data):
     # Identify dead ends (3D)
     dead_ends = set()
     if mode == 'blend':
+        from .bmesh_utils import _build_stair_top_bottom_sets
+        stair_bottom_cells, stair_top_cells = _build_stair_top_bottom_sets(maze_data)
+        stair_cells = stair_bottom_cells.union(stair_top_cells)
         cells_3d, floors = _resolve_cells_3d(maze_data.cells)
         if maze_data.grid_type == 'polar':
             rings = maze_data.polar_rings
@@ -203,39 +206,38 @@ def _apply_vertex_painting_on_obj(obj, props, maze_data):
             for z in range(floors):
                 for r in range(rings):
                     for theta in range(ring_sectors[r]):
+                        if (z, r, theta) in stair_cells:
+                            continue
                         Nr = ring_sectors[r]
                         accessible_count = 0
                         if wall_mode == 'cube':
                             if not cells_3d[z][r][theta][0]:
                                 for nr, ntheta in _get_polar_neighbors(r, theta, rings, ring_sectors):
-                                    if not cells_3d[z][nr][ntheta][0]:
+                                    if not cells_3d[z][nr][ntheta][0] or (z, nr, ntheta) in stair_cells:
                                         accessible_count += 1
                         else:
-                            if r >= 1 and not cells_3d[z][r][theta][0]:
+                            if r >= 1 and (not cells_3d[z][r][theta][0] or (z, r, (theta - 1) % Nr) in stair_cells):
                                 accessible_count += 1
-                            if r >= 1 and not cells_3d[z][r][(theta + 1) % Nr][0]:
+                            if r >= 1 and (not cells_3d[z][r][(theta + 1) % Nr][0] or (z, r, (theta + 1) % Nr) in stair_cells):
                                 accessible_count += 1
-                            if r > 0 and not cells_3d[z][r][theta][1]:
+                            if r > 0:
                                 N_in = ring_sectors[r - 1]
-                                if N_in == Nr:
-                                    accessible_count += 1
-                                elif N_in == 1:
-                                    accessible_count += 1
-                                else:
+                                in_cell = (z, r - 1, theta if N_in == Nr else (0 if N_in == 1 else theta // 2))
+                                if not cells_3d[z][r][theta][1] or in_cell in stair_cells:
                                     accessible_count += 1
                             if r < rings - 1:
                                 N_out = ring_sectors[r + 1]
                                 if N_out == Nr:
-                                    if not cells_3d[z][r + 1][theta][1]:
+                                    if not cells_3d[z][r + 1][theta][1] or (z, r + 1, theta) in stair_cells:
                                         accessible_count += 1
                                 elif Nr == 1:
                                     for t in range(N_out):
-                                        if not cells_3d[z][r + 1][t][1]:
+                                        if not cells_3d[z][r + 1][t][1] or (z, r + 1, t) in stair_cells:
                                             accessible_count += 1
                                 else:
-                                    if not cells_3d[z][r + 1][2 * theta][1]:
+                                    if not cells_3d[z][r + 1][2 * theta][1] or (z, r + 1, 2 * theta) in stair_cells:
                                         accessible_count += 1
-                                    if not cells_3d[z][r + 1][2 * theta + 1][1]:
+                                    if not cells_3d[z][r + 1][2 * theta + 1][1] or (z, r + 1, 2 * theta + 1) in stair_cells:
                                         accessible_count += 1
                         if accessible_count == 1:
                             # Exclude entrance and exits (on active floors)
@@ -261,10 +263,26 @@ def _apply_vertex_painting_on_obj(obj, props, maze_data):
                                     is_ent_or_exit = True
                         if is_ent_or_exit:
                             continue
+                        if (z, cy, cx) in stair_cells:
+                            continue
 
                         if wall_mode == 'thin':
                             c = cells_3d[z][cy][cx]
-                            if sum(c[:4]) == 3:
+                            open_neighbors = 0
+                            # North (dy = 1)
+                            if cy < maze_data.depth - 1 and (not c[0] or (z, cy + 1, cx) in stair_cells):
+                                open_neighbors += 1
+                            # South (dy = -1)
+                            if cy > 0 and (not c[1] or (z, cy - 1, cx) in stair_cells):
+                                open_neighbors += 1
+                            # East (dx = 1)
+                            if cx < maze_data.width - 1 and (not c[2] or (z, cy, cx + 1) in stair_cells):
+                                open_neighbors += 1
+                            # West (dx = -1)
+                            if cx > 0 and (not c[3] or (z, cy, cx - 1) in stair_cells):
+                                open_neighbors += 1
+                                
+                            if open_neighbors == 1:
                                 dead_ends.add((z, cy, cx))
                         else: # cube
                             if not cells_3d[z][cy][cx][0]:
@@ -272,7 +290,7 @@ def _apply_vertex_painting_on_obj(obj, props, maze_data):
                                 for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
                                     nx, ny = cx + dx, cy + dy
                                     if 0 <= nx < maze_data.width and 0 <= ny < maze_data.depth:
-                                        if not cells_3d[z][ny][nx][0]:
+                                        if not cells_3d[z][ny][nx][0] or (z, ny, nx) in stair_cells:
                                             open_neighbors += 1
                                 if open_neighbors == 1:
                                     dead_ends.add((z, cy, cx))

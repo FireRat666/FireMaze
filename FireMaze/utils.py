@@ -18,6 +18,8 @@ def _resolve_cells_3d(cells):
         if "cells" not in cells:
             raise ValueError("dict payload must contain 'cells' key")
         cells = cells.get("cells", cells)
+        if cells is None or isinstance(cells, str) or not isinstance(cells, (list, tuple)):
+            raise ValueError(f"dict payload 'cells' must be a sequence, got {type(cells).__name__}")
     if hasattr(cells, "cells"):
         cells = cells.cells
     if (len(cells) > 0 and isinstance(cells[0], list) and 
@@ -69,15 +71,13 @@ def get_rng():
     return shared_rng
 
 def set_seed(seed):
-    """Set seed for the shared random instance and global random state."""
+    """Set seed for the shared random instance."""
     if seed is not None:
         shared_rng.seed(seed)
-        random.seed(seed)
     else:
         import time
         s = int(time.time() * 1000)
         shared_rng.seed(s)
-        random.seed(s)
 
 
 CELL_AXIS_LIMIT = 1000
