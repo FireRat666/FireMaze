@@ -199,7 +199,6 @@ def _rebuild_maze_incrementally_impl(
                                    dirty_cells=dirty_cells)
                                    
     if wall_obj and bm_wall:
-        cell_layer_dbg = bm_wall.faces.layers.int.get("cell_id")
         bm_wall.to_mesh(wall_obj.data)
         bm_wall.free()
         wall_obj.data.update()
@@ -292,7 +291,7 @@ def _rebuild_maze_incrementally_impl(
     _build_guide_path(props, maze_data, collection, ctx['materials'])
 
     # 2. Update helper object "_FireMaze_Edit_Helper"
-    helper_obj = _find_role_object(bpy.data, "_FireMaze_Edit_Helper")
+    helper_obj = _find_role_object(collection, "_FireMaze_Edit_Helper")
     if helper_obj:
         # Delete old helper to rebuild it from the updated cell data
         mesh = helper_obj.data

@@ -567,7 +567,11 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                         # Outer boundary torch
                         if r == rings - 1:
                             if wall_mode != 'cube' or not resolved_cells[r][theta][0]:
-                                is_entrance = (z == 0 and theta == 0)
+                                is_entrance = False
+                                if z == 0 and maze_data.entrance:
+                                    en_r, en_theta, en_side = maze_data.entrance
+                                    if en_r == r and en_theta == theta and en_side == 'OUT':
+                                        is_entrance = True
                                 is_exit = False
                                 if z == floors - 1 and maze_data.exits:
                                     for ex_r, ex_theta, _ in maze_data.exits:

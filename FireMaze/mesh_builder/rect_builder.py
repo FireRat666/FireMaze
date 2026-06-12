@@ -829,6 +829,7 @@ def _build_rect_thin_roof(ctx, props, maze_data, created_objects, name_suffix, b
             sz = z * ctx['wh'] + ctx['wh']
             clean_corners = ctx['clean_wall_corners']
             if ctx['custom_roof'] or ctx['roof_meshes_list']:
+                filled = set()
                 for seg_type, a, b in segments:
                     if seg_type == 'H':
                         owner_cell = (z, b, a) if b < maze_data.depth else (z, b - 1, a)
@@ -896,6 +897,56 @@ def _build_rect_thin_roof(ctx, props, maze_data, created_objects, name_suffix, b
                     elif ctx['custom_roof']:
                         mat = mat_base @ ctx['mat_roof_offset']
                         _add_mesh_at(bm_roof, ctx['custom_roof'], mat, uv_roof, final_materials_list=roof_materials)
+                    else:
+                        # Fallback to procedural thin-roof path
+                        if seg_type == 'H':
+                            _add_horizontal_roof_face_transformed(bm_roof, uv_roof, a, b, ctx['ts'], sz, ctx['wt'], ctx['mat_roof_offset'], extend_left=(dx_left > 0.0), extend_right=(dx_right > 0.0))
+                            tleft = ((a, b) in v_positions) or ((a, b - 1) in v_positions)
+                            tright = ((a + 1, b) in v_positions) or ((a + 1, b - 1) in v_positions)
+                            xc = a * ctx['ts']
+                            if tleft:
+                                yc = b * ctx['ts']
+                                y_lo = yc if (a, b - 1) not in v_positions else yc - tw
+                                y_hi = yc if (a, b) not in v_positions else yc + tw
+                                for gx, gy, side in [(a - 1, b - 1, 'r'), (a - 1, b, 'r')]:
+                                    key = (gx, gy, side)
+                                    if (gx, gy) not in h_positions and key not in filled:
+                                        filled.add(key)
+                                        _add_vertical_roof_filler_transformed(bm_roof, uv_roof, xc, yc, sz, tw, y_lo - yc, y_hi - yc, -tw, 0.0, ctx['mat_roof_offset'])
+                            xc = (a + 1) * ctx['ts']
+                            if tright:
+                                yc = b * ctx['ts']
+                                y_lo = yc if (a + 1, b - 1) not in v_positions else yc - tw
+                                y_hi = yc if (a + 1, b) not in v_positions else yc + tw
+                                for gx, gy, side in [(a + 1, b - 1, 'l'), (a + 1, b, 'l')]:
+                                    key = (gx, gy, side)
+                                    if (gx, gy) not in h_positions and key not in filled:
+                                        filled.add(key)
+                                        _add_vertical_roof_filler_transformed(bm_roof, uv_roof, xc, yc, sz, tw, y_lo - yc, y_hi - yc, 0.0, tw, ctx['mat_roof_offset'])
+                        else:
+                            _add_vertical_roof_face_transformed(bm_roof, uv_roof, a, b, ctx['ts'], sz, ctx['wt'], ctx['mat_roof_offset'], trim_south=(dy_south > 0.0), trim_north=(dy_north > 0.0))
+                            tsouth = ((a, b) in h_positions) or ((a - 1, b) in h_positions)
+                            tnorth = ((a, b + 1) in h_positions) or ((a - 1, b + 1) in h_positions)
+                            yc = b * ctx['ts']
+                            if tsouth:
+                                xc = a * ctx['ts']
+                                x_lo = xc if (a - 1, b) not in h_positions else xc - tw
+                                x_hi = xc if (a, b) not in h_positions else xc + tw
+                                for gx, gy, side in [(a - 1, b - 1, 'u'), (a, b - 1, 'u')]:
+                                    key = (gx, gy, side)
+                                    if (gx, gy) not in v_positions and key not in filled:
+                                        filled.add(key)
+                                        _add_horizontal_roof_filler_transformed(bm_roof, uv_roof, xc, yc, sz, tw, x_lo - xc, x_hi - xc, -tw, 0.0, ctx['mat_roof_offset'])
+                            yc = (b + 1) * ctx['ts']
+                            if tnorth:
+                                xc = a * ctx['ts']
+                                x_lo = xc if (a - 1, b + 1) not in h_positions else xc - tw
+                                x_hi = xc if (a, b + 1) not in h_positions else xc + tw
+                                for gx, gy, side in [(a - 1, b + 1, 'd'), (a, b + 1, 'd')]:
+                                    key = (gx, gy, side)
+                                    if (gx, gy) not in v_positions and key not in filled:
+                                        filled.add(key)
+                                        _add_horizontal_roof_filler_transformed(bm_roof, uv_roof, xc, yc, sz, tw, x_lo - xc, x_hi - xc, 0.0, tw, ctx['mat_roof_offset'])
 
                     cell_id = get_cell_id(z, owner_cell[1], owner_cell[2])
                     if dirty_cells is None:

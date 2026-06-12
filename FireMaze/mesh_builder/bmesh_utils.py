@@ -561,7 +561,7 @@ def _compute_grid_distances(maze_data, wall_mode):
     if maze_data.entrance is None:
         return {}
         
-    cells_3d, floors = _resolve_cells_3d(maze_data.cells)
+    cells_3d, _ = _resolve_cells_3d(maze_data.cells)
     
     if maze_data.grid_type == 'polar':
         start_r = maze_data.entrance[0]
