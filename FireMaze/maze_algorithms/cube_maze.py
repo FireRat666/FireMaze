@@ -528,9 +528,35 @@ def _generate_cube_maze(
                     visited[wy][wx] = True
 
     elif algorithm == 'recursive_division':
+        def is_grid_blocked(x, y):
+            if not blocked:
+                return False
+            if x % 2 == 0 and y % 2 == 0:
+                return True
+            if x % 2 == 1 and y % 2 == 1:
+                return blocked[(y - 1) // 2][(x - 1) // 2]
+            if x % 2 == 0:
+                y_sub = (y - 1) // 2
+                xl = (x // 2) - 1
+                xr = x // 2
+                l_blocked = blocked[y_sub][xl] if (0 <= xl < sub_w) else True
+                r_blocked = blocked[y_sub][xr] if (0 <= xr < sub_w) else True
+                return l_blocked or r_blocked
+            if y % 2 == 0:
+                x_sub = (x - 1) // 2
+                yb = (y // 2) - 1
+                ya = y // 2
+                b_blocked = blocked[yb][x_sub] if (0 <= yb < sub_h) else True
+                a_blocked = blocked[ya][x_sub] if (0 <= ya < sub_h) else True
+                return b_blocked or a_blocked
+            return False
+
         for y in range(depth):
             for x in range(width):
-                cells[y][x][0] = False
+                if is_grid_blocked(x, y):
+                    cells[y][x][0] = True
+                else:
+                    cells[y][x][0] = False
         
         for x in range(width):
             cells[0][x][0] = True
@@ -552,6 +578,11 @@ def _generate_cube_maze(
                 
                 for x_sub in range(rx, rx + rw):
                     x_actual = 2 * x_sub + 1
+                    if blocked and (blocked[wy_sub][x_sub] or blocked[wy_sub + 1][x_sub]):
+                        cells[wy_actual][x_actual][0] = True
+                        cells[wy_actual][x_actual - 1][0] = True
+                        cells[wy_actual][x_actual + 1][0] = True
+                        continue
                     if cell_to_room.get((x_sub, wy_sub)) is None or cell_to_room.get((x_sub, wy_sub + 1)) is None:
                         if x_sub != px_sub:
                             cells[wy_actual][x_actual][0] = True
@@ -568,6 +599,11 @@ def _generate_cube_maze(
                 
                 for y_sub in range(ry, ry + rh):
                     y_actual = 2 * y_sub + 1
+                    if blocked and (blocked[y_sub][wx_sub] or blocked[y_sub][wx_sub + 1]):
+                        cells[y_actual][wx_actual][0] = True
+                        cells[y_actual - 1][wx_actual][0] = True
+                        cells[y_actual + 1][wx_actual][0] = True
+                        continue
                     if cell_to_room.get((wx_sub, y_sub)) is None or cell_to_room.get((wx_sub + 1, y_sub)) is None:
                         if y_sub != py_sub:
                             cells[y_actual][wx_actual][0] = True
@@ -764,7 +800,7 @@ def _generate_cube_maze(
                 if num_floor_meshes > 0:
                     cells[y][x][5] = random.randrange(num_floor_meshes)
 
-    main_entrance = entrance_list[0] if entrance_list else (1, 1, 'S')
+    main_entrance = entrance_list[0] if entrance_list else None
     main_exits = exit_list
     center = (2 * (sub_w // 2) + 1, 2 * (sub_h // 2) + 1)
     if center[0] >= width:

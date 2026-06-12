@@ -519,10 +519,11 @@ def _generate_thin_maze(
     elif algorithm == 'recursive_division':
         for y in range(depth):
             for x in range(width):
-                cells[y][x][0] = False
-                cells[y][x][1] = False
-                cells[y][x][2] = False
-                cells[y][x][3] = False
+                if not (blocked and blocked[y][x]):
+                    cells[y][x][0] = False
+                    cells[y][x][1] = False
+                    cells[y][x][2] = False
+                    cells[y][x][3] = False
         
         for x in range(width):
             cells[0][x][1] = True
@@ -541,6 +542,10 @@ def _generate_thin_maze(
                 px_sub = rx + _biased_choice(rw, passage_bias)
                 
                 for x_sub in range(rx, rx + rw):
+                    if blocked and (blocked[wy_sub][x_sub] or blocked[wy_sub + 1][x_sub]):
+                        cells[wy_sub][x_sub][0] = True
+                        cells[wy_sub + 1][x_sub][1] = True
+                        continue
                     if cell_to_room.get((x_sub, wy_sub)) is None or cell_to_room.get((x_sub, wy_sub + 1)) is None:
                         if x_sub != px_sub:
                             cells[wy_sub][x_sub][0] = True
@@ -553,6 +558,10 @@ def _generate_thin_maze(
                 py_sub = ry + _biased_choice(rh, passage_bias)
                 
                 for y_sub in range(ry, ry + rh):
+                    if blocked and (blocked[y_sub][wx_sub] or blocked[y_sub][wx_sub + 1]):
+                        cells[y_sub][wx_sub][2] = True
+                        cells[y_sub][wx_sub + 1][3] = True
+                        continue
                     if cell_to_room.get((wx_sub, y_sub)) is None or cell_to_room.get((wx_sub + 1, y_sub)) is None:
                         if y_sub != py_sub:
                             cells[y_sub][wx_sub][2] = True
