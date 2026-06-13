@@ -23,19 +23,17 @@ def _build_spiral_stair_1x1(
     step_span = ts * 0.48
     thickness = 0.02 * ts
 
-    # NOTE: The top landing platform is correctly placed on the +X side to align with the CCW winding steps.
-    # The user can rotate the stairs to face any desired direction. The platform MUST NOT be rotated separately
-    # from the stairs (e.g. to +Y) as doing so will break the spiral staircase alignment.
-    # Extends from x = 0 to x = ts/2, and y = -ts/2 to y = ts/2 at height z_offset + wh. Do not shift this.
+    # NOTE: The top landing platform is aligned to the +Y side to match the uphill/exit direction of ramps.
+    # Extends from x = -ts/2 to x = ts/2, and y = 0 to y = ts/2 at height z_offset + wh.
     p_plat = [
-        T_base @ Vector((0, -ts/2, z_offset + wh - thickness)),
-        T_base @ Vector((ts/2, -ts/2, z_offset + wh - thickness)),
+        T_base @ Vector((-ts/2, 0, z_offset + wh - thickness)),
+        T_base @ Vector((ts/2, 0, z_offset + wh - thickness)),
         T_base @ Vector((ts/2, ts/2, z_offset + wh - thickness)),
-        T_base @ Vector((0, ts/2, z_offset + wh - thickness)),
-        T_base @ Vector((0, -ts/2, z_offset + wh)),
-        T_base @ Vector((ts/2, -ts/2, z_offset + wh)),
+        T_base @ Vector((-ts/2, ts/2, z_offset + wh - thickness)),
+        T_base @ Vector((-ts/2, 0, z_offset + wh)),
+        T_base @ Vector((ts/2, 0, z_offset + wh)),
         T_base @ Vector((ts/2, ts/2, z_offset + wh)),
-        T_base @ Vector((0, ts/2, z_offset + wh)),
+        T_base @ Vector((-ts/2, ts/2, z_offset + wh)),
     ]
 
     p_verts = [bm.verts.new(pt) for pt in p_plat]
@@ -82,8 +80,8 @@ def _build_spiral_stair_1x1(
 
     # Steps
     for i in range(steps):
-        a_start = i * angle_per_step - math.pi / 2
-        a_end = (i + 1) * angle_per_step - math.pi / 2
+        a_start = i * angle_per_step
+        a_end = (i + 1) * angle_per_step
         z_step = z_offset + i * rise_per_step
         h_step = rise_per_step
 

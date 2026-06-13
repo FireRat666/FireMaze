@@ -292,53 +292,64 @@ def _rebuild_maze_incrementally_impl(
             cap_obj.data.materials.append(mat)
         cap_obj.data.update()
         
-    # Roof
-    roof_obj = _find_role_object(collection, f"FireMaze_Roof{name_suffix}")
-    if roof_obj:
-        bm = bmesh.new()
-        bm.from_mesh(roof_obj.data)
-        cell_layer = bm.faces.layers.int.get("cell_id")
-        if cell_layer is not None:
-            faces_to_delete = [f for f in bm.faces if f[cell_layer] in dirty_cell_ids]
-            bmesh.ops.delete(bm, geom=faces_to_delete, context="FACES")
-            edges_to_delete = [e for e in bm.edges if not e.link_faces]
-            if edges_to_delete:
-                bmesh.ops.delete(bm, geom=edges_to_delete, context="EDGES")
-            verts_to_delete = [v for v in bm.verts if not v.link_faces]
-            bmesh.ops.delete(bm, geom=verts_to_delete, context="VERTS")
-            bm.faces.ensure_lookup_table()
-            bm.verts.ensure_lookup_table()
-        uv_layer = bm.loops.layers.uv.active or bm.loops.layers.uv.new("UVMap")
-        materials = list(roof_obj.data.materials)
-        
-        if maze_data.grid_type == 'polar':
-            from .polar_builder import _build_polar_roof
-            _build_polar_roof(ctx, props, maze_data, created_objects, name_suffix, bm=bm, uv_layer=uv_layer, materials=materials, dirty_cells=dirty_cells)
-        else:
-            if props.wall_mode == 'cube':
-                from .rect_builder import _build_rect_cube_roof
-                _build_rect_cube_roof(ctx, props, maze_data, created_objects, name_suffix, bm=bm, uv_layer=uv_layer, materials=materials, dirty_cells=dirty_cells)
+    # Roof — skip wall-roof strips when using thick custom wall meshes.
+    # Single-sided thin mode with a custom wall mesh/collection implies the
+    # custom mesh already includes its own roof, so we don't generate the
+    # procedural wall-top roof strips.  Custom Roof Mesh/Collection (floor-
+    # level roof tiles) are unaffected by this guard.
+    skip_wall_roof = (
+        props.wall_mode == 'thin'
+        and not props.thin_wall_double_sided
+        and (ctx['custom_wall'] or ctx['wall_meshes_list'])
+    )
+
+    if not skip_wall_roof:
+        roof_obj = _find_role_object(collection, f"FireMaze_Roof{name_suffix}")
+        if roof_obj:
+            bm = bmesh.new()
+            bm.from_mesh(roof_obj.data)
+            cell_layer = bm.faces.layers.int.get("cell_id")
+            if cell_layer is not None:
+                faces_to_delete = [f for f in bm.faces if f[cell_layer] in dirty_cell_ids]
+                bmesh.ops.delete(bm, geom=faces_to_delete, context="FACES")
+                edges_to_delete = [e for e in bm.edges if not e.link_faces]
+                if edges_to_delete:
+                    bmesh.ops.delete(bm, geom=edges_to_delete, context="EDGES")
+                verts_to_delete = [v for v in bm.verts if not v.link_faces]
+                bmesh.ops.delete(bm, geom=verts_to_delete, context="VERTS")
+                bm.faces.ensure_lookup_table()
+                bm.verts.ensure_lookup_table()
+            uv_layer = bm.loops.layers.uv.active or bm.loops.layers.uv.new("UVMap")
+            materials = list(roof_obj.data.materials)
+            
+            if maze_data.grid_type == 'polar':
+                from .polar_builder import _build_polar_roof
+                _build_polar_roof(ctx, props, maze_data, created_objects, name_suffix, bm=bm, uv_layer=uv_layer, materials=materials, dirty_cells=dirty_cells)
             else:
-                from .rect_builder import _build_rect_thin_roof
-                _build_rect_thin_roof(ctx, props, maze_data, created_objects, name_suffix, bm=bm, uv_layer=uv_layer, materials=materials, dirty_cells=dirty_cells)
-                
-        bm.to_mesh(roof_obj.data)
-        bm.free()
-        roof_obj.data.materials.clear()
-        for mat in materials:
-            roof_obj.data.materials.append(mat)
-        roof_obj.data.update()
-    else:
-        if maze_data.grid_type == 'polar':
-            from .polar_builder import _build_polar_roof
-            _build_polar_roof(ctx, props, maze_data, created_objects, name_suffix)
+                if props.wall_mode == 'cube':
+                    from .rect_builder import _build_rect_cube_roof
+                    _build_rect_cube_roof(ctx, props, maze_data, created_objects, name_suffix, bm=bm, uv_layer=uv_layer, materials=materials, dirty_cells=dirty_cells)
+                else:
+                    from .rect_builder import _build_rect_thin_roof
+                    _build_rect_thin_roof(ctx, props, maze_data, created_objects, name_suffix, bm=bm, uv_layer=uv_layer, materials=materials, dirty_cells=dirty_cells)
+                    
+            bm.to_mesh(roof_obj.data)
+            bm.free()
+            roof_obj.data.materials.clear()
+            for mat in materials:
+                roof_obj.data.materials.append(mat)
+            roof_obj.data.update()
         else:
-            if props.wall_mode == 'cube':
-                from .rect_builder import _build_rect_cube_roof
-                _build_rect_cube_roof(ctx, props, maze_data, created_objects, name_suffix)
+            if maze_data.grid_type == 'polar':
+                from .polar_builder import _build_polar_roof
+                _build_polar_roof(ctx, props, maze_data, created_objects, name_suffix)
             else:
-                from .rect_builder import _build_rect_thin_roof
-                _build_rect_thin_roof(ctx, props, maze_data, created_objects, name_suffix)
+                if props.wall_mode == 'cube':
+                    from .rect_builder import _build_rect_cube_roof
+                    _build_rect_cube_roof(ctx, props, maze_data, created_objects, name_suffix)
+                else:
+                    from .rect_builder import _build_rect_thin_roof
+                    _build_rect_thin_roof(ctx, props, maze_data, created_objects, name_suffix)
 
     # Stairs
     stair_obj = _find_role_object(collection, f"FireMaze_Stairs{name_suffix}")

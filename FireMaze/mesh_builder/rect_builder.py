@@ -800,6 +800,8 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, 
 def _build_rect_thin_roof(ctx, props, maze_data, created_objects, name_suffix, bm=None, uv_layer=None, materials=None, dirty_cells=None):
     """Build thin-mode roof tiles for a rectangular grid, optionally updating an existing BMesh."""
     if name_suffix != "_EditHelper":
+        if not props.thin_wall_double_sided and (ctx.get('custom_wall') or ctx.get('wall_meshes_list')):
+            return
         if bm is None:
             bm_roof, uv_roof, roof_materials = _create_bmesh_element("roof", ctx['materials'])
             is_external_bm = False

@@ -920,7 +920,6 @@ def _generate_cube_maze(
     maze_data.floors = floors
     maze_data.stairs = stairs_placed
     if mask_image:
-        blocked = _get_image_mask_data(mask_image, mask_invert, sub_w, sub_h)
         for z in range(floors):
             for y in range(sub_h):
                 for x in range(sub_w):
@@ -946,7 +945,7 @@ def _generate_cube_maze(
         maze_data.entrance = entrance_list[0] if entrance_list else None
         maze_data.exits = exit_list
         
-        # Filter stairs that landed on masked cells
+        # Since the image mask is applied uniformly to all floors, checking cells[0] is sufficient
         stairs_placed = [s for s in stairs_placed if not cells[0][s['y']][s['x']][0]]
         maze_data.stairs = stairs_placed
     

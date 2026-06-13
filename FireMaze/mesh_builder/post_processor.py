@@ -916,7 +916,7 @@ def _spawn_decorations(props, maze_data, context, parent_collection, dirty_cells
             door_src = door_mesh
             if z == 0 and maze_data.entrance:
                 ex, ey, side = maze_data.entrance
-                cell_id = get_cell_id(z, ex, ey)
+                cell_id = get_cell_id(z, ey, ex)
                 if dirty_cell_ids is None or cell_id in dirty_cell_ids:
                     if side == 'N':
                         pos = (ex * ts + ts/2, (ey + 1) * ts, z * wh)
@@ -932,7 +932,7 @@ def _spawn_decorations(props, maze_data, context, parent_collection, dirty_cells
                         place_prop(door_src, pos, -math.pi / 2, cell_id)
             if z == floors - 1 and maze_data.exits:
                 for ex, ey, side in maze_data.exits:
-                    cell_id = get_cell_id(z, ex, ey)
+                    cell_id = get_cell_id(z, ey, ex)
                     if dirty_cell_ids is None or cell_id in dirty_cell_ids:
                         if side == 'N':
                             pos = (ex * ts + ts/2, (ey + 1) * ts, z * wh)

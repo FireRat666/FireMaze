@@ -41,6 +41,8 @@ class VIEW3D_PT_fire_maze(bpy.types.Panel):
         col.row().prop(props, "wall_mode", expand=True)
         if props.wall_mode == 'thin':
             col.prop(props, "wall_thickness")
+            col.prop(props, "thin_wall_double_sided", text="Double-Sided Thin Walls")
+            col.prop(props, "clean_wall_corners", text="Clean Wall Corners")
         col.prop(props, "tile_size")
         col.separator(factor=0.5)
         col.prop(props, "floors")
@@ -303,10 +305,6 @@ class VIEW3D_PT_fire_maze_custom_tiles(bpy.types.Panel):
         col.prop(props, "custom_ramp_mesh", text="Ramp Mesh")
         col.separator(factor=0.3)
         col.prop(props, "custom_wall_mesh", text="Wall Mesh")
-        if props.wall_mode == 'thin':
-            col.prop(props, "thin_wall_double_sided", text="Double-Sided Thin Walls")
-            col.prop(props, "clean_wall_corners", text="Clean Wall Corners")
-        col.separator(factor=0.3)
         col.prop(props, "custom_wall_collection", text="Wall Collection")
         if props.wall_mode == 'cube':
             col.prop(props, "cube_mode_pillar", text="Pillar Mode (Cube)")
