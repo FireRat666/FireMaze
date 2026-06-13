@@ -1,5 +1,6 @@
 """Cube maze algorithm for FireMaze."""
 
+from collections import deque
 from typing import List, Tuple
 from ..maze_data import MazeData, UnionFind
 from ..pathfinder import find_shortest_path
@@ -516,9 +517,20 @@ def _generate_cube_maze(
         sx, sy = start_cell
         mark_visited(sx, sy)
         
+        # Find connected component of unblocked cells reachable from start
+        component = {(sx, sy)}
+        q = deque([(sx, sy)])
+        while q:
+            qx, qy = q.popleft()
+            for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+                nx, ny = qx + dx, qy + dy
+                if 0 <= nx < sub_w and 0 <= ny < sub_h and not blocked[ny][nx] and (nx, ny) not in component:
+                    component.add((nx, ny))
+                    q.append((nx, ny))
+        
         for y in range(sub_h):
             for x in range(sub_w):
-                if not visited[y][x]:
+                if not visited[y][x] and (x, y) in component:
                     unvisited_list.append((x, y))
         
         while unvisited_list:
@@ -741,18 +753,26 @@ def _generate_cube_maze(
         if side == 'N' or side == 'ANY':
             for x in path_cols:
                 if x < width:
+                    if blocked[sub_h - 1][(x - 1) // 2]:
+                        continue
                     candidates.append((x, depth - 1, 'N'))
         if side == 'S' or side == 'ANY':
             for x in path_cols:
                 if x < width:
+                    if blocked[0][(x - 1) // 2]:
+                        continue
                     candidates.append((x, 0, 'S'))
         if side == 'E' or side == 'ANY':
             for y in path_rows:
                 if y < depth:
+                    if blocked[(y - 1) // 2][sub_w - 1]:
+                        continue
                     candidates.append((width - 1, y, 'E'))
         if side == 'W' or side == 'ANY':
             for y in path_rows:
                 if y < depth:
+                    if blocked[(y - 1) // 2][0]:
+                        continue
                     candidates.append((0, y, 'W'))
 
         random.shuffle(candidates)
@@ -807,6 +827,12 @@ def _generate_cube_maze(
                 else:
                     exit_list.append((x, y, d))
                 carved_count += 1
+
+        if carved_count < count:
+            raise ValueError(
+                f"Failed to carve {count} border opening(s) on side '{side}' — "
+                f"only {carved_count} valid, unmasked candidates were available."
+            )
 
     carve_cube_borders(num_entrances, entrance_side, is_entrance=True)
     if mode == 'exit':
@@ -897,6 +923,10 @@ def _generate_cube_maze(
         # Recompute entrance_list/exit_list and set against final cells state
         entrance_list = [item for item in entrance_list if not cells[0][item[1]][item[0]][0]]
         exit_list = [item for item in exit_list if not cells[0][item[1]][item[0]][0]]
+        if not entrance_list and num_entrances > 0:
+            raise ValueError("All candidate entrance cells were blocked by mask.")
+        if not exit_list and (num_exits > 0 or emergency_exits):
+            raise ValueError("All candidate exit cells were blocked by mask.")
         maze_data.entrance = entrance_list[0] if entrance_list else None
         maze_data.exits = exit_list
     

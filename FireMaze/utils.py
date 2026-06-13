@@ -100,6 +100,8 @@ def decode_cell_id(cell_id: int) -> tuple:
 
     The decoded coordinate ranges are: x in [0, CELL_AXIS_LIMIT-1], y in [0, CELL_AXIS_LIMIT-1], and z >= 0.
     """
+    if cell_id < 0:
+        raise ValueError(f"cell_id must be non-negative, got {cell_id}")
     z = cell_id // (_CELL_AXIS_MULTIPLIER * _CELL_AXIS_MULTIPLIER)
     rem = cell_id % (_CELL_AXIS_MULTIPLIER * _CELL_AXIS_MULTIPLIER)
     y = rem // _CELL_AXIS_MULTIPLIER

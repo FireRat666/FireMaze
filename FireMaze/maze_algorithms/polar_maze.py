@@ -3,7 +3,7 @@
 import math
 import copy
 import logging
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from ..maze_data import MazeData, UnionFind
 from ..pathfinder import find_shortest_path, _get_polar_neighbors
 from ..utils import get_rng, set_seed
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 def generate_polar_maze(
     rings: int,
-    seed: int = 0,
+    seed: Optional[int] = None,
     algorithm: str = 'dfs',
     mode: str = 'center',
     wall_mode: str = 'thin',
@@ -303,6 +303,10 @@ def generate_polar_maze(
                     if wall_mode == 'cube' and cells[r][theta][0]:
                         continue
                     candidates.append((r, theta))
+            if not candidates:
+                floors = 1
+                stair_defs = []
+                break
             random.shuffle(candidates)
             num_stairs = max(1, min(stair_count, len(candidates)))
             placed_cells_z = set()  # track (r, theta) cells placed as stairs on this floor

@@ -329,7 +329,7 @@ def _apply_vertex_painting_on_obj(obj, props, maze_data):
             h_rel = (pz - z_min) / z_range
             
             # Map vertex to floor level z
-            z = max(0, min(maze_data.floors - 1, int(pz / wh)))
+            z = max(0, min(maze_data.floors - 1, int((pz - 1e-6) / wh)))
             
             # Map vertex to cell
             if maze_data.grid_type == 'polar':
@@ -495,7 +495,13 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
 
     cells_3d, floors = _resolve_cells_3d(maze_data.cells)
     resolved_cells = cells_3d[0]
- 
+  
+    stair_cells = set()
+    if chest_mesh:
+        from .bmesh_utils import _build_stair_top_bottom_sets
+        sb, st = _build_stair_top_bottom_sets(maze_data)
+        stair_cells = sb.union(st)
+
     def place_prop(src_obj, pos, rot_z):
         """Copy a source prop object into the maze collection at the given position and rotation."""
         new_obj = src_obj.copy()
@@ -625,9 +631,9 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                         
                         if wall_mode == 'cube':
                             if not resolved_cells[r][theta][0]:
-                                if r >= 1 and not resolved_cells[r][(theta + 1) % Nr][0]:
+                                if r >= 1 and (not resolved_cells[r][(theta + 1) % Nr][0] or (z, r, (theta + 1) % Nr) in stair_cells):
                                     accessible.append(('CW', (r, (theta + 1) % Nr)))
-                                if r >= 1 and not resolved_cells[r][(theta - 1) % Nr][0]:
+                                if r >= 1 and (not resolved_cells[r][(theta - 1) % Nr][0] or (z, r, (theta - 1) % Nr) in stair_cells):
                                     accessible.append(('CCW', (r, (theta - 1) % Nr)))
                                 if r > 0:
                                     N_in = ring_sectors[r - 1]
@@ -637,28 +643,28 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                                         in_cell = (r - 1, 0)
                                     else:
                                         in_cell = (r - 1, theta // 2)
-                                    if not resolved_cells[in_cell[0]][in_cell[1]][0]:
+                                    if not resolved_cells[in_cell[0]][in_cell[1]][0] or (z, in_cell[0], in_cell[1]) in stair_cells:
                                         accessible.append(('IN', in_cell))
                                 if r < rings - 1:
                                     N_out = ring_sectors[r + 1]
                                     if N_out == Nr:
-                                        if not resolved_cells[r + 1][theta][0]:
+                                        if not resolved_cells[r + 1][theta][0] or (z, r + 1, theta) in stair_cells:
                                             accessible.append(('OUT', (r + 1, theta)))
                                     elif Nr == 1:
                                         for t in range(N_out):
-                                            if not resolved_cells[r + 1][t][0]:
+                                            if not resolved_cells[r + 1][t][0] or (z, r + 1, t) in stair_cells:
                                                 accessible.append(('OUT', (r + 1, t)))
                                     else:
-                                        if not resolved_cells[r + 1][2 * theta][0]:
+                                        if not resolved_cells[r + 1][2 * theta][0] or (z, r + 1, 2 * theta) in stair_cells:
                                             accessible.append(('OUT', (r + 1, 2 * theta)))
-                                        if not resolved_cells[r + 1][2 * theta + 1][0]:
+                                        if not resolved_cells[r + 1][2 * theta + 1][0] or (z, r + 1, 2 * theta + 1) in stair_cells:
                                             accessible.append(('OUT', (r + 1, 2 * theta + 1)))
                         else:
-                            if r >= 1 and not resolved_cells[r][(theta + 1) % Nr][0]:
+                            if r >= 1 and (not resolved_cells[r][(theta + 1) % Nr][0] or (z, r, (theta + 1) % Nr) in stair_cells):
                                 accessible.append(('CCW', (r, (theta + 1) % Nr)))
-                            if r >= 1 and not resolved_cells[r][theta][0]:
+                            if r >= 1 and (not resolved_cells[r][theta][0] or (z, r, (theta - 1) % Nr) in stair_cells):
                                 accessible.append(('CW', (r, (theta - 1) % Nr)))
-                            if r > 0 and not resolved_cells[r][theta][1]:
+                            if r > 0 and (not resolved_cells[r][theta][1] or (z, r - 1, theta) in stair_cells):
                                 N_in = ring_sectors[r - 1]
                                 if N_in == Nr:
                                     accessible.append(('IN', (r - 1, theta)))
@@ -669,16 +675,16 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                             if r < rings - 1:
                                 N_out = ring_sectors[r + 1]
                                 if N_out == Nr:
-                                    if not resolved_cells[r + 1][theta][1]:
+                                    if not resolved_cells[r + 1][theta][1] or (z, r + 1, theta) in stair_cells:
                                         accessible.append(('OUT', (r + 1, theta)))
                                 elif Nr == 1:
                                     for t in range(N_out):
-                                        if not resolved_cells[r + 1][t][1]:
+                                        if not resolved_cells[r + 1][t][1] or (z, r + 1, t) in stair_cells:
                                             accessible.append(('OUT', (r + 1, t)))
                                 else:
-                                    if not resolved_cells[r + 1][2 * theta][1]:
+                                    if not resolved_cells[r + 1][2 * theta][1] or (z, r + 1, 2 * theta) in stair_cells:
                                         accessible.append(('OUT', (r + 1, 2 * theta)))
-                                    if not resolved_cells[r + 1][2 * theta + 1][1]:
+                                    if not resolved_cells[r + 1][2 * theta + 1][1] or (z, r + 1, 2 * theta + 1) in stair_cells:
                                         accessible.append(('OUT', (r + 1, 2 * theta + 1)))
                                     
                         if len(accessible) == 1 and r > 0:

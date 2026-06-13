@@ -1075,7 +1075,7 @@ def _build_rect_thin_roof(ctx, props, maze_data, created_objects, name_suffix, b
                                 f[cell_layer] = cell_id
 
         if not is_external_bm:
-            if not ctx['custom_roof']:
+            if not ctx['custom_roof'] and not ctx.get('roof_meshes_list'):
                 bmesh.ops.remove_doubles(bm_roof, verts=bm_roof.verts, dist=0.001)
             roof_obj = _create_object_from_bm(bm_roof, f"FireMaze_Roof{name_suffix}", ctx['col'], None)
             for mat in roof_materials:

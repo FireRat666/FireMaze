@@ -157,10 +157,14 @@ def _get_start_cell(blocked: List[List[bool]], w: int, h: int) -> Optional[Tuple
     """Find a non-blocked starting cell close to the center, or None if all cells are blocked."""
     cx, cy = w // 2, h // 2
     for r in range(max(w, h)):
-        for dy in range(-r, r + 1):
-            for dx in range(-r, r + 1):
-                nx, ny = cx + dx, cy + dy
-                if 0 <= nx < w and 0 <= ny < h:
-                    if not blocked[ny][nx]:
-                        return nx, ny
+        for dx in range(-r, r + 1):
+            for ny in (cy - r, cy + r):
+                nx = cx + dx
+                if 0 <= nx < w and 0 <= ny < h and not blocked[ny][nx]:
+                    return nx, ny
+        for dy in range(-r + 1, r):
+            for nx in (cx - r, cx + r):
+                ny = cy + dy
+                if 0 <= nx < w and 0 <= ny < h and not blocked[ny][nx]:
+                    return nx, ny
     return None

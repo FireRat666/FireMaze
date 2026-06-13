@@ -4,7 +4,7 @@ Re-exports core data structures, pathfinding functions, and delegates maze
 generation to modular sub-algorithms.
 """
 
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from .maze_data import MazeData, UnionFind
 from .pathfinder import find_shortest_path
 from .maze_algorithms.polar_maze import generate_polar_maze
@@ -16,7 +16,7 @@ from .maze_algorithms.common_helpers import _force_cell_open
 def generate_maze(
     width: int,
     depth: int,
-    seed: int = 0,
+    seed: Optional[int] = None,
     mode: str = 'center',
     emergency_exits: bool = False,
     algorithm: str = 'dfs',

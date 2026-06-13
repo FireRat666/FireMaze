@@ -184,14 +184,14 @@ def _rebuild_maze_incrementally_impl(
     else:
         if maze_data.grid_type == 'polar':
             from .polar_builder import _build_polar_floor
-            _build_polar_floor(ctx, props, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
+            _build_polar_floor(ctx, props, maze_data, created_objects, name_suffix)
         else:
             if props.wall_mode == 'cube':
                 from .rect_builder import _build_rect_cube_floor
-                _build_rect_cube_floor(ctx, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
+                _build_rect_cube_floor(ctx, maze_data, created_objects, name_suffix)
             else:
                 from .rect_builder import _build_rect_thin_floor
-                _build_rect_thin_floor(ctx, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
+                _build_rect_thin_floor(ctx, maze_data, created_objects, name_suffix)
 
     # Walls & Caps
     wall_obj = _find_role_object(collection, f"FireMaze_Walls{name_suffix}")
@@ -224,23 +224,26 @@ def _rebuild_maze_incrementally_impl(
         cap_materials = list(cap_obj.data.materials)
         
     if maze_data.grid_type == 'polar':
+        w_dirty = dirty_cells if wall_obj and cap_obj else None
         from .polar_builder import _build_polar_walls
         _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix,
                            bm=bm_wall, uv_layer=uv_wall, materials=wall_materials,
                            bm_cap=bm_cap, uv_layer_cap=uv_cap, materials_cap=cap_materials,
-                           dirty_cells=dirty_cells)
+                           dirty_cells=w_dirty)
     else:
         if props.wall_mode == 'cube':
+            w_dirty = dirty_cells if wall_obj else None
             from .rect_builder import _build_rect_cube_walls
             _build_rect_cube_walls(ctx, props, maze_data, created_objects, name_suffix,
                                    bm=bm_wall, uv_layer=uv_wall, materials=wall_materials,
-                                   dirty_cells=dirty_cells)
+                                   dirty_cells=w_dirty)
         else:
+            w_dirty = dirty_cells if wall_obj and cap_obj else None
             from .rect_builder import _build_rect_thin_walls
             _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix,
                                    bm=bm_wall, uv_layer=uv_wall, materials=wall_materials,
                                    bm_cap=bm_cap, uv_layer_cap=uv_cap, materials_cap=cap_materials,
-                                   dirty_cells=dirty_cells)
+                                   dirty_cells=w_dirty)
                                    
     if wall_obj and bm_wall:
         bm_wall.to_mesh(wall_obj.data)
@@ -282,14 +285,14 @@ def _rebuild_maze_incrementally_impl(
     else:
         if maze_data.grid_type == 'polar':
             from .polar_builder import _build_polar_roof
-            _build_polar_roof(ctx, props, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
+            _build_polar_roof(ctx, props, maze_data, created_objects, name_suffix)
         else:
             if props.wall_mode == 'cube':
                 from .rect_builder import _build_rect_cube_roof
-                _build_rect_cube_roof(ctx, props, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
+                _build_rect_cube_roof(ctx, props, maze_data, created_objects, name_suffix)
             else:
                 from .rect_builder import _build_rect_thin_roof
-                _build_rect_thin_roof(ctx, props, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
+                _build_rect_thin_roof(ctx, props, maze_data, created_objects, name_suffix)
 
     # Stairs
     stair_obj = _find_role_object(collection, f"FireMaze_Stairs{name_suffix}")
@@ -318,10 +321,10 @@ def _rebuild_maze_incrementally_impl(
     else:
         if maze_data.grid_type == 'polar':
             from .polar_builder import _build_polar_stairs
-            _build_polar_stairs(ctx, props, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
+            _build_polar_stairs(ctx, props, maze_data, created_objects, name_suffix)
         else:
             from .rect_builder import _build_rect_stairs
-            _build_rect_stairs(ctx, props, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
+            _build_rect_stairs(ctx, props, maze_data, created_objects, name_suffix)
 
     # Rebuild guide path dynamically
     guide_obj = _find_role_object(collection, "FireMaze_Guide")

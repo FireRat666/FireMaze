@@ -1333,6 +1333,8 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                     data_dict['cells'] = original_cells
                     self.report({'INFO'}, f"Swapped {rebuilt_text} mesh at ({cx_clamped}, {cy_clamped})")
                 else:
+                    # dirty_cells for this branch is built by the outer
+                    # `if modified:` block at ~1435 using (cx_clamped, cy_clamped)
                     if not is_wall:
                         if num_floor_meshes > 0:
                             current_idx = cells[cy_clamped][cx_clamped][5] if isinstance(cells[cy_clamped][cx_clamped][5], int) else -1
