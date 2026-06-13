@@ -162,8 +162,13 @@ def _rebuild_maze_incrementally_impl(
         if cell_layer is not None:
             faces_to_delete = [f for f in bm.faces if f[cell_layer] in dirty_cell_ids]
             bmesh.ops.delete(bm, geom=faces_to_delete, context="FACES")
+            edges_to_delete = [e for e in bm.edges if not e.link_faces]
+            if edges_to_delete:
+                bmesh.ops.delete(bm, geom=edges_to_delete, context="EDGES")
             verts_to_delete = [v for v in bm.verts if not v.link_faces]
             bmesh.ops.delete(bm, geom=verts_to_delete, context="VERTS")
+            bm.faces.ensure_lookup_table()
+            bm.verts.ensure_lookup_table()
         uv_layer = bm.loops.layers.uv.active or bm.loops.layers.uv.new("UVMap")
         materials = list(floor_obj.data.materials)
         
@@ -205,8 +210,13 @@ def _rebuild_maze_incrementally_impl(
         if cell_layer is not None:
             faces_to_delete = [f for f in bm_wall.faces if f[cell_layer] in dirty_cell_ids]
             bmesh.ops.delete(bm_wall, geom=faces_to_delete, context="FACES")
+            edges_to_delete = [e for e in bm_wall.edges if not e.link_faces]
+            if edges_to_delete:
+                bmesh.ops.delete(bm_wall, geom=edges_to_delete, context="EDGES")
             verts_to_delete = [v for v in bm_wall.verts if not v.link_faces]
             bmesh.ops.delete(bm_wall, geom=verts_to_delete, context="VERTS")
+            bm_wall.faces.ensure_lookup_table()
+            bm_wall.verts.ensure_lookup_table()
         uv_wall = bm_wall.loops.layers.uv.active or bm_wall.loops.layers.uv.new("UVMap")
         wall_materials = list(wall_obj.data.materials)
         
@@ -218,8 +228,13 @@ def _rebuild_maze_incrementally_impl(
         if cell_layer_cap is not None:
             faces_to_delete = [f for f in bm_cap.faces if f[cell_layer_cap] in dirty_cell_ids]
             bmesh.ops.delete(bm_cap, geom=faces_to_delete, context="FACES")
+            edges_to_delete = [e for e in bm_cap.edges if not e.link_faces]
+            if edges_to_delete:
+                bmesh.ops.delete(bm_cap, geom=edges_to_delete, context="EDGES")
             verts_to_delete = [v for v in bm_cap.verts if not v.link_faces]
             bmesh.ops.delete(bm_cap, geom=verts_to_delete, context="VERTS")
+            bm_cap.faces.ensure_lookup_table()
+            bm_cap.verts.ensure_lookup_table()
         uv_cap = bm_cap.loops.layers.uv.active or bm_cap.loops.layers.uv.new("UVMap")
         cap_materials = list(cap_obj.data.materials)
         
@@ -263,8 +278,13 @@ def _rebuild_maze_incrementally_impl(
         if cell_layer is not None:
             faces_to_delete = [f for f in bm.faces if f[cell_layer] in dirty_cell_ids]
             bmesh.ops.delete(bm, geom=faces_to_delete, context="FACES")
+            edges_to_delete = [e for e in bm.edges if not e.link_faces]
+            if edges_to_delete:
+                bmesh.ops.delete(bm, geom=edges_to_delete, context="EDGES")
             verts_to_delete = [v for v in bm.verts if not v.link_faces]
             bmesh.ops.delete(bm, geom=verts_to_delete, context="VERTS")
+            bm.faces.ensure_lookup_table()
+            bm.verts.ensure_lookup_table()
         uv_layer = bm.loops.layers.uv.active or bm.loops.layers.uv.new("UVMap")
         materials = list(roof_obj.data.materials)
         
@@ -303,8 +323,13 @@ def _rebuild_maze_incrementally_impl(
         if cell_layer is not None:
             faces_to_delete = [f for f in bm.faces if f[cell_layer] in dirty_cell_ids]
             bmesh.ops.delete(bm, geom=faces_to_delete, context="FACES")
+            edges_to_delete = [e for e in bm.edges if not e.link_faces]
+            if edges_to_delete:
+                bmesh.ops.delete(bm, geom=edges_to_delete, context="EDGES")
             verts_to_delete = [v for v in bm.verts if not v.link_faces]
             bmesh.ops.delete(bm, geom=verts_to_delete, context="VERTS")
+            bm.faces.ensure_lookup_table()
+            bm.verts.ensure_lookup_table()
         uv_layer = bm.loops.layers.uv.active or bm.loops.layers.uv.new("UVMap")
         materials = list(stair_obj.data.materials)
         

@@ -53,7 +53,6 @@ def generate_polar_maze(
         raise ValueError(f"rings must be > 0, got {rings}")
 
     random = get_rng()
-    set_seed(seed)
 
     # Only DFS has a dedicated polar implementation; all other algorithms use a
     # random spanning tree (Kruskal-style) which produces similar perfect-maze results.
@@ -317,8 +316,10 @@ def generate_polar_maze(
                 if (r, theta) in placed_cells_z:
                     continue
                 placed_cells_z.add((r, theta))
+                if stair_direction not in {'N', 'E', 'S', 'W', 'random'}:
+                    raise ValueError(f"Invalid stair_direction for polar maze: {stair_direction!r}")
                 polar_orient = (random.choice(['IN', 'OUT', 'CW', 'CCW']) if stair_direction == 'random'
-                                else {'N': 'CCW', 'E': 'OUT', 'S': 'CW', 'W': 'IN'}.get(stair_direction, stair_direction))
+                                else {'N': 'CCW', 'E': 'OUT', 'S': 'CW', 'W': 'IN'}[stair_direction])
                 stair_defs.append({
                     'z': z, 'x': theta, 'y': r,
                     'type': stair_style,

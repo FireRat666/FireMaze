@@ -1,6 +1,6 @@
 """Thin maze algorithm for FireMaze."""
 
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from ..maze_data import MazeData, UnionFind
 from ..pathfinder import find_shortest_path
 from ..utils import get_rng
@@ -14,7 +14,7 @@ from .common_helpers import (
 def _generate_thin_maze(
     width: int,
     depth: int,
-    seed: int,
+    seed: Optional[int],
     mode: str,
     emergency_exits: bool,
     algorithm: str,
@@ -752,6 +752,13 @@ def _generate_thin_maze(
                     continue
                 if carved_count >= count:
                     break
+                already_used = False
+                for ex, ey, ed in entrance_list + exit_list:
+                    if ex == x and ey == y and ed == d:
+                        already_used = True
+                        break
+                if already_used:
+                    continue
                 cells[y][x][index[d]] = False
                 if is_entrance:
                     entrance_list.append((x, y, d))
@@ -833,13 +840,11 @@ def _generate_thin_maze(
     maze_data.floors = floors
     maze_data.stairs = stairs_placed
     if mask_image:
-        blocked = _get_image_mask_data(mask_image, mask_invert, width, depth)
         for y in range(depth):
             for x in range(width):
                 if blocked[y][x]:
-                    cells[0][y][x][8] = -2
-                    cells[0][y][x][9] = -2
-                    cells[0][y][x][0] = cells[0][y][x][1] = cells[0][y][x][2] = cells[0][y][x][3] = False
+                    cells[0][y][x][8] = -1
+                    cells[0][y][x][9] = -1
                     
                     if y + 1 < depth and not blocked[y+1][x]:
                         cells[0][y+1][x][1] = True
@@ -854,6 +859,10 @@ def _generate_thin_maze(
         exit_list = [item for item in exit_list if not blocked[item[1]][item[0]]]
         maze_data.entrance = entrance_list[0] if entrance_list else None
         maze_data.exits = exit_list
+        
+        # Filter stairs that landed on masked cells
+        stairs_placed = [s for s in stairs_placed if not blocked[s['y']][s['x']]]
+        maze_data.stairs = stairs_placed
                         
     maze_data.guide_path = find_shortest_path(maze_data, wall_mode='thin')
     return maze_data

@@ -14,7 +14,7 @@ bl_info = {
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar > FireRat",
     "description": "Random maze generator with tiled construction",
-    "category": "Add Mesh",
+    "category": "3D View",
     "wiki_url": "https://github.com/FireRat666/FireMaze/",
     "tracker_url": "https://github.com/FireRat666/FireMaze/issues",
 }

@@ -27,6 +27,7 @@ class UnionFind:
     def __init__(self, size: int):
         """Initialize parent array with each element pointing to itself."""
         self.parent = list(range(size))
+        self.rank = [0] * size
 
     def find(self, i: int) -> int:
         """Find the root representative of element i with path compression."""
@@ -43,6 +44,12 @@ class UnionFind:
         root_i = self.find(i)
         root_j = self.find(j)
         if root_i != root_j:
-            self.parent[root_i] = root_j
+            if self.rank[root_i] < self.rank[root_j]:
+                self.parent[root_i] = root_j
+            elif self.rank[root_i] > self.rank[root_j]:
+                self.parent[root_j] = root_i
+            else:
+                self.parent[root_j] = root_i
+                self.rank[root_i] += 1
             return True
         return False

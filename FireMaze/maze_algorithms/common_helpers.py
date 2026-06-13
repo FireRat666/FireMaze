@@ -18,7 +18,7 @@ def _biased_choice(length: int, bias: float) -> int:
         return 0
     rng = get_rng()
     u = rng.random()
-    if bias == 0.5:
+    if abs(bias - 0.5) < 1e-12:
         pass
     elif bias < 0.5:
         p = 0.5 / max(0.01, bias)
@@ -138,8 +138,9 @@ def _get_image_mask_data(mask_image, invert: bool, width: int, depth: int) -> Li
             py = int(((y + 0.5) / depth) * img_h)
             px = max(0, min(img_w - 1, px))
             py = max(0, min(img_h - 1, py))
-            
-            idx = (py * img_w + px) * 4
+
+            channels = len(pixels) // (img_w * img_h)
+            idx = (py * img_w + px) * channels
             if idx + 2 < len(pixels):
                 r = pixels[idx]
                 g = pixels[idx + 1]

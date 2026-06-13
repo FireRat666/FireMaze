@@ -1,5 +1,6 @@
 """Shared utility functions for FireMaze addon."""
 
+import random
 
 def is_valid_ref(ref):
     """Check if a Blender RNA pointer is valid and has not been deleted."""
@@ -17,7 +18,7 @@ def _resolve_cells_3d(cells):
     if isinstance(cells, dict):
         if "cells" not in cells:
             raise ValueError("dict payload must contain 'cells' key")
-        cells = cells.get("cells", cells)
+        cells = cells["cells"]
         if cells is None or isinstance(cells, str) or not isinstance(cells, (list, tuple)):
             raise ValueError(f"dict payload 'cells' must be a sequence, got {type(cells).__name__}")
     if hasattr(cells, "cells"):
@@ -60,8 +61,6 @@ def _get_stair_footprint_coords(x, y, footprint, orientation):
                 coords.append((x + dx, y + dy))
     return coords
 
-
-import random
 
 # Shared PRNG instance
 shared_rng = random.Random()

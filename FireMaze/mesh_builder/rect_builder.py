@@ -354,7 +354,9 @@ def _build_rect_thin_floor(ctx, maze_data, created_objects, name_suffix, bm=None
         floor_materials = materials
         is_external_bm = True
 
-    cell_layer = bm_floor.faces.layers.int.get("cell_id") or bm_floor.faces.layers.int.new("cell_id")
+    cell_layer = bm_floor.faces.layers.int.get("cell_id")
+    if cell_layer is None:
+        cell_layer = bm_floor.faces.layers.int.new("cell_id")
     off = ctx['ts'] / 2 if ctx['centered'] else 0
     for z in ctx['z_range']:
         stair_top_cells_z = {(yy, xx) for (zz, yy, xx) in ctx['stair_top_cells'] if zz == z}
@@ -371,7 +373,7 @@ def _build_rect_thin_floor(ctx, maze_data, created_objects, name_suffix, bm=None
                     existing_faces = set(bm_floor.faces)
 
                 floor_idx = level_cells[y][x][8] if len(level_cells[y][x]) > 8 else -1
-                if floor_idx == -2:
+                if floor_idx < 0:
                     continue
                 if ctx['floor_meshes_list'] and isinstance(floor_idx, int) and 0 <= floor_idx < len(ctx['floor_meshes_list']):
                     mat_base = Matrix.Translation(Vector((x * ctx['ts'] + off, y * ctx['ts'] + off, z * ctx['wh'])))
@@ -439,7 +441,6 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, 
         bm_cap, uv_cap, cap_materials = _create_bmesh_element("end_cap", ctx['materials'])
         is_external_cap = False
     else:
-        bm_cap = bm_cap
         uv_cap = uv_layer_cap
         cap_materials = materials_cap
         is_external_cap = True
@@ -755,7 +756,8 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, 
             if cell_layer and cell_layer_cap:
                 new_f[cell_layer] = f[cell_layer_cap]
 
-    cell_layer_dbg = bm_wall.faces.layers.int.get("cell_id")
+        bm_wall.faces.ensure_lookup_table()
+        _safe_remove_doubles(bm_wall, dist=0.001)
 
     if not is_external_bm:
         if props.single_wall_object:

@@ -78,7 +78,7 @@ def _create_bmesh_element(element_type: str, materials_dict: dict):
     """
     bm = bmesh.new()
     uv_layer = bm.loops.layers.uv.new("UVMap")
-    mat_list = [materials_dict.get(element_type)]
+    mat_list = [m for m in [materials_dict.get(element_type)] if m]
     return bm, uv_layer, mat_list
 
 
@@ -450,7 +450,11 @@ def _add_cube_roof_face_transformed(bm, uv_layer, cx, cy, sx, sy, sz, mat_offset
         loop[uv_layer].uv = uv
 
 def _create_object_from_bm(bm, name, collection, material):
-    """Convert a BMesh to a Blender mesh object, link to collection, tag as fire_maze."""
+    """Convert a BMesh to a Blender mesh object, link to collection, tag as fire_maze.
+
+    NOTE: Takes ownership of the passed BMesh and frees it (bm.free()).
+    Caller must not free bm after calling this function.
+    """
     mesh = bpy.data.meshes.new(name)
     bm.normal_update()
     bm.to_mesh(mesh)
@@ -635,9 +639,9 @@ def _compute_grid_distances(maze_data, wall_mode):
                             if not cells_3d[cz][r + 1][t][1]:
                                 accessible.append((cz, r + 1, t))
                     else:
-                        if not cells_3d[cz][r + 1][2 * theta][1]:
+                        if 2 * theta < N_out and not cells_3d[cz][r + 1][2 * theta][1]:
                             accessible.append((cz, r + 1, 2 * theta))
-                        if not cells_3d[cz][r + 1][2 * theta + 1][1]:
+                        if 2 * theta + 1 < N_out and not cells_3d[cz][r + 1][2 * theta + 1][1]:
                             accessible.append((cz, r + 1, 2 * theta + 1))
                         
             # Stair connections (cz + 1 and cz - 1)

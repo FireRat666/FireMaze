@@ -28,8 +28,10 @@ def _get_polar_neighbors(r: int, theta: int, rings: int, ring_sectors: List[int]
             for t in range(N_out):
                 neighbors.append((r + 1, t))
         else:
-            neighbors.append((r + 1, 2 * theta))
-            neighbors.append((r + 1, 2 * theta + 1))
+            if 2 * theta < N_out:
+                neighbors.append((r + 1, 2 * theta))
+            if 2 * theta + 1 < N_out:
+                neighbors.append((r + 1, 2 * theta + 1))
     return neighbors
 
 
@@ -311,9 +313,9 @@ def _find_shortest_path_polar_2d(maze_data: MazeData, wall_mode: str) -> List:
                         if not cells_2d[r + 1][t][1]:
                             accessible.append((r + 1, t))
                 else:
-                    if not cells_2d[r + 1][2 * theta][1]:
+                    if 2 * theta < N_out and not cells_2d[r + 1][2 * theta][1]:
                         accessible.append((r + 1, 2 * theta))
-                    if not cells_2d[r + 1][2 * theta + 1][1]:
+                    if 2 * theta + 1 < N_out and not cells_2d[r + 1][2 * theta + 1][1]:
                         accessible.append((r + 1, 2 * theta + 1))
         for neighbor in accessible:
             if neighbor not in parent:

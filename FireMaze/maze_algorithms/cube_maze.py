@@ -1,7 +1,7 @@
 """Cube maze algorithm for FireMaze."""
 
 from collections import deque
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from ..maze_data import MazeData, UnionFind
 from ..pathfinder import find_shortest_path
 from ..utils import get_rng
@@ -15,7 +15,7 @@ from .common_helpers import (
 def _generate_cube_maze(
     width: int,
     depth: int,
-    seed: int,
+    seed: Optional[int],
     mode: str,
     emergency_exits: bool,
     algorithm: str,
@@ -165,8 +165,7 @@ def _generate_cube_maze(
             if chosen_dir:
                 ordered_dirs = [chosen_dir] + [d for d in dirs if d != chosen_dir]
             else:
-                random.shuffle(dirs)
-                ordered_dirs = list(dirs)
+                ordered_dirs = random.sample(dirs, len(dirs))
             carved = False
             for dx, dy in ordered_dirs:
                 nx, ny = x + dx, y + dy
@@ -570,8 +569,6 @@ def _generate_cube_maze(
     elif algorithm == 'recursive_division':
         def is_grid_blocked(x, y):
             """Check if the doubled-grid cell (x, y) falls on or adjacent to a blocked sub-cell."""
-            if not blocked:
-                return False
             if x % 2 == 0 and y % 2 == 0:
                 return True
             if x % 2 == 1 and y % 2 == 1:
@@ -619,7 +616,7 @@ def _generate_cube_maze(
                 
                 for x_sub in range(rx, rx + rw):
                     x_actual = 2 * x_sub + 1
-                    if blocked and (blocked[wy_sub][x_sub] or blocked[wy_sub + 1][x_sub]):
+                    if blocked[wy_sub][x_sub] or blocked[wy_sub + 1][x_sub]:
                         cells[wy_actual][x_actual][0] = True
                         cells[wy_actual][x_actual - 1][0] = True
                         cells[wy_actual][x_actual + 1][0] = True
@@ -640,7 +637,7 @@ def _generate_cube_maze(
                 
                 for y_sub in range(ry, ry + rh):
                     y_actual = 2 * y_sub + 1
-                    if blocked and (blocked[y_sub][wx_sub] or blocked[y_sub][wx_sub + 1]):
+                    if blocked[y_sub][wx_sub] or blocked[y_sub][wx_sub + 1]:
                         cells[y_actual][wx_actual][0] = True
                         cells[y_actual - 1][wx_actual][0] = True
                         cells[y_actual + 1][wx_actual][0] = True
@@ -708,7 +705,8 @@ def _generate_cube_maze(
                     carved = True
                     break
             if not carved:
-                active.pop(idx)
+                active[idx] = active[-1]
+                active.pop()
 
     # Add loops directly by carving random standing wall cells in the block grid
     if loop_probability > 0:
@@ -723,7 +721,7 @@ def _generate_cube_maze(
                             cells[y][x][0] = False
 
     # Add isolated walls by placing wall cubes inside floor regions
-    if isolated_wall_prob > 0:
+    if isolated_wall_prob > 0 and width >= 3 and depth >= 3:
         max_isolated = int((width * depth) * isolated_wall_prob * 0.1)
         placed = 0
         for _ in range(max_isolated * 5):
@@ -812,6 +810,22 @@ def _generate_cube_maze(
             for x, y, d in candidates:
                 if carved_count >= count:
                     break
+                if blocked is not None:
+                    if d == 'N' and blocked[sub_h - 1][(x - 1) // 2]:
+                        continue
+                    if d == 'S' and blocked[0][(x - 1) // 2]:
+                        continue
+                    if d == 'E' and blocked[(y - 1) // 2][sub_w - 1]:
+                        continue
+                    if d == 'W' and blocked[(y - 1) // 2][0]:
+                        continue
+                already_used = False
+                for ex, ey, ed in entrance_list + exit_list:
+                    if ex == x and ey == y and ed == d:
+                        already_used = True
+                        break
+                if already_used:
+                    continue
                 cells[y][x][0] = False
                 if d == 'N' and y - 1 >= 0:
                     cells[y - 1][x][0] = False
@@ -929,6 +943,10 @@ def _generate_cube_maze(
             raise ValueError("All candidate exit cells were blocked by mask.")
         maze_data.entrance = entrance_list[0] if entrance_list else None
         maze_data.exits = exit_list
+        
+        # Filter stairs that landed on masked cells
+        stairs_placed = [s for s in stairs_placed if not cells[0][s['y']][s['x']][0]]
+        maze_data.stairs = stairs_placed
     
     maze_data.guide_path = find_shortest_path(maze_data, wall_mode='cube')
     return maze_data

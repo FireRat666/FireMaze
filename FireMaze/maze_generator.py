@@ -5,13 +5,12 @@ generation to modular sub-algorithms.
 """
 
 from typing import List, Tuple, Optional
-from .maze_data import MazeData, UnionFind
-from .pathfinder import find_shortest_path
+from .maze_data import MazeData
+from .pathfinder import find_shortest_path  # re-exported for operators.py; sub-algorithms import directly from pathfinder
 from .maze_algorithms.polar_maze import generate_polar_maze
 from .maze_algorithms.cube_maze import _generate_cube_maze
 from .maze_algorithms.thin_maze import _generate_thin_maze
 from .utils import set_seed
-from .maze_algorithms.common_helpers import _force_cell_open
 
 def generate_maze(
     width: int,
@@ -96,7 +95,7 @@ def generate_maze(
             orientation_bias=orientation_bias, passage_bias=passage_bias,
             eller_merge_prob=eller_merge_prob
         )
-    else:
+    elif wall_mode == 'thin':
         return _generate_thin_maze(
             width=width, depth=depth, seed=seed, mode=mode,
             emergency_exits=emergency_exits, algorithm=algorithm,
@@ -114,3 +113,5 @@ def generate_maze(
             orientation_bias=orientation_bias, passage_bias=passage_bias,
             eller_merge_prob=eller_merge_prob
         )
+    else:
+        raise ValueError(f"Unknown wall_mode: {wall_mode}")

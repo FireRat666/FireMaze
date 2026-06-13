@@ -165,7 +165,7 @@ class VIEW3D_PT_fire_maze_session(bpy.types.Panel):
         row.operator("fire_maze.save_session", text="Save Session...", icon='EXPORT')
         row.operator("fire_maze.load_session", text="Load Session...", icon='IMPORT')
 
-        if getattr(operators, "has_autosave", False) and getattr(operators, "show_recovery_warning", True):
+        if operators.has_autosave() and getattr(operators, "show_recovery_warning", True):
             col.separator(factor=0.5)
             rec_box = col.box()
             rec_box.alert = True

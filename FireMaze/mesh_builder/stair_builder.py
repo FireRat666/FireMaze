@@ -193,7 +193,7 @@ def _build_ramp_1x1(
     for loop, uv in zip(f.loops, [(0, 0), (1, 0), (1, 1)]):
         loop[uv_layer].uv = uv
 
-    # Back face (vertical wall at y = t2)
+    # Front face (vertical wall at y = t2)
     v_back = [bm.verts.new(p_front_bottom_R), bm.verts.new(p_front_bottom_L), bm.verts.new(p_front_top_L), bm.verts.new(p_front_top_R)]
     f_back = bm.faces.new(v_back)
     for loop, uv in zip(f_back.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
