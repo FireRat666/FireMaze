@@ -1628,7 +1628,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                     elif z_hit == floors - 1:
                         if 'exits' not in data_dict or data_dict['exits'] is None:
                             data_dict['exits'] = []
-                        if not any(ex[0] == cx_clamped and ex[1] == cy_clamped for ex in data_dict['exits']):
+                        if not any(ex[0] == cx_clamped and ex[1] == cy_clamped and ex[2] == opened_border[2] for ex in data_dict['exits']):
                             data_dict['exits'].append([cx_clamped, cy_clamped, opened_border[2]])
                             
                 data_dict['cells'] = original_cells
@@ -1829,6 +1829,26 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
             return {'CANCELLED'}
 
         rebuild_maze_from_collection(context, col)
+        try:
+            data = json.loads(col["fire_maze_data"])
+            self._maze_raw = data
+            self.maze_data = MazeData(
+                width=data['width'],
+                depth=data['depth'],
+                cells=data['cells'],
+                entrance=tuple(data['entrance']) if data.get('entrance') else None,
+                exits=[tuple(e) for e in data.get('exits', [])],
+                center=tuple(data['center']),
+                grid_type=data.get('grid_type', 'rect'),
+                polar_rings=data.get('polar_rings', 0),
+                ring_sectors=data.get('ring_sectors', []),
+                floors=data.get('floors', 1),
+                stairs=data.get('stairs', []),
+            )
+            col_floors = self.maze_data.floors
+            props.edit_floor_level = max(0, min(props.edit_floor_level, col_floors - 1))
+        except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
+            logger.debug(f"Failed to reload maze data after rebuild: {e}")
         if props.floors > 1:
             context.workspace.status_text_set(f"FireMaze Editor ({props.floors} floors): Left-click walls to toggle. Shift+click to cycle mesh. Enter/Esc to exit.")
         else:
