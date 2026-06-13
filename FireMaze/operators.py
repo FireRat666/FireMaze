@@ -1768,8 +1768,8 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                             self.maze_data.guide_path = find_shortest_path(self.maze_data, wall_mode=wall_mode)
                             data_dict['guide_path'] = self.maze_data.guide_path
                             
-                            col["fire_maze_data"] = json.dumps(data_dict)
                             from .mesh_builder import rebuild_maze_incrementally
+                            col["fire_maze_data"] = json.dumps(data_dict)
                             rebuild_maze_incrementally(props, self.maze_data, context, col, dirty_cells)
             return {'RUNNING_MODAL'}
 
