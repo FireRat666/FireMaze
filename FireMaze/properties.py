@@ -6,6 +6,7 @@ function docstrings are added here.
 """
 
 import bpy
+import json
 import logging
 
 logger = logging.getLogger(__name__)
@@ -14,7 +15,6 @@ logger = logging.getLogger(__name__)
 def _update_edit_floor_level(self, context):
     """Clamp edit_floor_level when floors change and trigger a rebuild."""
     from .operators import _get_active_maze_collection
-    import json
     col = _get_active_maze_collection(context)
     floors = self.floors
     if col and "fire_maze_data" in col:
@@ -32,6 +32,17 @@ def _update_edit_floor_level(self, context):
         from .operators import rebuild_maze_from_collection
         rebuild_maze_from_collection(context, col)
 
+
+def _clamp_min_room_size(self, context):
+    """Ensure max_room_size is at least min_room_size."""
+    if self.min_room_size > self.max_room_size:
+        self['max_room_size'] = self.min_room_size
+
+
+def _clamp_max_room_size(self, context):
+    """Ensure min_room_size is at most max_room_size."""
+    if self.max_room_size < self.min_room_size:
+        self['min_room_size'] = self.max_room_size
 
 
 class FireMazeProperties(bpy.types.PropertyGroup):
@@ -221,6 +232,13 @@ class FireMazeProperties(bpy.types.PropertyGroup):
                     "Disable to use a single centered custom tile with built-in thickness",
         default=True,
     )
+    clean_wall_corners: bpy.props.BoolProperty(
+        name="Clean Wall Corners",
+        description="Extend thin wall and roof faces at intersections to make corners seamless. "
+                    "Adjusts UV coordinates proportionally to maintain perfect, stretch-free texture tiling. "
+                    "Roof faces will overlap at corners",
+        default=False,
+    )
     custom_roof_mesh: bpy.props.PointerProperty(
         name="Roof Mesh",
         description="Optional custom mesh for roof tiles",
@@ -277,7 +295,7 @@ class FireMazeProperties(bpy.types.PropertyGroup):
         default=2,
         min=2,
         max=20,
-        update=lambda self, ctx: setattr(self, 'max_room_size', max(self.max_room_size, self.min_room_size)),
+        update=_clamp_min_room_size,
     )
     max_room_size: bpy.props.IntProperty(
         name="Max Room Size",
@@ -285,7 +303,7 @@ class FireMazeProperties(bpy.types.PropertyGroup):
         default=4,
         min=2,
         max=20,
-        update=lambda self, ctx: setattr(self, 'min_room_size', min(self.min_room_size, self.max_room_size)),
+        update=_clamp_max_room_size,
     )
 
     # Loops & Layout
