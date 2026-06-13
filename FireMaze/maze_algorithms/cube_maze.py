@@ -4,7 +4,7 @@ from collections import deque
 from typing import List, Tuple, Optional
 from ..maze_data import MazeData, UnionFind
 from ..pathfinder import find_shortest_path
-from ..utils import get_rng
+from ..utils import get_rng, set_seed
 from .common_helpers import (
     _biased_choice,
     _expand_cells_to_3d,
@@ -49,6 +49,7 @@ def _generate_cube_maze(
     wall_mode: str = 'cube',
 ) -> MazeData:
     """Carve a rectangular maze in cube wall mode."""
+    set_seed(seed)
     random = get_rng()
     
     # Grid dimensions for path cells (must be odd coordinates)
@@ -920,20 +921,21 @@ def _generate_cube_maze(
     maze_data.stairs = stairs_placed
     if mask_image:
         blocked = _get_image_mask_data(mask_image, mask_invert, sub_w, sub_h)
-        for y in range(sub_h):
-            for x in range(sub_w):
-                if blocked[y][x]:
-                    # Center cell is a wall
-                    cells[0][2 * y + 1][2 * x + 1][0] = True
-                    for idx in range(1, 7):
-                        cells[0][2 * y + 1][2 * x + 1][idx] = -1
-                    # Neighbors
-                    for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
-                        nx, ny = 2 * x + 1 + dx, 2 * y + 1 + dy
-                        if 0 <= nx < width and 0 <= ny < depth:
-                            cells[0][ny][nx][0] = True
-                            for idx in range(1, 7):
-                                cells[0][ny][nx][idx] = -1
+        for z in range(floors):
+            for y in range(sub_h):
+                for x in range(sub_w):
+                    if blocked[y][x]:
+                        # Center cell is a wall
+                        cells[z][2 * y + 1][2 * x + 1][0] = True
+                        for idx in range(1, 7):
+                            cells[z][2 * y + 1][2 * x + 1][idx] = -1
+                        # Neighbors
+                        for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+                            nx, ny = 2 * x + 1 + dx, 2 * y + 1 + dy
+                            if 0 <= nx < width and 0 <= ny < depth:
+                                cells[z][ny][nx][0] = True
+                                for idx in range(1, 7):
+                                    cells[z][ny][nx][idx] = -1
         # Recompute entrance_list/exit_list and set against final cells state
         entrance_list = [item for item in entrance_list if not cells[0][item[1]][item[0]][0]]
         exit_list = [item for item in exit_list if not cells[0][item[1]][item[0]][0]]

@@ -19,6 +19,7 @@ from .bmesh_utils import (
     _add_horizontal_roof_face_transformed,
     _add_vertical_roof_face_transformed,
     _add_vertical_roof_filler_transformed,
+    _add_horizontal_roof_filler_transformed,
     _build_guide_path,
     _remove_doubles_on_obj,
 )

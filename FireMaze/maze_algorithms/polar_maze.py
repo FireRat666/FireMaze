@@ -52,6 +52,7 @@ def generate_polar_maze(
     if rings <= 0:
         raise ValueError(f"rings must be > 0, got {rings}")
 
+    set_seed(seed)
     random = get_rng()
 
     # Only DFS has a dedicated polar implementation; all other algorithms use a

@@ -6,7 +6,8 @@ import bmesh
 import logging
 from collections import deque
 from mathutils import Vector
-from ..utils import is_valid_ref, _resolve_cells_3d, get_rng
+import random
+from ..utils import is_valid_ref, _resolve_cells_3d, get_rng, get_cell_id
 from .bmesh_utils import _compute_grid_distances, _create_object_from_bm
 from ..pathfinder import _get_polar_neighbors
 
@@ -132,7 +133,7 @@ def _merge_maze_objects(objects, context, name="FireMaze_Merged"):
         return merged_obj
     except Exception as e:
         logger.error(f"Object merging failed: {e}")
-        return objects[0]
+        raise e
 
 def _optimize_coplanar_on_obj(obj):
     """Dissolve coplanar faces on a mesh object to reduce polygon count."""
@@ -216,6 +217,12 @@ def _apply_vertex_painting_on_obj(obj, props, maze_data):
                                     if not cells_3d[z][nr][ntheta][0] or (z, nr, ntheta) in stair_cells:
                                         accessible_count += 1
                         else:
+                            # NOTE: In polar coordinates, angles increase CCW.
+                            # - Clockwise (CW) boundary of cell `theta` is at `theta * alpha_r` (CW wall index `[theta][0]`).
+                            #   It separates cell `theta` from cell `theta - 1`. Hence CW check uses `cells_3d[z][r][theta][0]`.
+                            # - Counter-clockwise (CCW) boundary of cell `theta` is at `(theta + 1) * alpha_r` (which is the next cell's CW wall index `[(theta + 1) % Nr][0]`).
+                            #   It separates cell `theta` from cell `theta + 1`. Hence CCW check uses `cells_3d[z][r][(theta + 1) % Nr][0]`.
+                            # This indexing is correct and matches the traversal logic in pathfinder.py. Do not change.
                             if r >= 1 and (not cells_3d[z][r][theta][0] or (z, r, (theta - 1) % Nr) in stair_cells):
                                 accessible_count += 1
                             if r >= 1 and (not cells_3d[z][r][(theta + 1) % Nr][0] or (z, r, (theta + 1) % Nr) in stair_cells):
@@ -457,7 +464,7 @@ def _apply_vertex_painting_on_obj(obj, props, maze_data):
     obj.data.update()
     bm.free()
 
-def _spawn_decorations(props, maze_data, context, parent_collection):
+def _spawn_decorations(props, maze_data, context, parent_collection, dirty_cells=None):
     """Place torch, chest and door prop objects in the maze based on wall/floor topology and density settings."""
     torch_mesh = props.prop_torch_mesh if is_valid_ref(props.prop_torch_mesh) else None
     chest_mesh = props.prop_chest_mesh if is_valid_ref(props.prop_chest_mesh) else None
@@ -465,7 +472,7 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
 
     if not (torch_mesh or chest_mesh or door_mesh):
         return
- 
+
     # Create or get props collection scoped to the current parent collection
     props_col_name = f"FireMaze_Props_{parent_collection.name}"
     props_col = parent_collection.children.get(props_col_name)
@@ -476,33 +483,38 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
         parent_collection.children.link(props_col)
 
     # Remove existing FireMaze props before repopulating
+    dirty_cell_ids = {get_cell_id(z, y, x) for (z, y, x) in dirty_cells} if dirty_cells else None
+
     for obj in list(props_col.objects):
         if obj.get("fire_maze") is True:
+            if dirty_cell_ids is not None:
+                cell_owner = obj.get("fire_maze_cell")
+                if cell_owner not in dirty_cell_ids:
+                    continue
             data = obj.data
             bpy.data.objects.remove(obj, do_unlink=True)
             if data and data.users == 0:
                 bpy.data.meshes.remove(data)
 
     props_col["fire_maze_data"] = "{}"
- 
+
     ts = props.tile_size
     wh = props.wall_height
     if props.wall_height_tiled:
         wh = ts * props.wall_height_tiles
- 
+
     wall_mode = props.wall_mode
-    rng = get_rng()
 
     cells_3d, floors = _resolve_cells_3d(maze_data.cells)
     resolved_cells = cells_3d[0]
-  
+
     stair_cells = set()
     if chest_mesh:
         from .bmesh_utils import _build_stair_top_bottom_sets
         sb, st = _build_stair_top_bottom_sets(maze_data)
         stair_cells = sb.union(st)
 
-    def place_prop(src_obj, pos, rot_z):
+    def place_prop(src_obj, pos, rot_z, cell_id):
         """Copy a source prop object into the maze collection at the given position and rotation."""
         new_obj = src_obj.copy()
         props_col.objects.link(new_obj)
@@ -510,6 +522,7 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
         new_obj.rotation_euler = Vector((src_obj.rotation_euler.x, src_obj.rotation_euler.y, rot_z))
         new_obj.scale = src_obj.scale
         new_obj["fire_maze"] = True # Mark as fire_maze so it is automatically cleared!
+        new_obj["fire_maze_cell"] = cell_id
 
     if maze_data.grid_type == 'polar':
         rings = maze_data.polar_rings
@@ -527,6 +540,13 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                     Nr = ring_sectors[r]
                     alpha_r = 2 * math.pi / Nr
                     for theta in range(Nr):
+                        cell_id = get_cell_id(z, r, theta)
+                        if dirty_cell_ids is not None and cell_id not in dirty_cell_ids:
+                            continue
+                        global_seed = props.seed if props.seed is not None else 0
+                        cell_seed = global_seed + z * 1000000 + r * 1000 + theta
+                        cell_rng = random.Random(cell_seed)
+
                         r_mid = r * ts
                         theta_mid = (theta + 0.5) * alpha_r
                         
@@ -538,18 +558,18 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                             
                             if this_cell_wall and not cw_wall_cell:
                                 # Torch on CW boundary of this wall cell, facing CW
-                                if rng.random() < density:
+                                if cell_rng.random() < density:
                                     pos_x = r_mid * math.cos(phi_cw) + offset * math.sin(phi_cw)
                                     pos_y = r_mid * math.sin(phi_cw) - offset * math.cos(phi_cw)
                                     pos = (pos_x, pos_y, z * wh + 0.6 * wh)
-                                    place_prop(torch_src, pos, phi_cw - math.pi / 2)
+                                    place_prop(torch_src, pos, phi_cw - math.pi / 2, cell_id)
                             elif not this_cell_wall and cw_wall_cell:
                                 # Torch on CW boundary of open cell, facing CCW/inward
-                                if rng.random() < density:
+                                if cell_rng.random() < density:
                                     pos_x = r_mid * math.cos(phi_cw) - offset * math.sin(phi_cw)
                                     pos_y = r_mid * math.sin(phi_cw) + offset * math.cos(phi_cw)
                                     pos = (pos_x, pos_y, z * wh + 0.6 * wh)
-                                    place_prop(torch_src, pos, phi_cw + math.pi / 2)
+                                    place_prop(torch_src, pos, phi_cw + math.pi / 2, cell_id)
                                     
                             # IN boundary check
                             N_in = ring_sectors[r - 1]
@@ -565,37 +585,37 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                             
                             if this_cell_wall and not in_wall_cell:
                                 # Torch on IN boundary of this wall cell, facing IN
-                                if rng.random() < density:
+                                if cell_rng.random() < density:
                                     pos_x = (r_in - offset) * math.cos(theta_mid)
                                     pos_y = (r_in - offset) * math.sin(theta_mid)
                                     pos = (pos_x, pos_y, z * wh + 0.6 * wh)
-                                    place_prop(torch_src, pos, theta_mid + math.pi)
+                                    place_prop(torch_src, pos, theta_mid + math.pi, cell_id)
                             elif not this_cell_wall and in_wall_cell:
                                 # Torch on IN boundary of open cell, facing OUT
-                                if rng.random() < density:
+                                if cell_rng.random() < density:
                                     pos_x = (r_in + offset) * math.cos(theta_mid)
                                     pos_y = (r_in + offset) * math.sin(theta_mid)
                                     pos = (pos_x, pos_y, z * wh + 0.6 * wh)
-                                    place_prop(torch_src, pos, theta_mid)
+                                    place_prop(torch_src, pos, theta_mid, cell_id)
                         else:
                             cw_wall = resolved_cells[r][theta][0]
                             in_wall = resolved_cells[r][theta][1]
                             
                             # Clockwise wall torch
-                            if cw_wall and rng.random() < density:
+                            if cw_wall and cell_rng.random() < density:
                                 phi_cw = (theta + 1) * alpha_r
                                 pos_x = r_mid * math.cos(phi_cw) + offset * math.sin(phi_cw)
                                 pos_y = r_mid * math.sin(phi_cw) - offset * math.cos(phi_cw)
                                 pos = (pos_x, pos_y, z * wh + 0.6 * wh)
-                                place_prop(torch_src, pos, phi_cw - math.pi / 2)
+                                place_prop(torch_src, pos, phi_cw - math.pi / 2, cell_id)
                                 
                             # Inward wall torch
-                            if in_wall and rng.random() < density:
+                            if in_wall and cell_rng.random() < density:
                                 r_in = (r - 0.5) * ts
                                 pos_x = (r_in + offset) * math.cos(theta_mid)
                                 pos_y = (r_in + offset) * math.sin(theta_mid)
                                 pos = (pos_x, pos_y, z * wh + 0.6 * wh)
-                                place_prop(torch_src, pos, theta_mid)
+                                place_prop(torch_src, pos, theta_mid, cell_id)
 
                         # Outer boundary torch
                         if r == rings - 1:
@@ -611,12 +631,12 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                                         if ex_r == r and ex_theta == theta:
                                             is_exit = True
                                             break
-                                if not is_entrance and not is_exit and rng.random() < density:
+                                if not is_entrance and not is_exit and cell_rng.random() < density:
                                     r_out = (r + 0.5) * ts
                                     pos_x = (r_out - offset) * math.cos(theta_mid)
                                     pos_y = (r_out - offset) * math.sin(theta_mid)
                                     pos = (pos_x, pos_y, z * wh + 0.6 * wh)
-                                    place_prop(torch_src, pos, theta_mid + math.pi)
+                                    place_prop(torch_src, pos, theta_mid + math.pi, cell_id)
 
             # 2. Chests
             if chest_mesh:
@@ -626,6 +646,15 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                 
                 for r in range(rings):
                     for theta in range(ring_sectors[r]):
+                        if (z, r, theta) in stair_cells:
+                            continue
+                        cell_id = get_cell_id(z, r, theta)
+                        if dirty_cell_ids is not None and cell_id not in dirty_cell_ids:
+                            continue
+                        global_seed = props.seed if props.seed is not None else 0
+                        cell_seed = global_seed + z * 1000000 + r * 1000 + theta
+                        cell_rng = random.Random(cell_seed)
+
                         Nr = ring_sectors[r]
                         accessible = []
                         
@@ -660,6 +689,12 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                                         if not resolved_cells[r + 1][2 * theta + 1][0] or (z, r + 1, 2 * theta + 1) in stair_cells:
                                             accessible.append(('OUT', (r + 1, 2 * theta + 1)))
                         else:
+                            # NOTE: In polar coordinates, angles increase CCW.
+                            # - Clockwise (CW) boundary of cell `theta` is at `theta * alpha_r` (CW wall index `[theta][0]`).
+                            #   It separates cell `theta` from cell `theta - 1`. Hence CW check uses `resolved_cells[r][theta][0]`.
+                            # - Counter-clockwise (CCW) boundary of cell `theta` is at `(theta + 1) * alpha_r` (next cell's CW wall index `[(theta + 1) % Nr][0]`).
+                            #   It separates cell `theta` from cell `theta + 1`. Hence CCW check uses `resolved_cells[r][(theta + 1) % Nr][0]`.
+                            # This indexing is correct and aligns with pathfinder.py and wall building. Do not change.
                             if r >= 1 and (not resolved_cells[r][(theta + 1) % Nr][0] or (z, r, (theta + 1) % Nr) in stair_cells):
                                 accessible.append(('CCW', (r, (theta + 1) % Nr)))
                             if r >= 1 and (not resolved_cells[r][theta][0] or (z, r, (theta - 1) % Nr) in stair_cells):
@@ -696,7 +731,7 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                                     if (r, theta) == (ex_r, ex_theta):
                                         is_ent_or_exit = True
                             
-                            if not is_ent_or_exit and rng.random() < density:
+                            if not is_ent_or_exit and cell_rng.random() < density:
                                 direction = accessible[0][0]
                                 r_mid = r * ts
                                 alpha_r = 2 * math.pi / Nr
@@ -705,19 +740,19 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                                 if direction == 'IN':
                                     pos_x = (r_mid + chest_offset) * math.cos(theta_mid)
                                     pos_y = (r_mid + chest_offset) * math.sin(theta_mid)
-                                    place_prop(chest_src, (pos_x, pos_y, z * wh), theta_mid + math.pi)
+                                    place_prop(chest_src, (pos_x, pos_y, z * wh), theta_mid + math.pi, cell_id)
                                 elif direction == 'OUT':
                                     pos_x = (r_mid - chest_offset) * math.cos(theta_mid)
                                     pos_y = (r_mid - chest_offset) * math.sin(theta_mid)
-                                    place_prop(chest_src, (pos_x, pos_y, z * wh), theta_mid)
+                                    place_prop(chest_src, (pos_x, pos_y, z * wh), theta_mid, cell_id)
                                 elif direction == 'CW':
                                     pos_x = r_mid * math.cos(theta_mid - alpha_r / 4)
                                     pos_y = r_mid * math.sin(theta_mid - alpha_r / 4)
-                                    place_prop(chest_src, (pos_x, pos_y, z * wh), theta_mid - math.pi / 2)
+                                    place_prop(chest_src, (pos_x, pos_y, z * wh), theta_mid - math.pi / 2, cell_id)
                                 else: # CCW
                                     pos_x = r_mid * math.cos(theta_mid + alpha_r / 4)
                                     pos_y = r_mid * math.sin(theta_mid + alpha_r / 4)
-                                    place_prop(chest_src, (pos_x, pos_y, z * wh), theta_mid + math.pi / 2)
+                                    place_prop(chest_src, (pos_x, pos_y, z * wh), theta_mid + math.pi / 2, cell_id)
 
             # 3. Doors
             if door_mesh:
@@ -725,26 +760,30 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                 
                 if z == 0 and maze_data.entrance:
                     er, etheta, _ = maze_data.entrance
-                    eNr = ring_sectors[er]
-                    ealpha = 2 * math.pi / eNr
-                    etheta_mid = (etheta + 0.5) * ealpha
-                    r_door = (er + 0.5) * ts
-                    pos_x = r_door * math.cos(etheta_mid)
-                    pos_y = r_door * math.sin(etheta_mid)
-                    place_prop(door_src, (pos_x, pos_y, z * wh), etheta_mid)
+                    cell_id = get_cell_id(z, er, etheta)
+                    if dirty_cell_ids is None or cell_id in dirty_cell_ids:
+                        eNr = ring_sectors[er]
+                        ealpha = 2 * math.pi / eNr
+                        etheta_mid = (etheta + 0.5) * ealpha
+                        r_door = (er + 0.5) * ts
+                        pos_x = r_door * math.cos(etheta_mid)
+                        pos_y = r_door * math.sin(etheta_mid)
+                        place_prop(door_src, (pos_x, pos_y, z * wh), etheta_mid, cell_id)
                     
                 if z == floors - 1 and maze_data.exits:
                     for ex_r, ex_theta, ex_side in maze_data.exits:
-                        exNr = ring_sectors[ex_r]
-                        exalpha = 2 * math.pi / exNr
-                        extheta_mid = (ex_theta + 0.5) * exalpha
-                        if ex_side == 'CENTER':
-                            r_door = 0.5 * ts
-                        else:
-                            r_door = (ex_r + 0.5) * ts
-                        pos_x = r_door * math.cos(extheta_mid)
-                        pos_y = r_door * math.sin(extheta_mid)
-                        place_prop(door_src, (pos_x, pos_y, z * wh), extheta_mid)
+                        cell_id = get_cell_id(z, ex_r, ex_theta)
+                        if dirty_cell_ids is None or cell_id in dirty_cell_ids:
+                            exNr = ring_sectors[ex_r]
+                            exalpha = 2 * math.pi / exNr
+                            extheta_mid = (ex_theta + 0.5) * exalpha
+                            if ex_side == 'CENTER':
+                                r_door = 0.5 * ts
+                            else:
+                                r_door = (ex_r + 0.5) * ts
+                            pos_x = r_door * math.cos(extheta_mid)
+                            pos_y = r_door * math.sin(extheta_mid)
+                            place_prop(door_src, (pos_x, pos_y, z * wh), extheta_mid, cell_id)
         return
 
     for z in range(floors):
@@ -757,46 +796,53 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
             
             for y in range(maze_data.depth):
                 for x in range(maze_data.width):
+                    cell_id = get_cell_id(z, y, x)
+                    if dirty_cell_ids is not None and cell_id not in dirty_cell_ids:
+                        continue
+                    global_seed = props.seed if props.seed is not None else 0
+                    cell_seed = global_seed + z * 1000000 + y * 1000 + x
+                    cell_rng = random.Random(cell_seed)
+
                     if wall_mode == 'thin':
                         c = resolved_cells[y][x]
                         # North wall
-                        if c[0] and rng.random() < density:
+                        if c[0] and cell_rng.random() < density:
                             pos = (x * ts + ts/2, (y + 1) * ts - offset, z * wh + 0.6 * wh)
-                            place_prop(torch_src, pos, math.pi)
+                            place_prop(torch_src, pos, math.pi, cell_id)
                         # South wall
-                        if c[1] and rng.random() < density:
+                        if c[1] and cell_rng.random() < density:
                             pos = (x * ts + ts/2, y * ts + offset, z * wh + 0.6 * wh)
-                            place_prop(torch_src, pos, 0.0)
+                            place_prop(torch_src, pos, 0.0, cell_id)
                         # East wall
-                        if c[2] and rng.random() < density:
+                        if c[2] and cell_rng.random() < density:
                             pos = ((x + 1) * ts - offset, y * ts + ts/2, z * wh + 0.6 * wh)
-                            place_prop(torch_src, pos, math.pi / 2)
+                            place_prop(torch_src, pos, math.pi / 2, cell_id)
                         # West wall
-                        if c[3] and rng.random() < density:
+                        if c[3] and cell_rng.random() < density:
                             pos = (x * ts + offset, y * ts + ts/2, z * wh + 0.6 * wh)
-                            place_prop(torch_src, pos, -math.pi / 2)
+                            place_prop(torch_src, pos, -math.pi / 2, cell_id)
                     else: # cube
                         if resolved_cells[y][x][0]: # wall cube
                             # North
                             if y + 1 < maze_data.depth and not resolved_cells[y+1][x][0]:
-                                if rng.random() < density:
+                                if cell_rng.random() < density:
                                     pos = (x * ts + ts/2, (y + 1) * ts + offset, z * wh + 0.6 * wh)
-                                    place_prop(torch_src, pos, 0.0)
+                                    place_prop(torch_src, pos, 0.0, cell_id)
                             # South
                             if y - 1 >= 0 and not resolved_cells[y-1][x][0]:
-                                if rng.random() < density:
+                                if cell_rng.random() < density:
                                     pos = (x * ts + ts/2, y * ts - offset, z * wh + 0.6 * wh)
-                                    place_prop(torch_src, pos, math.pi)
+                                    place_prop(torch_src, pos, math.pi, cell_id)
                             # East
                             if x + 1 < maze_data.width and not resolved_cells[y][x+1][0]:
-                                if rng.random() < density:
+                                if cell_rng.random() < density:
                                     pos = ((x + 1) * ts + offset, y * ts + ts/2, z * wh + 0.6 * wh)
-                                    place_prop(torch_src, pos, math.pi / 2)
+                                    place_prop(torch_src, pos, math.pi / 2, cell_id)
                             # West
                             if x - 1 >= 0 and not resolved_cells[y][x-1][0]:
-                                if rng.random() < density:
+                                if cell_rng.random() < density:
                                     pos = (x * ts - offset, y * ts + ts/2, z * wh + 0.6 * wh)
-                                    place_prop(torch_src, pos, -math.pi / 2)
+                                    place_prop(torch_src, pos, -math.pi / 2, cell_id)
 
         # 2. Chests (Dead-Ends)
         if chest_mesh:
@@ -806,6 +852,15 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
             
             for y in range(maze_data.depth):
                 for x in range(maze_data.width):
+                    if (z, y, x) in stair_cells:
+                        continue
+                    cell_id = get_cell_id(z, y, x)
+                    if dirty_cell_ids is not None and cell_id not in dirty_cell_ids:
+                        continue
+                    global_seed = props.seed if props.seed is not None else 0
+                    cell_seed = global_seed + z * 1000000 + y * 1000 + x
+                    cell_rng = random.Random(cell_seed)
+
                     is_dead = False
                     open_dir = None
                     
@@ -842,48 +897,52 @@ def _spawn_decorations(props, maze_data, context, parent_collection):
                                 if (x, y) == (ex_x, ex_y):
                                     is_ent_or_exit = True
                         
-                        if not is_ent_or_exit and rng.random() < density:
+                        if not is_ent_or_exit and cell_rng.random() < density:
                             if open_dir == 'N':
                                 pos = (x * ts + ts/2, y * ts + chest_offset, z * wh)
-                                place_prop(chest_src, pos, 0.0)
+                                place_prop(chest_src, pos, 0.0, cell_id)
                             elif open_dir == 'S':
                                 pos = (x * ts + ts/2, (y + 1) * ts - chest_offset, z * wh)
-                                place_prop(chest_src, pos, math.pi)
+                                place_prop(chest_src, pos, math.pi, cell_id)
                             elif open_dir == 'E':
                                 pos = (x * ts + chest_offset, y * ts + ts/2, z * wh)
-                                place_prop(chest_src, pos, math.pi / 2)
+                                place_prop(chest_src, pos, math.pi / 2, cell_id)
                             elif open_dir == 'W':
                                 pos = ((x + 1) * ts - chest_offset, y * ts + ts/2, z * wh)
-                                place_prop(chest_src, pos, -math.pi / 2)
+                                place_prop(chest_src, pos, -math.pi / 2, cell_id)
 
         # 3. Doors (Entrance / Exits)
         if door_mesh:
             door_src = door_mesh
             if z == 0 and maze_data.entrance:
                 ex, ey, side = maze_data.entrance
-                if side == 'N':
-                    pos = (ex * ts + ts/2, (ey + 1) * ts, z * wh)
-                    place_prop(door_src, pos, 0.0)
-                elif side == 'S':
-                    pos = (ex * ts + ts/2, ey * ts, z * wh)
-                    place_prop(door_src, pos, 0.0)
-                elif side == 'E':
-                    pos = ((ex + 1) * ts, ey * ts + ts/2, z * wh)
-                    place_prop(door_src, pos, math.pi / 2)
-                elif side == 'W':
-                    pos = (ex * ts, ey * ts + ts/2, z * wh)
-                    place_prop(door_src, pos, -math.pi / 2)
-            if z == floors - 1 and maze_data.exits:
-                for ex, ey, side in maze_data.exits:
+                cell_id = get_cell_id(z, ex, ey)
+                if dirty_cell_ids is None or cell_id in dirty_cell_ids:
                     if side == 'N':
                         pos = (ex * ts + ts/2, (ey + 1) * ts, z * wh)
-                        place_prop(door_src, pos, 0.0)
+                        place_prop(door_src, pos, 0.0, cell_id)
                     elif side == 'S':
                         pos = (ex * ts + ts/2, ey * ts, z * wh)
-                        place_prop(door_src, pos, 0.0)
+                        place_prop(door_src, pos, 0.0, cell_id)
                     elif side == 'E':
                         pos = ((ex + 1) * ts, ey * ts + ts/2, z * wh)
-                        place_prop(door_src, pos, math.pi / 2)
+                        place_prop(door_src, pos, math.pi / 2, cell_id)
                     elif side == 'W':
                         pos = (ex * ts, ey * ts + ts/2, z * wh)
-                        place_prop(door_src, pos, -math.pi / 2)
+                        place_prop(door_src, pos, -math.pi / 2, cell_id)
+            if z == floors - 1 and maze_data.exits:
+                for ex, ey, side in maze_data.exits:
+                    cell_id = get_cell_id(z, ex, ey)
+                    if dirty_cell_ids is None or cell_id in dirty_cell_ids:
+                        if side == 'N':
+                            pos = (ex * ts + ts/2, (ey + 1) * ts, z * wh)
+                            place_prop(door_src, pos, 0.0, cell_id)
+                        elif side == 'S':
+                            pos = (ex * ts + ts/2, ey * ts, z * wh)
+                            place_prop(door_src, pos, 0.0, cell_id)
+                        elif side == 'E':
+                            pos = ((ex + 1) * ts, ey * ts + ts/2, z * wh)
+                            place_prop(door_src, pos, math.pi / 2, cell_id)
+                        elif side == 'W':
+                            pos = (ex * ts, ey * ts + ts/2, z * wh)
+                            place_prop(door_src, pos, -math.pi / 2, cell_id)

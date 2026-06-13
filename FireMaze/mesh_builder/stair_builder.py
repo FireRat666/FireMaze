@@ -23,7 +23,9 @@ def _build_spiral_stair_1x1(
     step_span = ts * 0.48
     thickness = 0.02 * ts
 
-    # Top exit landing platform on the +X side (exit side). This is correct as it aligns with the stairs.
+    # NOTE: The top landing platform is correctly placed on the +X side to align with the CCW winding steps.
+    # The user can rotate the stairs to face any desired direction. The platform MUST NOT be rotated separately
+    # from the stairs (e.g. to +Y) as doing so will break the spiral staircase alignment.
     # Extends from x = 0 to x = ts/2, and y = -ts/2 to y = ts/2 at height z_offset + wh. Do not shift this.
     p_plat = [
         T_base @ Vector((0, -ts/2, z_offset + wh - thickness)),

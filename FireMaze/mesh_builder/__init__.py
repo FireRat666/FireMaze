@@ -122,6 +122,20 @@ def _rebuild_maze_incrementally_impl(
         if _find_role_object(collection, "FireMaze_Merged"):
             trigger_full_rebuild = True
             
+    if not trigger_full_rebuild:
+        walls_exist = _find_role_object(collection, "FireMaze_Walls") is not None
+        caps_exist = _find_role_object(collection, "FireMaze_WallEndCaps") is not None
+        if props.wall_mode == 'thin':
+            if props.single_wall_object:
+                if caps_exist:
+                    trigger_full_rebuild = True
+            else:
+                if walls_exist and not caps_exist:
+                    trigger_full_rebuild = True
+        elif props.wall_mode == 'cube':
+            if caps_exist:
+                trigger_full_rebuild = True
+            
     if trigger_full_rebuild:
         import json
         data_dict = {}
@@ -185,6 +199,9 @@ def _rebuild_maze_incrementally_impl(
         
         bm.to_mesh(floor_obj.data)
         bm.free()
+        floor_obj.data.materials.clear()
+        for mat in materials:
+            floor_obj.data.materials.append(mat)
         floor_obj.data.update()
     else:
         if maze_data.grid_type == 'polar':
@@ -263,10 +280,16 @@ def _rebuild_maze_incrementally_impl(
     if wall_obj and bm_wall:
         bm_wall.to_mesh(wall_obj.data)
         bm_wall.free()
+        wall_obj.data.materials.clear()
+        for mat in wall_materials:
+            wall_obj.data.materials.append(mat)
         wall_obj.data.update()
     if cap_obj and bm_cap:
         bm_cap.to_mesh(cap_obj.data)
         bm_cap.free()
+        cap_obj.data.materials.clear()
+        for mat in cap_materials:
+            cap_obj.data.materials.append(mat)
         cap_obj.data.update()
         
     # Roof
@@ -301,6 +324,9 @@ def _rebuild_maze_incrementally_impl(
                 
         bm.to_mesh(roof_obj.data)
         bm.free()
+        roof_obj.data.materials.clear()
+        for mat in materials:
+            roof_obj.data.materials.append(mat)
         roof_obj.data.update()
     else:
         if maze_data.grid_type == 'polar':
@@ -342,6 +368,9 @@ def _rebuild_maze_incrementally_impl(
             
         bm.to_mesh(stair_obj.data)
         bm.free()
+        stair_obj.data.materials.clear()
+        for mat in materials:
+            stair_obj.data.materials.append(mat)
         stair_obj.data.update()
     else:
         if maze_data.grid_type == 'polar':

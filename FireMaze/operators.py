@@ -62,7 +62,8 @@ PROP_NAMES = [
     "vertex_paint_mode", "vertex_paint_intensity", "prop_torch_density", "prop_chest_density",
     "mask_invert", "thin_wall_double_sided", "clean_wall_corners", "fire_maze_collection_name",
     "floors", "stair_footprint", "stair_style", "stair_direction", "edit_floor_level",
-    "stair_count", "edit_tool", "edit_roof"
+    "stair_count", "edit_tool", "edit_roof",
+    "selection_bias", "straightness", "direction_bias", "east_bias", "orientation_bias", "passage_bias", "eller_merge_prob", "radial_bias"
 ]
 
 POINTER_PROPS = [
@@ -282,11 +283,13 @@ def save_autosave(context):
 
         def poll_autosave_timer():
             """Unregister timer once autosave completes (success or error)."""
+            global _has_autosave_cached
             if autosave_status[0] is not None:
+                if autosave_status[0] == 'success':
+                    _has_autosave_cached = True
                 return None
             return 0.1
 
-        _has_autosave_cached = True
         bpy.app.timers.register(poll_autosave_timer)
         threading.Thread(target=write_worker, args=(autosave_path, payload_str, autosave_status), daemon=True).start()
     except Exception as e:
@@ -333,6 +336,17 @@ def rebuild_maze_from_collection(context, col):
     stairs = data_dict.get('stairs', [])
     stair_count = data_dict.get('stair_count', props.stair_count)
     props.stair_count = stair_count
+
+    if grid_type == 'polar':
+        if not isinstance(polar_rings, int) or polar_rings <= 0:
+            logger.error("rebuild_maze_from_collection: invalid polar_rings — aborting rebuild")
+            return
+        if not isinstance(ring_sectors, (list, tuple)) or len(ring_sectors) < polar_rings:
+            logger.error("rebuild_maze_from_collection: invalid ring_sectors — aborting rebuild")
+            return
+        if not all(isinstance(s, int) and s > 0 for s in ring_sectors[:polar_rings]):
+            logger.error("rebuild_maze_from_collection: invalid sector counts in ring_sectors — aborting rebuild")
+            return
 
     required_keys = {'width', 'depth', 'cells', 'center'}
     missing = [k for k in required_keys if k not in data_dict]
@@ -626,6 +640,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
 
         # Clean exit if toggled off by another button click
         if not props.is_editing:
+            delete_edit_helper()
             context.workspace.status_text_set(None)
             set_other_mazes_visibility(context, True)
             col = _get_active_maze_collection(context)
@@ -1194,10 +1209,14 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                             is_current_entrance = True
                         
                         if is_current_entrance:
+                            self._old_entrance_dirty = (r_idx, theta_out)
                             data_dict['entrance'] = None
                             rebuilt_text = "entrance wall (closed)"
                             modified = True
                         else:
+                            if entrance_val and len(entrance_val) >= 2:
+                                old_r, old_tt = entrance_val[0], entrance_val[1]
+                                self._old_entrance_dirty = (old_r, old_tt)
                             data_dict['entrance'] = [r_idx, theta_out, 'OUT']
                             rebuilt_text = "entrance wall (moved)"
                             modified = True
@@ -1260,6 +1279,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
             if getattr(self, "_old_entrance_dirty", None) is not None:
                 old_r, old_tt = self._old_entrance_dirty
                 add_overlapping_dirty(z_hit, old_r, old_tt, dirty_cells)
+                self._old_entrance_dirty = None
             
             return dirty_cells
         return None

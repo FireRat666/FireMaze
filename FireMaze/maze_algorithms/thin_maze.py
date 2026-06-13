@@ -3,7 +3,7 @@
 from typing import List, Tuple, Optional
 from ..maze_data import MazeData, UnionFind
 from ..pathfinder import find_shortest_path
-from ..utils import get_rng
+from ..utils import get_rng, set_seed
 from .common_helpers import (
     _biased_choice,
     _expand_cells_to_3d,
@@ -48,6 +48,7 @@ def _generate_thin_maze(
     wall_mode: str = 'thin',
 ) -> MazeData:
     """Carve a rectangular maze in thin wall mode."""
+    set_seed(seed)
     random = get_rng()
 
     # Thin wall mode
@@ -496,9 +497,21 @@ def _generate_thin_maze(
         sx, sy = start_cell
         mark_visited(sx, sy)
         
+        # Find connected component of unblocked cells reachable from start
+        from collections import deque
+        component = {(sx, sy)}
+        q = deque([(sx, sy)])
+        while q:
+            qx, qy = q.popleft()
+            for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+                nx, ny = qx + dx, qy + dy
+                if 0 <= nx < width and 0 <= ny < depth and not (blocked and blocked[ny][nx]) and (nx, ny) not in component:
+                    component.add((nx, ny))
+                    q.append((nx, ny))
+        
         for y in range(depth):
             for x in range(width):
-                if not visited[y][x]:
+                if not visited[y][x] and (x, y) in component:
                     unvisited_list.append((x, y))
         
         while unvisited_list:
@@ -840,20 +853,21 @@ def _generate_thin_maze(
     maze_data.floors = floors
     maze_data.stairs = stairs_placed
     if mask_image:
-        for y in range(depth):
-            for x in range(width):
-                if blocked[y][x]:
-                    cells[0][y][x][8] = -1
-                    cells[0][y][x][9] = -1
-                    
-                    if y + 1 < depth and not blocked[y+1][x]:
-                        cells[0][y+1][x][1] = True
-                    if y - 1 >= 0 and not blocked[y-1][x]:
-                        cells[0][y-1][x][0] = True
-                    if x + 1 < width and not blocked[y][x+1]:
-                        cells[0][y][x+1][3] = True
-                    if x - 1 >= 0 and not blocked[y][x-1]:
-                        cells[0][y][x-1][2] = True
+        for z in range(floors):
+            for y in range(depth):
+                for x in range(width):
+                    if blocked[y][x]:
+                        cells[z][y][x][8] = -1
+                        cells[z][y][x][9] = -1
+                        
+                        if y + 1 < depth and not blocked[y+1][x]:
+                            cells[z][y+1][x][1] = True
+                        if y - 1 >= 0 and not blocked[y-1][x]:
+                            cells[z][y-1][x][0] = True
+                        if x + 1 < width and not blocked[y][x+1]:
+                            cells[z][y][x+1][3] = True
+                        if x - 1 >= 0 and not blocked[y][x-1]:
+                            cells[z][y][x-1][2] = True
         # Filter entrances and exits to exclude masked cells
         entrance_list = [item for item in entrance_list if not blocked[item[1]][item[0]]]
         exit_list = [item for item in exit_list if not blocked[item[1]][item[0]]]
