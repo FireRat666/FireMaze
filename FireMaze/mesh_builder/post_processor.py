@@ -324,7 +324,7 @@ def _apply_vertex_painting_on_obj(obj, props, maze_data):
                     gcy_world = gr_mid * math.sin(gtheta_mid)
             else:
                 # rect coordinate (last two values)
-                gcx, gcy = coord[-2], coord[-1]
+                gcx, gcy = coord[-1], coord[-2]
                 gcx_world = gcx * ts + ts / 2
                 gcy_world = gcy * ts + ts / 2
             guide_world_coords.append((gz_c, gcx_world, gcy_world))

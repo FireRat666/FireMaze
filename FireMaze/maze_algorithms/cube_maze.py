@@ -10,6 +10,8 @@ from .common_helpers import (
     _expand_cells_to_3d,
     _get_image_mask_data,
     _get_start_cell,
+    _merge_shape_mask,
+    _get_shape_boundary_candidates,
 )
 
 def _generate_cube_maze(
@@ -47,6 +49,7 @@ def _generate_cube_maze(
     passage_bias: float = 0.5,
     eller_merge_prob: float = 0.5,
     wall_mode: str = 'cube',
+    shape_blocked = None,
 ) -> MazeData:
     """Carve a rectangular maze in cube wall mode."""
     set_seed(seed)
@@ -61,6 +64,8 @@ def _generate_cube_maze(
     # cells[y][x] = [is_wall, wall_n_index, wall_s_index, wall_e_index, wall_w_index, floor_index, roof_index]
     cells = [[[True, -1, -1, -1, -1, -1, -1] for _ in range(width)] for _ in range(depth)]
     blocked = _get_image_mask_data(mask_image, mask_invert, sub_w, sub_h)
+    if shape_blocked is not None:
+        blocked = _merge_shape_mask(blocked, shape_blocked)
 
     # Determine Rooms on the W x H sub-grid
     rooms = []
@@ -573,21 +578,28 @@ def _generate_cube_maze(
             if x % 2 == 0 and y % 2 == 0:
                 return True
             if x % 2 == 1 and y % 2 == 1:
-                return blocked[(y - 1) // 2][(x - 1) // 2]
+                sy, sx = (y - 1) // 2, (x - 1) // 2
+                if 0 <= sy < sub_h and 0 <= sx < sub_w:
+                    return blocked[sy][sx]
+                return True
             if x % 2 == 0:
                 y_sub = (y - 1) // 2
                 xl = (x // 2) - 1
                 xr = x // 2
-                l_blocked = blocked[y_sub][xl] if (0 <= xl < sub_w) else True
-                r_blocked = blocked[y_sub][xr] if (0 <= xr < sub_w) else True
-                return l_blocked or r_blocked
+                if 0 <= y_sub < sub_h:
+                    l_blocked = blocked[y_sub][xl] if (0 <= xl < sub_w) else True
+                    r_blocked = blocked[y_sub][xr] if (0 <= xr < sub_w) else True
+                    return l_blocked or r_blocked
+                return True
             if y % 2 == 0:
                 x_sub = (x - 1) // 2
                 yb = (y // 2) - 1
                 ya = y // 2
-                b_blocked = blocked[yb][x_sub] if (0 <= yb < sub_h) else True
-                a_blocked = blocked[ya][x_sub] if (0 <= ya < sub_h) else True
-                return b_blocked or a_blocked
+                if 0 <= x_sub < sub_w:
+                    b_blocked = blocked[yb][x_sub] if (0 <= yb < sub_h) else True
+                    a_blocked = blocked[ya][x_sub] if (0 <= ya < sub_h) else True
+                    return b_blocked or a_blocked
+                return True
             return False
 
         for y in range(depth):
@@ -774,6 +786,35 @@ def _generate_cube_maze(
                         continue
                     candidates.append((0, y, 'W'))
 
+        # When a shape mask is active, add shape boundary cells as candidates
+        # so entrances can be placed on the shape contour
+        if shape_blocked is not None:
+            sub_candidates = _get_shape_boundary_candidates(blocked, sub_w, sub_h)
+            shape_candidates = []
+            for sx, sy, d in sub_candidates:
+                if side == 'ANY' or d == side:
+                    if d == 'N':
+                        x = 2 * sx + 1
+                        y = 2 * sy + 2
+                    elif d == 'S':
+                        x = 2 * sx + 1
+                        y = 2 * sy
+                    elif d == 'E':
+                        x = 2 * sx + 2
+                        y = 2 * sy + 1
+                    elif d == 'W':
+                        x = 2 * sx
+                        y = 2 * sy + 1
+                    else:
+                        continue
+                    shape_candidates.append((x, y, d))
+
+            existing = {(x, y, d) for x, y, d in candidates}
+            for x, y, d in shape_candidates:
+                if 0 <= x < width and 0 <= y < depth:
+                    if (x, y, d) not in existing:
+                        candidates.append((x, y, d))
+
         random.shuffle(candidates)
         carved_count = 0
         for x, y, d in candidates:
@@ -812,14 +853,19 @@ def _generate_cube_maze(
                 if carved_count >= count:
                     break
                 if blocked is not None:
-                    if d == 'N' and blocked[sub_h - 1][(x - 1) // 2]:
+                    if d == 'N':
+                        sx, sy = (x - 1) // 2, (y - 2) // 2
+                    elif d == 'S':
+                        sx, sy = (x - 1) // 2, y // 2
+                    elif d == 'E':
+                        sx, sy = (x - 2) // 2, (y - 1) // 2
+                    elif d == 'W':
+                        sx, sy = x // 2, (y - 1) // 2
+                    else:
                         continue
-                    if d == 'S' and blocked[0][(x - 1) // 2]:
-                        continue
-                    if d == 'E' and blocked[(y - 1) // 2][sub_w - 1]:
-                        continue
-                    if d == 'W' and blocked[(y - 1) // 2][0]:
-                        continue
+                    if 0 <= sx < sub_w and 0 <= sy < sub_h:
+                        if blocked[sy][sx]:
+                            continue
                 already_used = False
                 for ex, ey, ed in entrance_list + exit_list:
                     if ex == x and ey == y and ed == d:
@@ -886,7 +932,8 @@ def _generate_cube_maze(
         cells, stairs_placed = _expand_cells_to_3d(
             cells, width, depth, floors, wall_mode,
             stair_count=stair_count, stair_footprint=stair_footprint,
-            stair_style=stair_style, stair_direction=stair_direction
+            stair_style=stair_style, stair_direction=stair_direction,
+            blocked=blocked
         )
         # Close cloned entrance/exit openings on non-applicable floors
         for z in range(floors):
@@ -919,8 +966,32 @@ def _generate_cube_maze(
     maze_data = MazeData(width, depth, cells, main_entrance, main_exits, center)
     maze_data.floors = floors
     maze_data.stairs = stairs_placed
-    if mask_image:
+    if mask_image or shape_blocked is not None:
         for z in range(floors):
+            open_cells = set()
+            if z == 0 and main_entrance:
+                ex, ey, ed = main_entrance
+                open_cells.add((ex, ey))
+                if ed == 'N':
+                    open_cells.add((ex, ey - 1))
+                elif ed == 'S':
+                    open_cells.add((ex, ey + 1))
+                elif ed == 'E':
+                    open_cells.add((ex - 1, ey))
+                elif ed == 'W':
+                    open_cells.add((ex + 1, ey))
+            if z == floors - 1 and main_exits:
+                for ex, ey, ed in main_exits:
+                    open_cells.add((ex, ey))
+                    if ed == 'N':
+                        open_cells.add((ex, ey - 1))
+                    elif ed == 'S':
+                        open_cells.add((ex, ey + 1))
+                    elif ed == 'E':
+                        open_cells.add((ex - 1, ey))
+                    elif ed == 'W':
+                        open_cells.add((ex + 1, ey))
+
             for y in range(sub_h):
                 for x in range(sub_w):
                     if blocked[y][x]:
@@ -932,15 +1003,16 @@ def _generate_cube_maze(
                         for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
                             nx, ny = 2 * x + 1 + dx, 2 * y + 1 + dy
                             if 0 <= nx < width and 0 <= ny < depth:
-                                cells[z][ny][nx][0] = True
-                                for idx in range(1, 7):
-                                    cells[z][ny][nx][idx] = -1
+                                if (nx, ny) not in open_cells:
+                                    cells[z][ny][nx][0] = True
+                                    for idx in range(1, 7):
+                                        cells[z][ny][nx][idx] = -1
         # Recompute entrance_list/exit_list and set against final cells state
         entrance_list = [item for item in entrance_list if not cells[0][item[1]][item[0]][0]]
         exit_list = [item for item in exit_list if not cells[0][item[1]][item[0]][0]]
         if not entrance_list and num_entrances > 0:
             raise ValueError("All candidate entrance cells were blocked by mask.")
-        if not exit_list and (num_exits > 0 or emergency_exits):
+        if not exit_list and ((mode == 'exit' and num_exits > 0) or (mode == 'center' and emergency_exits)):
             raise ValueError("All candidate exit cells were blocked by mask.")
         maze_data.entrance = entrance_list[0] if entrance_list else None
         maze_data.exits = exit_list

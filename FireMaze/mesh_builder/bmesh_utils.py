@@ -171,6 +171,13 @@ def _prepare_maze_building_context(props, maze_data, context, collection, force_
                             if 0 <= ex_y < len(cells_3d[z]) and 0 <= ex_x < len(cells_3d[z][ex_y]):
                                 cells_3d[z][ex_y][ex_x][0] = True
 
+    if hasattr(props, 'maze_shape') and props.maze_shape != 'rect':
+        from ..shape_boundaries import get_shape_mask
+        rotation = getattr(props, 'shape_rotation', '0')
+        shape_blocked = get_shape_mask(maze_data.width, maze_data.depth, props.maze_shape, rotation)
+    else:
+        shape_blocked = None
+
     return {
         'ts': ts,
         'tiled': tiled,
@@ -199,7 +206,27 @@ def _prepare_maze_building_context(props, maze_data, context, collection, force_
         'stair_top_cells': stair_top_cells,
         'stair_cells': stair_cells,
         'clean_wall_corners': props.clean_wall_corners,
+        'shape_blocked': shape_blocked,
     }
+
+
+def _filter_wall_segments(segments, width, depth, shape_blocked):
+    """Filter out wall segments where both adjacent cells are outside the shape."""
+    if not shape_blocked:
+        return segments
+    filtered = set()
+    for seg in segments:
+        seg_type, x, y = seg
+        if seg_type == 'H':
+            blocked_a = (x < 0 or x >= width or y - 1 < 0 or y - 1 >= depth or shape_blocked[y - 1][x])
+            blocked_b = (x < 0 or x >= width or y < 0 or y >= depth or shape_blocked[y][x])
+        else: # 'V'
+            blocked_a = (x - 1 < 0 or x - 1 >= width or y < 0 or y >= depth or shape_blocked[y][x - 1])
+            blocked_b = (x < 0 or x >= width or y < 0 or y >= depth or shape_blocked[y][x])
+        
+        if not (blocked_a and blocked_b):
+            filtered.add(seg)
+    return filtered
 
 
 def _get_wall_segments(maze_data, cells=None):

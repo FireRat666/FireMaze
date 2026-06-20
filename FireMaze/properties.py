@@ -170,6 +170,33 @@ class FireMazeProperties(bpy.types.PropertyGroup):
             ('polar', 'Polar (Circular)', 'Circular maze generated in concentric rings'),
         ],
     )
+    maze_shape: bpy.props.EnumProperty(
+        name="Maze Shape",
+        description="Outer boundary shape of the maze (rectangular grids only)",
+        default='rect',
+        items=[
+            ('rect', 'Rectangle', 'Standard rectangular boundary'),
+            ('diamond', 'Diamond', 'Diamond/rhombus boundary'),
+            ('triangle', 'Triangle', 'Triangular boundary'),
+            ('hexagon', 'Hexagon', 'Hexagonal boundary'),
+        ],
+    )
+    shape_rotation: bpy.props.EnumProperty(
+        name="Shape Rotation",
+        description="Rotation angle for the maze shape boundary",
+        default='0',
+        items=[
+            ('0', '0°', 'No rotation'),
+            ('90', '90°', 'Rotate 90 degrees'),
+            ('180', '180°', 'Rotate 180 degrees'),
+            ('270', '270°', 'Rotate 270 degrees'),
+        ],
+    )
+    smooth_shape_edges: bpy.props.BoolProperty(
+        name="Smooth Shape Edges",
+        description="Clip boundary tiles to the shape contour for a smoother outline",
+        default=False,
+    )
     polar_rings: bpy.props.IntProperty(
         name="Rings",
         description="Number of concentric rings in the polar maze",
@@ -693,8 +720,8 @@ class FireMazeProperties(bpy.types.PropertyGroup):
         name="Edit Tool",
         description="Action performed when clicking on the maze during Interactive Edit",
         items=[
-            ('wall', "Toggle Walls", "Left-click to add/remove walls"),
-            ('stair', "Toggle Stairs", "Left-click to place/remove stairs"),
+            ('wall', "Toggle Walls", "Left-click to toggle walls, Shift+click to cycle mesh index"),
+            ('stair', "Toggle Stairs", "Left-click to place/remove stairs, Shift+click to rotate"),
         ],
         default='wall',
     )

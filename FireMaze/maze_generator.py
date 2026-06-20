@@ -10,6 +10,7 @@ from .pathfinder import find_shortest_path  # re-exported for operators.py; sub-
 from .maze_algorithms.polar_maze import generate_polar_maze
 from .maze_algorithms.cube_maze import _generate_cube_maze
 from .maze_algorithms.thin_maze import _generate_thin_maze
+from .shape_boundaries import get_shape_mask
 from .utils import set_seed
 
 def generate_maze(
@@ -50,6 +51,8 @@ def generate_maze(
     passage_bias: float = 0.5,
     eller_merge_prob: float = 0.5,
     radial_bias: float = 0.5,
+    maze_shape: str = 'rect',
+    shape_rotation: str = '0',
 ) -> MazeData:
     """Generate a complete rectangular or polar maze with the selected algorithm."""
     # Coordinate global and shared PRNG seeds
@@ -58,6 +61,17 @@ def generate_maze(
     # Disable mask for multilevel mazes
     if floors > 1 and mask_image is not None:
         mask_image = None
+
+    # Compute shape mask (rect grids only; polar grids ignore shape)
+    shape_blocked = None
+    if grid_type == 'rect' and maze_shape != 'rect':
+        if wall_mode == 'cube':
+            # Cube mode's blocked array uses the sub-grid dimensions
+            sub_w = max(1, (width - 1) // 2)
+            sub_h = max(1, (depth - 1) // 2)
+            shape_blocked = get_shape_mask(sub_w, sub_h, maze_shape, shape_rotation)
+        else:
+            shape_blocked = get_shape_mask(width, depth, maze_shape, shape_rotation)
 
     if grid_type == 'polar':
         return generate_polar_maze(
@@ -93,7 +107,8 @@ def generate_maze(
             selection_bias=selection_bias, straightness=straightness,
             direction_bias=direction_bias, east_bias=east_bias,
             orientation_bias=orientation_bias, passage_bias=passage_bias,
-            eller_merge_prob=eller_merge_prob
+            eller_merge_prob=eller_merge_prob,
+            shape_blocked=shape_blocked,
         )
     elif wall_mode == 'thin':
         return _generate_thin_maze(
@@ -111,7 +126,8 @@ def generate_maze(
             selection_bias=selection_bias, straightness=straightness,
             direction_bias=direction_bias, east_bias=east_bias,
             orientation_bias=orientation_bias, passage_bias=passage_bias,
-            eller_merge_prob=eller_merge_prob
+            eller_merge_prob=eller_merge_prob,
+            shape_blocked=shape_blocked,
         )
     else:
         raise ValueError(f"Unknown wall_mode: {wall_mode}")

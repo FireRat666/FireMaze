@@ -157,7 +157,7 @@ def _find_shortest_path_2d(maze_data: MazeData, wall_mode: str, cells_2d: List) 
             path = []
             curr = (cx, cy)
             while curr is not None:
-                path.append(curr)
+                path.append((curr[1], curr[0]))
                 curr = parent[curr]
             path.reverse()
             return path

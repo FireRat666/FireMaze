@@ -63,7 +63,8 @@ PROP_NAMES = [
     "mask_invert", "thin_wall_double_sided", "clean_wall_corners", "fire_maze_collection_name",
     "floors", "stair_footprint", "stair_style", "stair_direction", "edit_floor_level",
     "stair_count", "edit_tool", "edit_roof",
-    "selection_bias", "straightness", "direction_bias", "east_bias", "orientation_bias", "passage_bias", "eller_merge_prob", "radial_bias"
+    "selection_bias", "straightness", "direction_bias", "east_bias", "orientation_bias", "passage_bias", "eller_merge_prob", "radial_bias",
+    "maze_shape", "shape_rotation", "smooth_shape_edges"
 ]
 
 POINTER_PROPS = [
@@ -313,6 +314,13 @@ def rebuild_maze_from_collection(context, col):
     wall_mode = data_dict.get('wall_mode', context.scene.fire_maze.wall_mode)
     props = context.scene.fire_maze
 
+    if 'maze_shape' in data_dict:
+        props.maze_shape = data_dict['maze_shape']
+    if 'shape_rotation' in data_dict:
+        props.shape_rotation = data_dict['shape_rotation']
+    if 'smooth_shape_edges' in data_dict:
+        props.smooth_shape_edges = data_dict['smooth_shape_edges']
+
     # Determine number of meshes in collections
     num_wall_meshes = 0
     if is_valid_ref(props.custom_wall_collection):
@@ -371,7 +379,6 @@ def rebuild_maze_from_collection(context, col):
     # Recompute guide path
     maze_data.guide_path = find_shortest_path(maze_data, wall_mode=wall_mode)
 
-    # Update stored JSON
     col["fire_maze_data"] = json.dumps({
         'width': maze_data.width,
         'depth': maze_data.depth,
@@ -390,6 +397,9 @@ def rebuild_maze_from_collection(context, col):
         'floors': floors,
         'stairs': stairs,
         'stair_count': stair_count,
+        'maze_shape': props.maze_shape,
+        'shape_rotation': props.shape_rotation,
+        'smooth_shape_edges': props.smooth_shape_edges,
         'schema_version': 1,
     })
 
@@ -561,12 +571,13 @@ class MAZE_OT_generate(bpy.types.Operator):
             passage_bias=props.passage_bias,
             eller_merge_prob=props.eller_merge_prob,
             radial_bias=props.radial_bias,
+            maze_shape=props.maze_shape,
+            shape_rotation=props.shape_rotation,
         )
 
         col = _find_or_create_maze_collection("FireMaze")
         props.fire_maze_collection_name = col.name
         
-        # Serialize and store maze data on the collection
         col["fire_maze_data"] = json.dumps({
             'width': maze_data.width,
             'depth': maze_data.depth,
@@ -585,6 +596,9 @@ class MAZE_OT_generate(bpy.types.Operator):
             'floors': maze_data.floors,
             'stairs': maze_data.stairs,
             'stair_count': props.stair_count,
+            'maze_shape': props.maze_shape,
+            'shape_rotation': props.shape_rotation,
+            'smooth_shape_edges': props.smooth_shape_edges,
             'schema_version': 1,
         })
 
@@ -624,7 +638,7 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
 
     bl_idname = "fire_maze.interactive_edit"
     bl_label = "Interactive Maze Editor"
-    bl_description = "Left-click on walls in the 3D viewport to toggle them on/off"
+    bl_description = "Left-click to toggle walls. Shift+click to cycle custom mesh indices."
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod

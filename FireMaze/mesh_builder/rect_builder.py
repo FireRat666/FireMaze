@@ -33,7 +33,7 @@ from .post_processor import (
 )
 from .polar_builder import _build_polar_maze_objects_impl
 
-def _build_rect_cube_floor(ctx, maze_data, created_objects, name_suffix, bm=None, uv_layer=None, materials=None, dirty_cells=None):
+def _build_rect_cube_floor(ctx, props, maze_data, created_objects, name_suffix, bm=None, uv_layer=None, materials=None, dirty_cells=None):
     """Build cube-mode floor tiles for a rectangular grid, optionally updating an existing BMesh."""
     if bm is None:
         bm_floor, uv_floor, floor_materials = _create_bmesh_element("floor", ctx['materials'])
@@ -64,7 +64,11 @@ def _build_rect_cube_floor(ctx, maze_data, created_objects, name_suffix, bm=None
                     else:
                         existing_faces = set(bm_floor.faces)
 
+                    if ctx.get('shape_blocked') is not None and ctx['shape_blocked'][y][x]:
+                        continue
+
                     floor_idx = level_cells[y][x][5] if len(level_cells[y][x]) > 5 else -1
+
                     if ctx['floor_meshes_list'] and isinstance(floor_idx, int) and 0 <= floor_idx < len(ctx['floor_meshes_list']):
                         off = ctx['ts'] / 2 if ctx['centered'] else 0
                         mat_base = Matrix.Translation(Vector((x * ctx['ts'] + off, y * ctx['ts'] + off, z_off)))
@@ -87,6 +91,8 @@ def _build_rect_cube_floor(ctx, maze_data, created_objects, name_suffix, bm=None
                         for f in bm_floor.faces:
                             if f not in existing_faces:
                                 f[cell_layer] = cell_id
+
+    _build_smooth_floor_triangles(ctx, props, maze_data, bm_floor, uv_floor, cell_layer, dirty_cells)
 
     if not is_external_bm:
         floor_obj = _create_object_from_bm(bm_floor, f"FireMaze_Floor{name_suffix}", ctx['col'], None)
@@ -112,6 +118,7 @@ def _build_rect_cube_walls(ctx, props, maze_data, created_objects, name_suffix, 
         cell_layer = bm_wall.faces.layers.int.new("cell_id")
     cent = Matrix.Translation(Vector((-ctx['ts'] / 2, -ctx['ts'] / 2, 0))) if not ctx['centered'] else Matrix.Identity(4)
     wall_rng = get_rng()
+    smooth_edges = props.smooth_shape_edges and ctx.get('shape_blocked') is not None
     for z in ctx['z_range']:
         z_off_floor = z * ctx['wh']
         level_cells = ctx['cells_3d'][z]
@@ -121,6 +128,9 @@ def _build_rect_cube_walls(ctx, props, maze_data, created_objects, name_suffix, 
             for y in range(maze_data.depth):
                 for x in range(maze_data.width):
                     if dirty_cells is not None and (z, y, x) not in dirty_cells:
+                        continue
+
+                    if ctx.get('shape_blocked') is not None and ctx['shape_blocked'][y][x]:
                         continue
                     is_wall = level_cells[y][x][0]
                     if is_wall:
@@ -159,19 +169,20 @@ def _build_rect_cube_walls(ctx, props, maze_data, created_objects, name_suffix, 
                                     _add_wall_face_transformed(bm_wall, uv_wall, cx, cy, ctx['ts'], ctx['seg_h'], direction, ctx['mat_wall_offset'], z_base=z_off)
                                     
                             # +Y (north)
-                            if y + 1 >= maze_data.depth or not level_cells[y + 1][x][0]:
+                            sb = ctx.get('shape_blocked')
+                            if y + 1 >= maze_data.depth or (sb is not None and sb[y + 1][x]) or not level_cells[y + 1][x][0]:
                                 f_idx = level_cells[y][x][1] if len(level_cells[y][x]) > 1 else -1
                                 place_wall_face('+Y', Matrix.Translation(Vector((0, ctx['ts']/2, 0))) @ Matrix.Rotation(math.radians(-90), 4, 'X') @ Matrix.Rotation(math.radians(180), 4, 'Z'), ctx['custom_wall'], f_idx)
                             # -Y (south)
-                            if y - 1 < 0 or not level_cells[y - 1][x][0]:
+                            if y - 1 < 0 or (sb is not None and sb[y - 1][x]) or not level_cells[y - 1][x][0]:
                                 f_idx = level_cells[y][x][2] if len(level_cells[y][x]) > 2 else -1
                                 place_wall_face('-Y', Matrix.Translation(Vector((0, -ctx['ts']/2, 0))) @ Matrix.Rotation(math.radians(90), 4, 'X'), ctx['custom_wall'], f_idx)
                             # +X (east)
-                            if x + 1 >= maze_data.width or not level_cells[y][x + 1][0]:
+                            if x + 1 >= maze_data.width or (sb is not None and sb[y][x + 1]) or not level_cells[y][x + 1][0]:
                                 f_idx = level_cells[y][x][3] if len(level_cells[y][x]) > 3 else -1
                                 place_wall_face('+X', Matrix.Translation(Vector((ctx['ts']/2, 0, 0))) @ Matrix.Rotation(math.radians(-90), 4, 'Z') @ Matrix.Rotation(math.radians(-90), 4, 'X') @ Matrix.Rotation(math.radians(180), 4, 'Z'), ctx['custom_wall'], f_idx)
                             # -X (west)
-                            if x - 1 < 0 or not level_cells[y][x - 1][0]:
+                            if x - 1 < 0 or (sb is not None and sb[y][x - 1]) or not level_cells[y][x - 1][0]:
                                 f_idx = level_cells[y][x][4] if len(level_cells[y][x]) > 4 else -1
                                 place_wall_face('-X', Matrix.Translation(Vector((-ctx['ts']/2, 0, 0))) @ Matrix.Rotation(math.radians(90), 4, 'Z') @ Matrix.Rotation(math.radians(-90), 4, 'X') @ Matrix.Rotation(math.radians(180), 4, 'Z'), ctx['custom_wall'], f_idx)
 
@@ -185,6 +196,141 @@ def _build_rect_cube_walls(ctx, props, maze_data, created_objects, name_suffix, 
                                 if f not in existing_faces:
                                     f[cell_layer] = cell_id
 
+        if smooth_edges:
+            from ..shape_boundaries import _SHAPE_TESTS, _ROTATION_ANGLES, _rotate_point
+
+            test_fn = _SHAPE_TESTS.get(props.maze_shape)
+            if test_fn is not None:
+                angle_rad = _ROTATION_ANGLES.get(props.shape_rotation, 0.0)
+                def _pt_outside(u, v):
+                    pu, pv = u, v
+                    if angle_rad != 0.0:
+                        pu, pv = _rotate_point(pu, pv, -angle_rad)
+                    return not test_fn(pu, pv)
+
+                w = maze_data.width
+                d = maze_data.depth
+                ts = ctx['ts']
+                sb = ctx['shape_blocked']
+
+                # Collect corners of boundary cells that face the outside.
+                corner_dict = {}  # (world_x, world_y) -> set of (cell_x, cell_y)
+                for y in range(d):
+                    for x in range(w):
+                        if sb[y][x]:
+                            continue
+                        boundary = False
+                        for ny, nx in ((y-1,x),(y+1,x),(y,x-1),(y,x+1)):
+                            if nx < 0 or nx >= w or ny < 0 or ny >= d or sb[ny][nx]:
+                                boundary = True
+                                break
+                        if not boundary:
+                            continue
+                        for cu, cv in [(x, y), (x+1, y), (x+1, y+1), (x, y+1)]:
+                            u, v = cu / w, cv / d
+                            if _pt_outside(u, v):
+                                key = (cu * ts, cv * ts)
+                                corner_dict.setdefault(key, set()).add((x, y))
+
+                if corner_dict:
+                    corner_items = [(wx, wy, frozenset(cells)) for (wx, wy), cells in corner_dict.items()]
+                    cx_center = w * ts / 2
+                    cy_center = d * ts / 2
+                    corner_items.sort(key=lambda c: math.atan2(c[1] - cy_center, c[0] - cx_center))
+
+                    n = len(corner_items)
+                    for idx in range(n):
+                        c1 = corner_items[idx]
+                        c2 = corner_items[(idx + 1) % n]
+
+                        x0, y0 = c1[0], c1[1]
+                        x1, y1 = c2[0], c2[1]
+
+                        level_cells = ctx['cells_3d'][z]
+
+                        # Identify all cells associated with this segment (either sharing corners, or close to it).
+                        associated_cells = set()
+                        for cell_set in (c1[2], c2[2]):
+                            associated_cells.update(cell_set)
+
+                        min_cx = max(0, int(min(x0, x1) / ts - 1))
+                        max_cx = min(w - 1, int(max(x0, x1) / ts + 1))
+                        min_cy = max(0, int(min(y0, y1) / ts - 1))
+                        max_cy = min(d - 1, int(max(y0, y1) / ts + 1))
+
+                        for cy in range(min_cy, max_cy + 1):
+                            for cx in range(min_cx, max_cx + 1):
+                                if sb[cy][cx]:
+                                    continue
+                                ccx = cx * ts + ts / 2
+                                ccy = cy * ts + ts / 2
+                                dx = x1 - x0
+                                dy = y1 - y0
+                                if dx == 0 and dy == 0:
+                                    dist = math.hypot(ccx - x0, ccy - y0)
+                                else:
+                                    t = ((ccx - x0) * dx + (ccy - y0) * dy) / (dx * dx + dy * dy)
+                                    t = max(0.0, min(1.0, t))
+                                    qx = x0 + t * dx
+                                    qy = y0 + t * dy
+                                    dist = math.hypot(ccx - qx, ccy - qy)
+
+                                if dist < 1.25 * ts:
+                                    associated_cells.add((cx, cy))
+
+                        # Skip segment if any cell sharing either corner or close to it is a
+                        # walkable floor tile (entrance, exit, or open passage).
+                        skip_seg = False
+                        for (cx, cy) in associated_cells:
+                            if not level_cells[cy][cx][0]:
+                                skip_seg = True
+                                break
+                        if skip_seg:
+                            continue
+
+                        has_dirty = dirty_cells is None
+                        if not has_dirty:
+                            for (cx, cy) in associated_cells:
+                                if (z, cy, cx) in dirty_cells:
+                                    has_dirty = True
+                                    break
+                        if not has_dirty:
+                            continue
+
+                        ref_cx, ref_cy = next(iter(c1[2]))
+                        z_off_floor = z * ctx['wh']
+                        cx_w = ref_cx * ts + ts / 2
+                        cy_w = ref_cy * ts + ts / 2
+
+                        for level in range(ctx['tiles_high']):
+                            z_off = z_off_floor + level * ctx['seg_h']
+                            hw = z_off + ctx['seg_h'] / 2
+                            start_idx = len(bm_wall.faces)
+
+                            v0_l = Vector((x0 - cx_w, y0 - cy_w, 0.0))
+                            v1_l = Vector((x1 - cx_w, y1 - cy_w, 0.0))
+
+                            pts = [
+                                Vector((v0_l.x, v0_l.y, -ctx['seg_h']/2)),
+                                Vector((v1_l.x, v1_l.y, -ctx['seg_h']/2)),
+                                Vector((v1_l.x, v1_l.y, ctx['seg_h']/2)),
+                                Vector((v0_l.x, v0_l.y, ctx['seg_h']/2))
+                            ]
+                            final_pts = []
+                            for p in pts:
+                                p_trans = Matrix.Translation(Vector((cx_w, cy_w, hw))) @ ctx['mat_wall_offset'] @ p
+                                final_pts.append(p_trans)
+
+                            f_verts = [bm_wall.verts.new(pt) for pt in final_pts]
+                            face = bm_wall.faces.new(f_verts)
+                            for loop, uv in zip(face.loops, [(0,0),(1,0),(1,1),(0,1)]):
+                                loop[uv_wall].uv = uv
+
+                            cell_id = get_cell_id(z, ref_cy, ref_cx)
+                            bm_wall.faces.ensure_lookup_table()
+                            for i_face in range(start_idx, len(bm_wall.faces)):
+                                bm_wall.faces[i_face][cell_layer] = cell_id
+
     if not is_external_bm:
         _safe_remove_doubles(bm_wall, dist=0.001)
         wall_obj = _create_object_from_bm(bm_wall, f"FireMaze_Walls{name_suffix}", ctx['col'], None)
@@ -192,6 +338,302 @@ def _build_rect_cube_walls(ctx, props, maze_data, created_objects, name_suffix, 
             wall_obj.data.materials.append(mat)
         created_objects.append(wall_obj)
 
+
+
+def _build_smooth_roof_triangles(ctx, props, maze_data, bm_roof, uv_roof, cell_layer, dirty_cells=None):
+    """Add triangular roof faces at roof height along smooth shape edges."""
+    if not props.smooth_shape_edges or ctx.get('shape_blocked') is None:
+        return
+
+    from ..shape_boundaries import _SHAPE_TESTS, _ROTATION_ANGLES, _rotate_point
+
+    test_fn = _SHAPE_TESTS.get(props.maze_shape)
+    if test_fn is None:
+        return
+
+    angle_rad = _ROTATION_ANGLES.get(props.shape_rotation, 0.0)
+    def _pt_outside(u, v):
+        pu, pv = u, v
+        if angle_rad != 0.0:
+            pu, pv = _rotate_point(pu, pv, -angle_rad)
+        return not test_fn(pu, pv)
+
+    w = maze_data.width
+    d = maze_data.depth
+    ts = ctx['ts']
+    sb = ctx['shape_blocked']
+
+    corner_dict = {}
+    for y in range(d):
+        for x in range(w):
+            if sb[y][x]:
+                continue
+            boundary = False
+            for ny, nx in ((y-1,x),(y+1,x),(y,x-1),(y,x+1)):
+                if nx < 0 or nx >= w or ny < 0 or ny >= d or sb[ny][nx]:
+                    boundary = True
+                    break
+            if not boundary:
+                continue
+            for cu, cv in [(x, y), (x+1, y), (x+1, y+1), (x, y+1)]:
+                u, v = cu / w, cv / d
+                if _pt_outside(u, v):
+                    key = (cu * ts, cv * ts)
+                    corner_dict.setdefault(key, set()).add((x, y))
+
+    if not corner_dict:
+        return
+
+    corner_items = [(wx, wy, frozenset(cells)) for (wx, wy), cells in corner_dict.items()]
+    cx_center = w * ts / 2
+    cy_center = d * ts / 2
+    corner_items.sort(key=lambda c: math.atan2(c[1] - cy_center, c[0] - cx_center))
+
+    n = len(corner_items)
+    for idx in range(n):
+        c1 = corner_items[idx]
+        c2 = corner_items[(idx + 1) % n]
+
+        x0, y0 = c1[0], c1[1]
+        x1, y1 = c2[0], c2[1]
+
+        for z in ctx['z_range']:
+            level_cells = ctx['cells_3d'][z]
+
+            associated_cells = set()
+            for cell_set in (c1[2], c2[2]):
+                associated_cells.update(cell_set)
+
+            min_cx = max(0, int(min(x0, x1) / ts - 1))
+            max_cx = min(w - 1, int(max(x0, x1) / ts + 1))
+            min_cy = max(0, int(min(y0, y1) / ts - 1))
+            max_cy = min(d - 1, int(max(y0, y1) / ts + 1))
+
+            for cy in range(min_cy, max_cy + 1):
+                for cx in range(min_cx, max_cx + 1):
+                    if sb[cy][cx]:
+                        continue
+                    ccx = cx * ts + ts / 2
+                    ccy = cy * ts + ts / 2
+                    dx = x1 - x0
+                    dy = y1 - y0
+                    if dx == 0 and dy == 0:
+                        dist = math.hypot(ccx - x0, ccy - y0)
+                    else:
+                        t = ((ccx - x0) * dx + (ccy - y0) * dy) / (dx * dx + dy * dy)
+                        t = max(0.0, min(1.0, t))
+                        qx = x0 + t * dx
+                        qy = y0 + t * dy
+                        dist = math.hypot(ccx - qx, ccy - qy)
+                    if dist < 1.25 * ts:
+                        associated_cells.add((cx, cy))
+
+            skip_seg = False
+            for (cx, cy) in associated_cells:
+                if not level_cells[cy][cx][0]:
+                    skip_seg = True
+                    break
+            if skip_seg:
+                continue
+
+            has_dirty = dirty_cells is None
+            if not has_dirty:
+                for (cx, cy) in associated_cells:
+                    if (z, cy, cx) in dirty_cells:
+                        has_dirty = True
+                        break
+            if not has_dirty:
+                continue
+
+            ref_cx, ref_cy = next(iter(c1[2]))
+            z_off = z * ctx['wh']
+            cx_w = ref_cx * ts + ts / 2
+            cy_w = ref_cy * ts + ts / 2
+            roof_z = z_off + ctx['wh']
+
+            gx0 = int(round(x0 / ts))
+            gy0 = int(round(y0 / ts))
+            gx1 = int(round(x1 / ts))
+            gy1 = int(round(y1 / ts))
+
+            kx, ky = None, None
+            for cx, cy in [(gx0, gy1), (gx1, gy0)]:
+                if (cx, cy) != (gx0, gy0) and (cx, cy) != (gx1, gy1):
+                    u, v = cx / w, cy / d
+                    if not _pt_outside(u, v):
+                        kx, ky = cx, cy
+                        break
+
+            if kx is not None:
+                kwx, kwy = kx * ts, ky * ts
+
+                v0_w = Vector((x0, y0, roof_z))
+                v1_w = Vector((x1, y1, roof_z))
+                vk_w = Vector((kwx, kwy, roof_z))
+
+                v0_2d = (x0, y0)
+                v1_2d = (x1, y1)
+                vk_2d = (kwx, kwy)
+                cross_z = (v1_2d[0] - v0_2d[0]) * (vk_2d[1] - v0_2d[1]) - (v1_2d[1] - v0_2d[1]) * (vk_2d[0] - v0_2d[0])
+
+                if cross_z > 0:
+                    tri_w = [v0_w, v1_w, vk_w]
+                else:
+                    tri_w = [v0_w, vk_w, v1_w]
+
+                center = Vector((cx_w, cy_w, roof_z))
+                pts = [Matrix.Translation(center) @ ctx['mat_roof_offset'] @ (p - center) for p in tri_w]
+                f_verts = [bm_roof.verts.new(pt) for pt in pts]
+                face = bm_roof.faces.new(f_verts)
+
+                for loop, p in zip(face.loops, tri_w):
+                    loop[uv_roof].uv = ((p.x - ref_cx * ts) / ts, (p.y - ref_cy * ts) / ts)
+
+                face[cell_layer] = get_cell_id(z, ref_cy, ref_cx)
+
+
+def _build_smooth_floor_triangles(ctx, props, maze_data, bm_floor, uv_floor, cell_layer, dirty_cells=None):
+    """Add triangular floor faces at floor height along smooth shape edges to fill gaps."""
+    if not props.smooth_shape_edges or ctx.get('shape_blocked') is None:
+        return
+
+    from ..shape_boundaries import _SHAPE_TESTS, _ROTATION_ANGLES, _rotate_point
+
+    test_fn = _SHAPE_TESTS.get(props.maze_shape)
+    if test_fn is None:
+        return
+
+    angle_rad = _ROTATION_ANGLES.get(props.shape_rotation, 0.0)
+    def _pt_outside(u, v):
+        pu, pv = u, v
+        if angle_rad != 0.0:
+            pu, pv = _rotate_point(pu, pv, -angle_rad)
+        return not test_fn(pu, pv)
+
+    w = maze_data.width
+    d = maze_data.depth
+    ts = ctx['ts']
+    sb = ctx['shape_blocked']
+
+    corner_dict = {}
+    for y in range(d):
+        for x in range(w):
+            if sb[y][x]:
+                continue
+            boundary = False
+            for ny, nx in ((y-1,x),(y+1,x),(y,x-1),(y,x+1)):
+                if nx < 0 or nx >= w or ny < 0 or ny >= d or sb[ny][nx]:
+                    boundary = True
+                    break
+            if not boundary:
+                continue
+            for cu, cv in [(x, y), (x+1, y), (x+1, y+1), (x, y+1)]:
+                u, v = cu / w, cv / d
+                if _pt_outside(u, v):
+                    key = (cu * ts, cv * ts)
+                    corner_dict.setdefault(key, set()).add((x, y))
+
+    if not corner_dict:
+        return
+
+    corner_items = [(wx, wy, frozenset(cells)) for (wx, wy), cells in corner_dict.items()]
+    cx_center = w * ts / 2
+    cy_center = d * ts / 2
+    corner_items.sort(key=lambda c: math.atan2(c[1] - cy_center, c[0] - cx_center))
+
+    n = len(corner_items)
+    for idx in range(n):
+        c1 = corner_items[idx]
+        c2 = corner_items[(idx + 1) % n]
+
+        x0, y0 = c1[0], c1[1]
+        x1, y1 = c2[0], c2[1]
+
+        for z in ctx['z_range']:
+            level_cells = ctx['cells_3d'][z]
+
+            associated_cells = set()
+            for cell_set in (c1[2], c2[2]):
+                associated_cells.update(cell_set)
+
+            min_cx = max(0, int(min(x0, x1) / ts - 1))
+            max_cx = min(w - 1, int(max(x0, x1) / ts + 1))
+            min_cy = max(0, int(min(y0, y1) / ts - 1))
+            max_cy = min(d - 1, int(max(y0, y1) / ts + 1))
+
+            for cy in range(min_cy, max_cy + 1):
+                for cx in range(min_cx, max_cx + 1):
+                    if sb[cy][cx]:
+                        continue
+                    ccx = cx * ts + ts / 2
+                    ccy = cy * ts + ts / 2
+                    dx = x1 - x0
+                    dy = y1 - y0
+                    if dx == 0 and dy == 0:
+                        dist = math.hypot(ccx - x0, ccy - y0)
+                    else:
+                        t = ((ccx - x0) * dx + (ccy - y0) * dy) / (dx * dx + dy * dy)
+                        t = max(0.0, min(1.0, t))
+                        qx = x0 + t * dx
+                        qy = y0 + t * dy
+                        dist = math.hypot(ccx - qx, ccy - qy)
+                    if dist < 1.25 * ts:
+                        associated_cells.add((cx, cy))
+
+            has_dirty = dirty_cells is None
+            if not has_dirty:
+                for (cx, cy) in associated_cells:
+                    if (z, cy, cx) in dirty_cells:
+                        has_dirty = True
+                        break
+            if not has_dirty:
+                continue
+
+            ref_cx, ref_cy = next(iter(c1[2]))
+            z_off = z * ctx['wh']
+            cx_w = ref_cx * ts + ts / 2
+            cy_w = ref_cy * ts + ts / 2
+            floor_z = z_off
+
+            gx0 = int(round(x0 / ts))
+            gy0 = int(round(y0 / ts))
+            gx1 = int(round(x1 / ts))
+            gy1 = int(round(y1 / ts))
+
+            kx, ky = None, None
+            for cx, cy in [(gx0, gy1), (gx1, gy0)]:
+                if (cx, cy) != (gx0, gy0) and (cx, cy) != (gx1, gy1):
+                    u, v = cx / w, cy / d
+                    if not _pt_outside(u, v):
+                        kx, ky = cx, cy
+                        break
+
+            if kx is not None:
+                kwx, kwy = kx * ts, ky * ts
+
+                v0_w = Vector((x0, y0, floor_z))
+                v1_w = Vector((x1, y1, floor_z))
+                vk_w = Vector((kwx, kwy, floor_z))
+
+                v0_2d = (x0, y0)
+                v1_2d = (x1, y1)
+                vk_2d = (kwx, kwy)
+                cross_z = (v1_2d[0] - v0_2d[0]) * (vk_2d[1] - v0_2d[1]) - (v1_2d[1] - v0_2d[1]) * (vk_2d[0] - v0_2d[0])
+
+                if cross_z > 0:
+                    tri_w = [v0_w, v1_w, vk_w]
+                else:
+                    tri_w = [v0_w, vk_w, v1_w]
+
+                center = Vector((cx_w, cy_w, floor_z))
+                pts = [Matrix.Translation(center) @ ctx['mat_floor_offset'] @ (p - center) for p in tri_w]
+                f_verts = [bm_floor.verts.new(pt) for pt in pts]
+                face = bm_floor.faces.new(f_verts)
+
+                for loop, p in zip(face.loops, tri_w):
+                    loop[uv_floor].uv = ((p.x - ref_cx * ts) / ts, (p.y - ref_cy * ts) / ts)
+
+                face[cell_layer] = get_cell_id(z, ref_cy, ref_cx)
 
 
 def _build_rect_cube_roof(ctx, props, maze_data, created_objects, name_suffix, bm=None, uv_layer=None, materials=None, dirty_cells=None):
@@ -226,7 +668,11 @@ def _build_rect_cube_roof(ctx, props, maze_data, created_objects, name_suffix, b
                         else:
                             existing_faces = set(bm_roof.faces)
 
+                        if ctx.get('shape_blocked') is not None and ctx['shape_blocked'][y][x]:
+                            continue
+
                         roof_idx = level_cells[y][x][6] if len(level_cells[y][x]) > 6 else -1
+
                         if ctx['roof_meshes_list'] and isinstance(roof_idx, int) and 0 <= roof_idx < len(ctx['roof_meshes_list']):
                             off = ctx['ts'] / 2 if ctx['centered'] else 0
                             mat_base = Matrix.Translation(Vector((x * ctx['ts'] + off, y * ctx['ts'] + off, z_off + ctx['wh'])))
@@ -249,6 +695,8 @@ def _build_rect_cube_roof(ctx, props, maze_data, created_objects, name_suffix, b
                             for f in bm_roof.faces:
                                 if f not in existing_faces:
                                     f[cell_layer] = cell_id
+
+        _build_smooth_roof_triangles(ctx, props, maze_data, bm_roof, uv_roof, cell_layer, dirty_cells)
 
         if not is_external_bm:
             if not ctx['custom_roof'] and not ctx['roof_meshes_list']:
@@ -285,6 +733,9 @@ def _build_rect_stairs(ctx, props, maze_data, created_objects, name_suffix, bm=N
                 if dirty_cells is not None and (zstair, sy, sx) not in dirty_cells:
                     continue
 
+                if ctx.get('shape_blocked') is not None and ctx['shape_blocked'][sy][sx]:
+                    continue
+
                 if dirty_cells is None:
                     start_idx = len(bm_stairs.faces)
                 else:
@@ -294,7 +745,7 @@ def _build_rect_stairs(ctx, props, maze_data, created_objects, name_suffix, bm=N
                 footprint = s.get('footprint', '1x1')
                 # Geometry is built only at the base cell (sx,sy). For 1x2
                 # footprints, the extra cells are intentionally left empty
-                # to provide headroom clearance — not for duplicate stairs.
+                # to provide headroom clearance ΓÇö not for duplicate stairs.
                 stair_ts = ctx['ts'] * 2 if footprint == '2x2' else ctx['ts']
                 # 2x2 footprints center + scale a single stair to fill the block
                 cx = sx * ctx['ts'] + stair_ts / 2
@@ -344,7 +795,7 @@ def _build_rect_stairs(ctx, props, maze_data, created_objects, name_suffix, bm=N
 
 
 
-def _build_rect_thin_floor(ctx, maze_data, created_objects, name_suffix, bm=None, uv_layer=None, materials=None, dirty_cells=None):
+def _build_rect_thin_floor(ctx, props, maze_data, created_objects, name_suffix, bm=None, uv_layer=None, materials=None, dirty_cells=None):
     """Build thin-mode floor tiles for a rectangular grid, optionally updating an existing BMesh."""
     if bm is None:
         bm_floor, uv_floor, floor_materials = _create_bmesh_element("floor", ctx['materials'])
@@ -373,9 +824,11 @@ def _build_rect_thin_floor(ctx, maze_data, created_objects, name_suffix, bm=None
                 else:
                     existing_faces = set(bm_floor.faces)
 
-                floor_idx = level_cells[y][x][8] if len(level_cells[y][x]) > 8 else -1
-                if floor_idx < 0:
+                if ctx.get('shape_blocked') is not None and ctx['shape_blocked'][y][x]:
                     continue
+
+                floor_idx = level_cells[y][x][8] if len(level_cells[y][x]) > 8 else -1
+
                 if ctx['floor_meshes_list'] and isinstance(floor_idx, int) and 0 <= floor_idx < len(ctx['floor_meshes_list']):
                     mat_base = Matrix.Translation(Vector((x * ctx['ts'] + off, y * ctx['ts'] + off, z * ctx['wh'])))
                     mat = mat_base @ ctx['mat_floor_offset']
@@ -396,6 +849,8 @@ def _build_rect_thin_floor(ctx, maze_data, created_objects, name_suffix, bm=None
                     for f in bm_floor.faces:
                         if f not in existing_faces:
                             f[cell_layer] = cell_id
+
+    _build_smooth_floor_triangles(ctx, props, maze_data, bm_floor, uv_floor, cell_layer, dirty_cells)
 
     if not is_external_bm:
         floor_obj = _create_object_from_bm(bm_floor, f"FireMaze_Floor{name_suffix}", ctx['col'], None)
@@ -425,6 +880,9 @@ def _compute_corner_offsets(a, b, seg_type, h_positions, v_positions, clean_corn
         offset_south = tw if (clean_corners and perp_south == 1 and not continues_south) else 0.0
         offset_north = tw if (clean_corners and perp_north == 1 and not continues_north) else 0.0
         return offset_south, offset_north, perp_south, perp_north, continues_south, continues_north
+
+
+
 
 
 def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, bm=None, uv_layer=None, materials=None, bm_cap=None, uv_layer_cap=None, materials_cap=None, dirty_cells=None):
@@ -459,6 +917,7 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, 
     wall_rng = get_rng()
 
     clean_corners = ctx['clean_wall_corners']
+    smooth_edges = props.smooth_shape_edges and (ctx.get('shape_blocked') is not None)
     index = {'N': 0, 'S': 1, 'E': 2, 'W': 3}
     opposites = {'N': 'S', 'S': 'N', 'E': 'W', 'W': 'E'}
 
@@ -475,6 +934,10 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, 
                     segments.append(('V', x, y))
         else:
             segments = list(actual_segments)
+
+        if ctx.get('shape_blocked') is not None:
+            from .bmesh_utils import _filter_wall_segments
+            segments = list(_filter_wall_segments(segments, maze_data.width, maze_data.depth, ctx['shape_blocked']))
         h_positions = set()
         v_positions = set()
         h_endpoints = set()
@@ -486,10 +949,37 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, 
             else:
                 v_positions.add((a, b))
 
+        open_segments = set()
+        if z == 0 and maze_data.entrance:
+            ex, ey, ed = maze_data.entrance
+            if ed == 'N':
+                open_segments.add(('H', ex, ey + 1))
+            elif ed == 'S':
+                open_segments.add(('H', ex, ey))
+            elif ed == 'E':
+                open_segments.add(('V', ex + 1, ey))
+            elif ed == 'W':
+                open_segments.add(('V', ex, ey))
+
+        top_z = len(ctx['cells_3d']) - 1
+        if z == top_z and maze_data.exits:
+            for ex, ey, ed in maze_data.exits:
+                if ed == 'N':
+                    open_segments.add(('H', ex, ey + 1))
+                elif ed == 'S':
+                    open_segments.add(('H', ex, ey))
+                elif ed == 'E':
+                    open_segments.add(('V', ex + 1, ey))
+                elif ed == 'W':
+                    open_segments.add(('V', ex, ey))
+
         for level in range(ctx['tiles_high']):
             z_off = z * ctx['wh'] + level * ctx['seg_h']
 
             for seg_type, a, b in segments:
+                if (seg_type, a, b) in open_segments:
+                    continue
+
                 if seg_type == 'H':
                     owner_cell = (z, b, a) if b < maze_data.depth else (z, b - 1, a)
                 else:
@@ -497,6 +987,8 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, 
 
                 if dirty_cells is not None and owner_cell not in dirty_cells:
                     continue
+
+
 
                 if dirty_cells is None:
                     start_idx = len(bm_wall.faces)
@@ -735,6 +1227,317 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, 
                         if f not in existing_cap_faces:
                             f[cell_layer_cap] = cell_id
 
+        if smooth_edges:
+            from ..shape_boundaries import _SHAPE_TESTS, _ROTATION_ANGLES, _rotate_point
+
+            test_fn = _SHAPE_TESTS.get(props.maze_shape)
+            if test_fn is not None:
+                angle_rad = _ROTATION_ANGLES.get(props.shape_rotation, 0.0)
+                def _pt_outside(u, v):
+                    pu, pv = u, v
+                    if angle_rad != 0.0:
+                        pu, pv = _rotate_point(pu, pv, -angle_rad)
+                    return not test_fn(pu, pv)
+
+                w = maze_data.width
+                d = maze_data.depth
+                ts = ctx['ts']
+                sb = ctx['shape_blocked']
+
+                # Collect corners of boundary cells that face the outside.
+                corner_dict = {}  # (world_x, world_y) -> set of (cell_x, cell_y)
+                for y in range(d):
+                    for x in range(w):
+                        if sb[y][x]:
+                            continue
+                        boundary = False
+                        for ny, nx in ((y-1,x),(y+1,x),(y,x-1),(y,x+1)):
+                            if nx < 0 or nx >= w or ny < 0 or ny >= d or sb[ny][nx]:
+                                boundary = True
+                                break
+                        if not boundary:
+                            continue
+                        for cu, cv in [(x, y), (x+1, y), (x+1, y+1), (x, y+1)]:
+                            u, v = cu / w, cv / d
+                            if _pt_outside(u, v):
+                                key = (cu * ts, cv * ts)
+                                corner_dict.setdefault(key, set()).add((x, y))
+
+                if corner_dict:
+                    corner_items = [(wx, wy, frozenset(cells)) for (wx, wy), cells in corner_dict.items()]
+                    cx_center = w * ts / 2
+                    cy_center = d * ts / 2
+                    corner_items.sort(key=lambda c: math.atan2(c[1] - cy_center, c[0] - cx_center))
+
+                    n = len(corner_items)
+
+                    # Pre-calculate normals and miter vectors for corner vertices
+                    normals = []
+                    for i in range(n):
+                        c_curr = corner_items[i]
+                        c_next = corner_items[(i + 1) % n]
+                        v_dir = Vector((c_next[0] - c_curr[0], c_next[1] - c_curr[1], 0.0))
+                        if v_dir.length > 0:
+                            norm = Vector((v_dir.y, -v_dir.x, 0.0)).normalized()
+                        else:
+                            norm = Vector((0, 0, 0))
+                        normals.append(norm)
+
+                    def get_miter_vector(m_prev, m_curr, W):
+                        denom = 1.0 + m_prev.dot(m_curr)
+                        if denom < 0.05:
+                            avg = (m_prev + m_curr).normalized() if (m_prev + m_curr).length > 0 else m_curr
+                            return avg * (W * 4.0)
+                        miter = W * (m_prev + m_curr) / denom
+                        max_len = 4.0 * W
+                        if miter.length > max_len:
+                            miter = miter.normalized() * max_len
+                        return miter
+
+                    miter_double = []
+                    miter_single = []
+                    for i in range(n):
+                        m_prev = normals[i - 1]
+                        m_curr = normals[i]
+                        miter_double.append(get_miter_vector(m_prev, m_curr, ctx['wt']))
+                        miter_single.append(get_miter_vector(m_prev, m_curr, ctx['wt'] / 2.0))
+
+                    segment_skipped = [False] * n
+                    for idx in range(n):
+                        c1 = corner_items[idx]
+                        c2 = corner_items[(idx + 1) % n]
+                        x0, y0 = c1[0], c1[1]
+                        x1, y1 = c2[0], c2[1]
+                        
+                        associated_cells = set()
+                        for cell_set in (c1[2], c2[2]):
+                            associated_cells.update(cell_set)
+
+                        min_cx = max(0, int(min(x0, x1) / ts - 1))
+                        max_cx = min(w - 1, int(max(x0, x1) / ts + 1))
+                        min_cy = max(0, int(min(y0, y1) / ts - 1))
+                        max_cy = min(d - 1, int(max(y0, y1) / ts + 1))
+
+                        for cy in range(min_cy, max_cy + 1):
+                            for cx in range(min_cx, max_cx + 1):
+                                if sb[cy][cx]:
+                                    continue
+                                ccx = cx * ts + ts / 2
+                                ccy = cy * ts + ts / 2
+                                dx = x1 - x0
+                                dy = y1 - y0
+                                if dx == 0 and dy == 0:
+                                    dist = math.hypot(ccx - x0, ccy - y0)
+                                else:
+                                    t = ((ccx - x0) * dx + (ccy - y0) * dy) / (dx * dx + dy * dy)
+                                    t = max(0.0, min(1.0, t))
+                                    qx = x0 + t * dx
+                                    qy = y0 + t * dy
+                                    dist = math.hypot(ccx - qx, ccy - qy)
+
+                                if dist < 1.25 * ts:
+                                    associated_cells.add((cx, cy))
+
+                        entrance_exit_cells = set()
+                        if z == 0 and maze_data.entrance:
+                            ex, ey = maze_data.entrance[0], maze_data.entrance[1]
+                            entrance_exit_cells.add((ey, ex))
+                        if maze_data.exits:
+                            top_z = max(ctx['z_range'])
+                            if z == top_z:
+                                for e in maze_data.exits:
+                                    entrance_exit_cells.add((e[1], e[0]))
+
+                        for (cx, cy) in associated_cells:
+                            if (cy, cx) in entrance_exit_cells:
+                                segment_skipped[idx] = True
+                                break
+
+                    for idx in range(n):
+                        c1 = corner_items[idx]
+                        c2 = corner_items[(idx + 1) % n]
+
+                        if segment_skipped[idx]:
+                            continue
+
+                        x0, y0 = c1[0], c1[1]
+                        x1, y1 = c2[0], c2[1]
+
+                        # Identify associated cells
+                        associated_cells = set()
+                        for cell_set in (c1[2], c2[2]):
+                            associated_cells.update(cell_set)
+
+                        min_cx = max(0, int(min(x0, x1) / ts - 1))
+                        max_cx = min(w - 1, int(max(x0, x1) / ts + 1))
+                        min_cy = max(0, int(min(y0, y1) / ts - 1))
+                        max_cy = min(d - 1, int(max(y0, y1) / ts + 1))
+
+                        for cy in range(min_cy, max_cy + 1):
+                            for cx in range(min_cx, max_cx + 1):
+                                if sb[cy][cx]:
+                                    continue
+                                ccx = cx * ts + ts / 2
+                                ccy = cy * ts + ts / 2
+                                dx = x1 - x0
+                                dy = y1 - y0
+                                if dx == 0 and dy == 0:
+                                    dist = math.hypot(ccx - x0, ccy - y0)
+                                else:
+                                    t = ((ccx - x0) * dx + (ccy - y0) * dy) / (dx * dx + dy * dy)
+                                    t = max(0.0, min(1.0, t))
+                                    qx = x0 + t * dx
+                                    qy = y0 + t * dy
+                                    dist = math.hypot(ccx - qx, ccy - qy)
+
+                                if dist < 1.25 * ts:
+                                    associated_cells.add((cx, cy))
+
+                        has_dirty = dirty_cells is None
+                        if not has_dirty:
+                            for (cx, cy) in associated_cells:
+                                if (z, cy, cx) in dirty_cells:
+                                    has_dirty = True
+                                    break
+                        if not has_dirty:
+                            continue
+
+                        ref_cx, ref_cy = next(iter(c1[2]))
+                        z_off_floor = z * ctx['wh']
+                        cx_w = ref_cx * ts + ts / 2
+                        cy_w = ref_cy * ts + ts / 2
+
+                        for level in range(ctx['tiles_high']):
+                            z_off = z_off_floor + level * ctx['seg_h']
+                            hw = z_off + ctx['seg_h'] / 2
+                            start_idx = len(bm_wall.faces)
+                            start_cap_idx = len(bm_cap.faces)
+
+                            md0 = miter_double[idx]
+                            md1 = miter_double[(idx + 1) % n]
+                            ms0 = miter_single[idx]
+                            ms1 = miter_single[(idx + 1) % n]
+
+                            if props.thin_wall_double_sided:
+                                # First Face (Inner Face) - CCW when looking from inside
+                                # This face lies exactly on the original boundary (no offset)
+                                v0_l = Vector((x0 - cx_w, y0 - cy_w, 0.0))
+                                v1_l = Vector((x1 - cx_w, y1 - cy_w, 0.0))
+                                pts = [
+                                    Vector((v1_l.x, v1_l.y, -ctx['seg_h']/2)),
+                                    Vector((v0_l.x, v0_l.y, -ctx['seg_h']/2)),
+                                    Vector((v0_l.x, v0_l.y, ctx['seg_h']/2)),
+                                    Vector((v1_l.x, v1_l.y, ctx['seg_h']/2))
+                                ]
+                                final_pts = []
+                                for p in pts:
+                                    p_trans = Matrix.Translation(Vector((cx_w, cy_w, hw))) @ ctx['mat_wall_offset'] @ p
+                                    final_pts.append(p_trans)
+
+                                f_verts = [bm_wall.verts.new(pt) for pt in final_pts]
+                                face = bm_wall.faces.new(f_verts)
+                                for loop, uv in zip(face.loops, [(0,0),(1,0),(1,1),(0,1)]):
+                                    loop[uv_wall].uv = uv
+
+                                # Second Face (Outer Face) - CCW when looking from outside
+                                # This face is offset outwards by a full wall thickness 'wt' using miter vectors
+                                v0_l2 = Vector((x0 + md0.x - cx_w, y0 + md0.y - cy_w, 0.0))
+                                v1_l2 = Vector((x1 + md1.x - cx_w, y1 + md1.y - cy_w, 0.0))
+                                pts2 = [
+                                    Vector((v0_l2.x, v0_l2.y, -ctx['seg_h']/2)),
+                                    Vector((v1_l2.x, v1_l2.y, -ctx['seg_h']/2)),
+                                    Vector((v1_l2.x, v1_l2.y, ctx['seg_h']/2)),
+                                    Vector((v0_l2.x, v0_l2.y, ctx['seg_h']/2))
+                                ]
+                                final_pts2 = []
+                                for p in pts2:
+                                    p_trans = Matrix.Translation(Vector((cx_w, cy_w, hw))) @ ctx['mat_wall_offset'] @ p
+                                    final_pts2.append(p_trans)
+
+                                f_verts2 = [bm_wall.verts.new(pt) for pt in final_pts2]
+                                face2 = bm_wall.faces.new(f_verts2)
+                                for loop, uv in zip(face2.loops, [(0,0),(1,0),(1,1),(0,1)]):
+                                    loop[uv_wall].uv = uv
+
+                                # --- Top Cap (Roof Segment of the Wall) ---
+                                v0_inner_top = Vector((x0 - cx_w, y0 - cy_w, ctx['seg_h']/2))
+                                v1_inner_top = Vector((x1 - cx_w, y1 - cy_w, ctx['seg_h']/2))
+                                v1_outer_top = Vector((x1 + md1.x - cx_w, y1 + md1.y - cy_w, ctx['seg_h']/2))
+                                v0_outer_top = Vector((x0 + md0.x - cx_w, y0 + md0.y - cy_w, ctx['seg_h']/2))
+                                pts_top = [v0_inner_top, v0_outer_top, v1_outer_top, v1_inner_top]
+                                final_pts_top = []
+                                for p in pts_top:
+                                    p_trans = Matrix.Translation(Vector((cx_w, cy_w, hw))) @ ctx['mat_wall_offset'] @ p
+                                    final_pts_top.append(p_trans)
+                                f_top = bm_cap.faces.new([bm_cap.verts.new(pt) for pt in final_pts_top])
+                                for loop, uv in zip(f_top.loops, [(0,0),(1,0),(1,1),(0,1)]):
+                                    loop[uv_cap].uv = uv
+
+                                # --- Vertical End Caps ---
+                                prev_skipped = segment_skipped[(idx - 1) % n]
+                                next_skipped = segment_skipped[(idx + 1) % n]
+
+                                # Start End Cap (at corner c1)
+                                if prev_skipped:
+                                    v_bottom_inner = Vector((x0 - cx_w, y0 - cy_w, -ctx['seg_h']/2))
+                                    v_bottom_outer = Vector((x0 + md0.x - cx_w, y0 + md0.y - cy_w, -ctx['seg_h']/2))
+                                    v_top_outer = Vector((x0 + md0.x - cx_w, y0 + md0.y - cy_w, ctx['seg_h']/2))
+                                    v_top_inner = Vector((x0 - cx_w, y0 - cy_w, ctx['seg_h']/2))
+                                    pts_start_cap = [v_bottom_inner, v_bottom_outer, v_top_outer, v_top_inner]
+                                    final_pts_start = []
+                                    for p in pts_start_cap:
+                                        p_trans = Matrix.Translation(Vector((cx_w, cy_w, hw))) @ ctx['mat_wall_offset'] @ p
+                                        final_pts_start.append(p_trans)
+                                    f_start = bm_cap.faces.new([bm_cap.verts.new(pt) for pt in final_pts_start])
+                                    for loop, uv in zip(f_start.loops, [(0,0),(1,0),(1,1),(0,1)]):
+                                        loop[uv_cap].uv = uv
+
+                                # End End Cap (at corner c2)
+                                if next_skipped:
+                                    v_bottom_inner = Vector((x1 - cx_w, y1 - cy_w, -ctx['seg_h']/2))
+                                    v_bottom_outer = Vector((x1 + md1.x - cx_w, y1 + md1.y - cy_w, -ctx['seg_h']/2))
+                                    v_top_outer = Vector((x1 + md1.x - cx_w, y1 + md1.y - cy_w, ctx['seg_h']/2))
+                                    v_top_inner = Vector((x1 - cx_w, y1 - cy_w, ctx['seg_h']/2))
+                                    pts_end_cap = [v_bottom_outer, v_bottom_inner, v_top_inner, v_top_outer]
+                                    final_pts_end = []
+                                    for p in pts_end_cap:
+                                        p_trans = Matrix.Translation(Vector((cx_w, cy_w, hw))) @ ctx['mat_wall_offset'] @ p
+                                        final_pts_end.append(p_trans)
+                                    f_end = bm_cap.faces.new([bm_cap.verts.new(pt) for pt in final_pts_end])
+                                    for loop, uv in zip(f_end.loops, [(0,0),(1,0),(1,1),(0,1)]):
+                                        loop[uv_cap].uv = uv
+                            else:
+                                # Single centered face - CCW when looking from inside
+                                # Offset outwards by half wall thickness 'wt/2' using miter vectors
+                                v0_l = Vector((x0 + ms0.x - cx_w, y0 + ms0.y - cy_w, 0.0))
+                                v1_l = Vector((x1 + ms1.x - cx_w, y1 + ms1.y - cy_w, 0.0))
+                                pts = [
+                                    Vector((v1_l.x, v1_l.y, -ctx['seg_h']/2)),
+                                    Vector((v0_l.x, v0_l.y, -ctx['seg_h']/2)),
+                                    Vector((v0_l.x, v0_l.y, ctx['seg_h']/2)),
+                                    Vector((v1_l.x, v1_l.y, ctx['seg_h']/2))
+                                ]
+                                final_pts = []
+                                for p in pts:
+                                    p_trans = Matrix.Translation(Vector((cx_w, cy_w, hw))) @ ctx['mat_wall_offset'] @ p
+                                    final_pts.append(p_trans)
+
+                                f_verts = [bm_wall.verts.new(pt) for pt in final_pts]
+                                face = bm_wall.faces.new(f_verts)
+                                for loop, uv in zip(face.loops, [(1,0),(0,0),(0,1),(1,1)]):
+                                    loop[uv_wall].uv = uv
+
+                            cell_id = get_cell_id(z, ref_cy, ref_cx)
+                            bm_wall.faces.ensure_lookup_table()
+                            for i_face in range(start_idx, len(bm_wall.faces)):
+                                bm_wall.faces[i_face][cell_layer] = cell_id
+                            
+                            if bm_cap.faces:
+                                bm_cap.faces.ensure_lookup_table()
+                                for i_face in range(start_cap_idx, len(bm_cap.faces)):
+                                    bm_cap.faces[i_face][cell_layer_cap] = cell_id
+
+
     # Handle single wall object merge of caps
     if props.single_wall_object and bm_cap.verts:
         vert_map = {}
@@ -827,10 +1630,41 @@ def _build_rect_thin_roof(ctx, props, maze_data, created_objects, name_suffix, b
                         segments.append(('V', x, y))
             else:
                 segments = list(_get_wall_segments(maze_data, level_cells))
+            
+            if ctx.get('shape_blocked') is not None:
+                from .bmesh_utils import _filter_wall_segments
+                segments = list(_filter_wall_segments(segments, maze_data.width, maze_data.depth, ctx['shape_blocked']))
+
+            open_segments = set()
+            if z == 0 and maze_data.entrance:
+                ex, ey, ed = maze_data.entrance
+                if ed == 'N':
+                    open_segments.add(('H', ex, ey + 1))
+                elif ed == 'S':
+                    open_segments.add(('H', ex, ey))
+                elif ed == 'E':
+                    open_segments.add(('V', ex + 1, ey))
+                elif ed == 'W':
+                    open_segments.add(('V', ex, ey))
+
+            top_z = len(ctx['cells_3d']) - 1
+            if z == top_z and maze_data.exits:
+                for ex, ey, ed in maze_data.exits:
+                    if ed == 'N':
+                        open_segments.add(('H', ex, ey + 1))
+                    elif ed == 'S':
+                        open_segments.add(('H', ex, ey))
+                    elif ed == 'E':
+                        open_segments.add(('V', ex + 1, ey))
+                    elif ed == 'W':
+                        open_segments.add(('V', ex, ey))
+
             h_positions = set()
             v_positions = set()
             h_endpoints = set()
             for seg_type, a, b in segments:
+                if (seg_type, a, b) in open_segments:
+                    continue
                 if seg_type == 'H':
                     h_positions.add((a, b))
                     h_endpoints.add((a, b))
@@ -842,6 +1676,8 @@ def _build_rect_thin_roof(ctx, props, maze_data, created_objects, name_suffix, b
             if ctx['custom_roof'] or ctx['roof_meshes_list']:
                 filled = set()
                 for seg_type, a, b in segments:
+                    if (seg_type, a, b) in open_segments:
+                        continue
                     if seg_type == 'H':
                         owner_cell = (z, b, a) if b < maze_data.depth else (z, b - 1, a)
                     else:
@@ -971,6 +1807,8 @@ def _build_rect_thin_roof(ctx, props, maze_data, created_objects, name_suffix, b
             else:
                 filled = set()
                 for seg_type, a, b in segments:
+                    if (seg_type, a, b) in open_segments:
+                        continue
                     if seg_type == 'H':
                         owner_cell = (z, b, a) if b < maze_data.depth else (z, b - 1, a)
                     else:
@@ -1079,6 +1917,9 @@ def _build_rect_thin_roof(ctx, props, maze_data, created_objects, name_suffix, b
                             if f not in existing_faces:
                                 f[cell_layer] = cell_id
 
+
+
+
         if not is_external_bm:
             if not ctx['custom_roof'] and not ctx.get('roof_meshes_list'):
                 bmesh.ops.remove_doubles(bm_roof, verts=bm_roof.verts, dist=0.001)
@@ -1106,12 +1947,12 @@ def build_maze_objects_impl(
     created_objects = []
 
     if props.wall_mode == 'cube':
-        _build_rect_cube_floor(ctx, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
+        _build_rect_cube_floor(ctx, props, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
         _build_rect_cube_walls(ctx, props, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
         _build_rect_cube_roof(ctx, props, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
         _build_rect_stairs(ctx, props, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
     else:
-        _build_rect_thin_floor(ctx, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
+        _build_rect_thin_floor(ctx, props, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
         _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
         _build_rect_thin_roof(ctx, props, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
         _build_rect_stairs(ctx, props, maze_data, created_objects, name_suffix, dirty_cells=dirty_cells)
