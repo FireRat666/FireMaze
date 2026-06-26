@@ -49,7 +49,7 @@ def _build_rect_cube_floor(ctx, props, maze_data, created_objects, name_suffix, 
         cell_layer = bm_floor.faces.layers.int.new("cell_id")
     off = ctx['ts'] / 2 if ctx['centered'] else 0
     for z in ctx['z_range']:
-        z_off = z * ctx['wh']
+        z_off = z * ctx['level_height']
         level_cells = ctx['cells_3d'][z]
         for y in range(maze_data.depth):
             for x in range(maze_data.width):
@@ -80,7 +80,7 @@ def _build_rect_cube_floor(ctx, props, maze_data, created_objects, name_suffix, 
                         mat = mat_base @ ctx['mat_floor_offset']
                         _add_mesh_at(bm_floor, ctx['custom_floor'], mat, uv_floor, final_materials_list=floor_materials)
                     else:
-                        _add_floor_tile_transformed(bm_floor, uv_floor, x, y, ctx['ts'], ctx['mat_floor_offset'], z_offset=z_off)
+                        _add_floor_tile_transformed(bm_floor, uv_floor, x, y, ctx['ts'], ctx['mat_floor_offset'], z_offset=z_off, thickness=ctx['ft'])
 
                     cell_id = get_cell_id(z, y, x)
                     if dirty_cells is None:
@@ -120,7 +120,7 @@ def _build_rect_cube_walls(ctx, props, maze_data, created_objects, name_suffix, 
     wall_rng = get_rng()
     smooth_edges = props.smooth_shape_edges and ctx.get('shape_blocked') is not None
     for z in ctx['z_range']:
-        z_off_floor = z * ctx['wh']
+        z_off_floor = z * ctx['level_height']
         level_cells = ctx['cells_3d'][z]
         for level in range(ctx['tiles_high']):
             z_off = z_off_floor + level * ctx['seg_h']
@@ -298,7 +298,7 @@ def _build_rect_cube_walls(ctx, props, maze_data, created_objects, name_suffix, 
                             continue
 
                         ref_cx, ref_cy = next(iter(c1[2]))
-                        z_off_floor = z * ctx['wh']
+                        z_off_floor = z * ctx['level_height']
                         cx_w = ref_cx * ts + ts / 2
                         cy_w = ref_cy * ts + ts / 2
 
@@ -446,7 +446,7 @@ def _build_smooth_roof_triangles(ctx, props, maze_data, bm_roof, uv_roof, cell_l
                 continue
 
             ref_cx, ref_cy = next(iter(c1[2]))
-            z_off = z * ctx['wh']
+            z_off = z * ctx['level_height']
             cx_w = ref_cx * ts + ts / 2
             cy_w = ref_cy * ts + ts / 2
             roof_z = z_off + ctx['wh']
@@ -590,7 +590,7 @@ def _build_smooth_floor_triangles(ctx, props, maze_data, bm_floor, uv_floor, cel
                 continue
 
             ref_cx, ref_cy = next(iter(c1[2]))
-            z_off = z * ctx['wh']
+            z_off = z * ctx['level_height']
             cx_w = ref_cx * ts + ts / 2
             cy_w = ref_cy * ts + ts / 2
             floor_z = z_off
@@ -653,7 +653,7 @@ def _build_rect_cube_roof(ctx, props, maze_data, created_objects, name_suffix, b
             cell_layer = bm_roof.faces.layers.int.new("cell_id")
 
         for z in ctx['z_range']:
-            z_off = z * ctx['wh']
+            z_off = z * ctx['level_height']
             level_cells = ctx['cells_3d'][z]
             for y in range(maze_data.depth):
                 for x in range(maze_data.width):
@@ -725,7 +725,7 @@ def _build_rect_stairs(ctx, props, maze_data, created_objects, name_suffix, bm=N
             cell_layer = bm_stairs.faces.layers.int.new("cell_id")
 
         for zstair in ctx['z_range']:
-            z_offset = zstair * ctx['wh']
+            z_offset = zstair * ctx['level_height']
             for s in maze_data.stairs:
                 if s.get('z') != zstair:
                     continue
@@ -769,9 +769,9 @@ def _build_rect_stairs(ctx, props, maze_data, created_objects, name_suffix, bm=N
                     mat = Matrix.Translation(Vector((sx * ctx['ts'] + off, sy * ctx['ts'] + off, z_offset))) @ rot_mat @ ctx['mat_floor_offset']
                     _add_mesh_at(bm_stairs, ctx['custom_stair_mesh'].data if ctx['custom_stair_mesh'].type == 'MESH' else ctx['custom_stair_mesh'], mat, uv_stairs, final_materials_list=stair_materials)
                 elif style == 'ramp':
-                    _build_ramp_1x1(bm_stairs, uv_stairs, cx, cy, stair_ts, ctx['wh'], z_offset, rot_mat @ ctx['mat_floor_offset'])
+                    _build_ramp_1x1(bm_stairs, uv_stairs, cx, cy, stair_ts, ctx['level_height'], z_offset, rot_mat @ ctx['mat_floor_offset'])
                 else:
-                    _build_spiral_stair_1x1(bm_stairs, uv_stairs, cx, cy, stair_ts, ctx['wh'], z_offset, rot_mat @ ctx['mat_floor_offset'])
+                    _build_spiral_stair_1x1(bm_stairs, uv_stairs, cx, cy, stair_ts, ctx['level_height'], z_offset, rot_mat @ ctx['mat_floor_offset'])
 
                 cell_id = get_cell_id(zstair, sy, sx)
                 if dirty_cells is None:
@@ -830,15 +830,15 @@ def _build_rect_thin_floor(ctx, props, maze_data, created_objects, name_suffix, 
                 floor_idx = level_cells[y][x][8] if len(level_cells[y][x]) > 8 else -1
 
                 if ctx['floor_meshes_list'] and isinstance(floor_idx, int) and 0 <= floor_idx < len(ctx['floor_meshes_list']):
-                    mat_base = Matrix.Translation(Vector((x * ctx['ts'] + off, y * ctx['ts'] + off, z * ctx['wh'])))
+                    mat_base = Matrix.Translation(Vector((x * ctx['ts'] + off, y * ctx['ts'] + off, z * ctx['level_height'])))
                     mat = mat_base @ ctx['mat_floor_offset']
                     _add_mesh_at(bm_floor, ctx['floor_meshes_list'][floor_idx], mat, uv_floor, final_materials_list=floor_materials)
                 elif ctx['custom_floor']:
-                    mat_base = Matrix.Translation(Vector((x * ctx['ts'] + off, y * ctx['ts'] + off, z * ctx['wh'])))
+                    mat_base = Matrix.Translation(Vector((x * ctx['ts'] + off, y * ctx['ts'] + off, z * ctx['level_height'])))
                     mat = mat_base @ ctx['mat_floor_offset']
                     _add_mesh_at(bm_floor, ctx['custom_floor'], mat, uv_floor, final_materials_list=floor_materials)
                 else:
-                    _add_floor_tile_transformed(bm_floor, uv_floor, x, y, ctx['ts'], ctx['mat_floor_offset'], z_offset=z * ctx['wh'])
+                    _add_floor_tile_transformed(bm_floor, uv_floor, x, y, ctx['ts'], ctx['mat_floor_offset'], z_offset=z * ctx['level_height'], thickness=ctx['ft'])
 
                 cell_id = get_cell_id(z, y, x)
                 if dirty_cells is None:
@@ -974,7 +974,7 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, 
                     open_segments.add(('V', ex, ey))
 
         for level in range(ctx['tiles_high']):
-            z_off = z * ctx['wh'] + level * ctx['seg_h']
+            z_off = z * ctx['level_height'] + level * ctx['seg_h']
 
             for seg_type, a, b in segments:
                 if (seg_type, a, b) in open_segments:
@@ -1403,7 +1403,7 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, 
                             continue
 
                         ref_cx, ref_cy = next(iter(c1[2]))
-                        z_off_floor = z * ctx['wh']
+                        z_off_floor = z * ctx['level_height']
                         cx_w = ref_cx * ts + ts / 2
                         cy_w = ref_cy * ts + ts / 2
 
@@ -1671,7 +1671,7 @@ def _build_rect_thin_roof(ctx, props, maze_data, created_objects, name_suffix, b
                     h_endpoints.add((a + 1, b))
                 else:
                     v_positions.add((a, b))
-            sz = z * ctx['wh'] + ctx['wh']
+            sz = z * ctx['level_height'] + ctx['wh']
             clean_corners = ctx['clean_wall_corners']
             if ctx['custom_roof'] or ctx['roof_meshes_list']:
                 filled = set()

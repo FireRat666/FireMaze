@@ -93,6 +93,8 @@ def _prepare_maze_building_context(props, maze_data, context, collection, force_
     wh = ts * tiles_high if tiled else props.wall_height
     seg_h = ts if tiled else wh
     wt = props.tile_size if props.wall_mode == 'cube' else props.wall_thickness
+    ft = getattr(props, 'floor_thickness', 0.0)
+    level_height = wh + ft
 
     if force_simple:
         custom_floor = None
@@ -185,6 +187,8 @@ def _prepare_maze_building_context(props, maze_data, context, collection, force_
         'wh': wh,
         'seg_h': seg_h,
         'wt': wt,
+        'ft': ft,
+        'level_height': level_height,
         'custom_floor': custom_floor,
         'custom_wall': custom_wall,
         'custom_roof': custom_roof,
@@ -378,20 +382,59 @@ def _add_mesh_at(bm, src_mesh, matrix, uv_layer, final_materials_list=None):
     _merge_bmesh_geometries(temp_bm, bm)
     temp_bm.free()
 
-def _add_floor_tile_transformed(bm, uv_layer, x, y, ts, mat_offset, z_offset=0.0):
-    """Add a single quad floor tile at cell (x, y) with optional transform and Z offset."""
+def _add_floor_tile_transformed(bm, uv_layer, x, y, ts, mat_offset, z_offset=0.0, thickness=0.0):
+    """Add a floor tile at cell (x, y) with optional transform and Z offset.
+
+    When *thickness* > 0, generates a 6-face box (top, bottom, 4 sides)
+    so the floor has physical depth.  When *thickness* == 0, a single
+    quad is emitted (backward‑compatible).
+    """
     cx = x * ts + ts / 2
     cy = y * ts + ts / 2
     T = Matrix.Translation(Vector((cx, cy, z_offset))) @ mat_offset
 
     t2 = ts / 2
-    pts = [(-t2, -t2, 0.0), (t2, -t2, 0.0), (t2, t2, 0.0), (-t2, t2, 0.0)]
-    verts = [bm.verts.new(T @ Vector(p)) for p in pts]
-    face = bm.faces.new(verts)
 
-    uvs = [(0, 0), (1, 0), (1, 1), (0, 1)]
-    for loop, uv in zip(face.loops, uvs):
-        loop[uv_layer].uv = uv
+    if thickness > 0:
+        bot_z = -thickness
+        # Top face (walkable surface, at Z = 0 local)
+        pts_t = [(-t2, -t2, 0.0), (t2, -t2, 0.0), (t2, t2, 0.0), (-t2, t2, 0.0)]
+        # Bottom face (underside, at Z = -thickness local)
+        pts_b = [(-t2, -t2, bot_z), (t2, -t2, bot_z), (t2, t2, bot_z), (-t2, t2, bot_z)]
+
+        v_top = [bm.verts.new(T @ Vector(p)) for p in pts_t]
+        v_bot = [bm.verts.new(T @ Vector(p)) for p in pts_b]
+
+        f_top = bm.faces.new(v_top)
+        f_top.material_index = 0
+        for loop, uv in zip(f_top.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
+            loop[uv_layer].uv = uv
+
+        f_bot = bm.faces.new([v_bot[0], v_bot[3], v_bot[2], v_bot[1]])
+        f_bot.material_index = 1
+        for loop, uv in zip(f_bot.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
+            loop[uv_layer].uv = uv
+
+        # 4 side faces: -Y, +Y, -X, +X
+        side_quads = [
+            (v_top[0], v_top[1], v_bot[1], v_bot[0]),
+            (v_top[3], v_top[2], v_bot[2], v_bot[3]),
+            (v_top[0], v_top[3], v_bot[3], v_bot[0]),
+            (v_top[1], v_top[2], v_bot[2], v_bot[1]),
+        ]
+        for sq in side_quads:
+            f_side = bm.faces.new(sq)
+            f_side.material_index = 2
+            for loop, uv in zip(f_side.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
+                loop[uv_layer].uv = uv
+    else:
+        pts = [(-t2, -t2, 0.0), (t2, -t2, 0.0), (t2, t2, 0.0), (-t2, t2, 0.0)]
+        verts = [bm.verts.new(T @ Vector(p)) for p in pts]
+        face = bm.faces.new(verts)
+
+        uvs = [(0, 0), (1, 0), (1, 1), (0, 1)]
+        for loop, uv in zip(face.loops, uvs):
+            loop[uv_layer].uv = uv
 
 
 def _add_horizontal_roof_face_transformed(bm, uv_layer, x, y, ts, wh, wt, mat_offset, extend_left=False, extend_right=False):
@@ -503,6 +546,8 @@ def _build_guide_path(props, maze_data, collection, materials):
     tiled = props.wall_height_tiled
     tiles_high = props.wall_height_tiles if tiled else 1
     wh = ts * tiles_high if tiled else props.wall_height
+    ft = getattr(props, 'floor_thickness', 0.0)
+    level_height = wh + ft
     ho = props.guide_height_offset
     amp = props.guide_wave_amplitude
     freq = props.guide_wave_frequency
@@ -538,7 +583,7 @@ def _build_guide_path(props, maze_data, collection, materials):
             px = x * ts + ts / 2
             py = y * ts + ts / 2
 
-        pz = ho + z_coord * wh
+        pz = ho + z_coord * level_height
         if amp > 0:
             pz += amp * math.sin(freq * i)
         spline.points[i].co = (px, py, pz, 1.0)

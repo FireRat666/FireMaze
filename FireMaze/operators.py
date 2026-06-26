@@ -62,7 +62,7 @@ PROP_NAMES = [
     "vertex_paint_mode", "vertex_paint_intensity", "prop_torch_density", "prop_chest_density",
     "mask_invert", "thin_wall_double_sided", "clean_wall_corners", "fire_maze_collection_name",
     "floors", "stair_footprint", "stair_style", "stair_direction", "edit_floor_level",
-    "stair_count", "edit_tool", "edit_roof",
+    "stair_count", "edit_tool", "edit_roof", "floor_thickness",
     "selection_bias", "straightness", "direction_bias", "east_bias", "orientation_bias", "passage_bias", "eller_merge_prob", "radial_bias",
     "maze_shape", "shape_rotation", "smooth_shape_edges"
 ]
@@ -320,6 +320,8 @@ def rebuild_maze_from_collection(context, col):
         props.shape_rotation = data_dict['shape_rotation']
     if 'smooth_shape_edges' in data_dict:
         props.smooth_shape_edges = data_dict['smooth_shape_edges']
+    if 'floor_thickness' in data_dict:
+        props.floor_thickness = data_dict['floor_thickness']
 
     # Determine number of meshes in collections
     num_wall_meshes = 0
@@ -400,6 +402,7 @@ def rebuild_maze_from_collection(context, col):
         'maze_shape': props.maze_shape,
         'shape_rotation': props.shape_rotation,
         'smooth_shape_edges': props.smooth_shape_edges,
+        'floor_thickness': props.floor_thickness,
         'schema_version': 1,
     })
 
@@ -1737,14 +1740,16 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                         tiled = props.wall_height_tiled
                         tiles_high = props.wall_height_tiles if tiled else 1
                         wh = ts * tiles_high if tiled else props.wall_height
+                        ft = getattr(props, 'floor_thickness', 0.0)
+                        level_height = wh + ft
                         if props.is_editing:
                             z_hit = props.edit_floor_level
                         else:
                             if normal and abs(normal.z) > 0.5:
                                 z_val = loc.z - 0.01 if normal.z < 0 else loc.z + 0.01
-                                z_hit = max(0, min(props.floors - 1, int(z_val / wh))) if wh > 0 and props.floors > 0 else 0
+                                z_hit = max(0, min(props.floors - 1, int(z_val / level_height))) if level_height > 0 and props.floors > 0 else 0
                             else:
-                                z_hit = max(0, min(props.floors - 1, int(offset_loc.z / wh))) if wh > 0 and props.floors > 0 else 0
+                                z_hit = max(0, min(props.floors - 1, int(offset_loc.z / level_height))) if level_height > 0 and props.floors > 0 else 0
                         hit_x, hit_y = offset_loc.x, offset_loc.y
                         
                         data_dict = self._maze_raw
@@ -1781,7 +1786,9 @@ class MAZE_OT_interactive_edit(bpy.types.Operator):
                                 tiled = props.wall_height_tiled
                                 tiles_high = props.wall_height_tiles if tiled else 1
                                 wh = ts * tiles_high if tiled else props.wall_height
-                                face_dir = 'ROOF' if loc.z > (z_hit * wh + wh * 0.5) else 'FLOOR'
+                                ft = getattr(props, 'floor_thickness', 0.0)
+                                level_height = wh + ft
+                                face_dir = 'ROOF' if loc.z > (z_hit * level_height + wh * 0.5) else 'FLOOR'
                             elif grid_type == 'rect':
                                 if ny > nx and ny > nz:
                                     face_dir = 'N' if normal.y > 0 else 'S'

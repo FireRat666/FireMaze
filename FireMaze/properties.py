@@ -94,6 +94,14 @@ class FireMazeProperties(bpy.types.PropertyGroup):
         max=10.0,
         unit='LENGTH',
     )
+    floor_thickness: bpy.props.FloatProperty(
+        name="Floor Thickness",
+        description="Thickness of the floor slab between levels. Adds visual depth in multi-floor mazes.",
+        default=0.0,
+        min=0.0,
+        max=10.0,
+        unit='LENGTH',
+    )
     tile_size: bpy.props.FloatProperty(
         name="Tile Size",
         description="Size of each tile square",

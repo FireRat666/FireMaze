@@ -774,7 +774,7 @@ def _build_polar_floor(ctx, props, maze_data, created_objects, name_suffix, bm=N
     alignment = props.polar_custom_alignment
 
     for z in ctx['z_range']:
-        z_off = z * ctx['wh']
+        z_off = z * ctx['level_height']
         level_cells = ctx['cells_3d'][z]
         for r in range(rings):
             Nr = ring_sectors[r]
@@ -876,7 +876,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
 
     if props.wall_mode == 'cube':
         for z in ctx['z_range']:
-            z_off_floor = z * ctx['wh']
+            z_off_floor = z * ctx['level_height']
             level_cells = ctx['cells_3d'][z]
             for level in range(ctx['tiles_high']):
                 z_off = z_off_floor + level * ctx['seg_h']
@@ -1137,7 +1137,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
         clean_corners = ctx['clean_wall_corners']
         tw = ctx['wt'] / 2
         for z in ctx['z_range']:
-            z_off_floor = z * ctx['wh']
+            z_off_floor = z * ctx['level_height']
             level_cells = ctx['cells_3d'][z]
  
             def has_cw_wall(r_val, t_val):
@@ -1571,7 +1571,7 @@ def _build_polar_roof(ctx, props, maze_data, created_objects, name_suffix, bm=No
         alignment = props.polar_custom_alignment
 
         for z in ctx['z_range']:
-            z_off_roof = z * ctx['wh'] + ctx['wh']
+            z_off_roof = z * ctx['level_height'] + ctx['wh']
             level_cells = ctx['cells_3d'][z]
             for r in range(rings):
                 Nr = ring_sectors[r]
@@ -1664,7 +1664,7 @@ def _build_polar_stairs(ctx, props, maze_data, created_objects, name_suffix, bm=
             cell_layer = bm_stairs.faces.layers.int.new("cell_id")
         ring_sectors = maze_data.ring_sectors
         for zstair in ctx['z_range']:
-            z_offset = zstair * ctx['wh']
+            z_offset = zstair * ctx['level_height']
             for s in maze_data.stairs:
                 if s.get('z') != zstair:
                     continue
@@ -1713,9 +1713,9 @@ def _build_polar_stairs(ctx, props, maze_data, created_objects, name_suffix, bm=
                 elif style == 'stair' and ctx['custom_stair_mesh']:
                     _add_mesh_at(bm_stairs, ctx['custom_stair_mesh'].data if ctx['custom_stair_mesh'].type == 'MESH' else ctx['custom_stair_mesh'], mat, uv_stairs, final_materials_list=stair_materials)
                 elif style == 'ramp':
-                    _build_ramp_1x1(bm_stairs, uv_stairs, cx, cy, ctx['ts'], ctx['wh'], z_offset, combined_rot @ ctx['mat_floor_offset'])
+                    _build_ramp_1x1(bm_stairs, uv_stairs, cx, cy, ctx['ts'], ctx['level_height'], z_offset, combined_rot @ ctx['mat_floor_offset'])
                 else:
-                    _build_spiral_stair_1x1(bm_stairs, uv_stairs, cx, cy, ctx['ts'], ctx['wh'], z_offset, combined_rot @ ctx['mat_floor_offset'])
+                    _build_spiral_stair_1x1(bm_stairs, uv_stairs, cx, cy, ctx['ts'], ctx['level_height'], z_offset, combined_rot @ ctx['mat_floor_offset'])
 
                 cell_id = get_cell_id(zstair, sy, sx)
                 if dirty_cells is None:

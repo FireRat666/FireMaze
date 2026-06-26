@@ -1009,7 +1009,7 @@ def _generate_cube_maze(
                                         cells[z][ny][nx][idx] = -1
         # Recompute entrance_list/exit_list and set against final cells state
         entrance_list = [item for item in entrance_list if not cells[0][item[1]][item[0]][0]]
-        exit_list = [item for item in exit_list if not cells[0][item[1]][item[0]][0]]
+        exit_list = [item for item in exit_list if not cells[floors - 1][item[1]][item[0]][0]]
         if not entrance_list and num_entrances > 0:
             raise ValueError("All candidate entrance cells were blocked by mask.")
         if not exit_list and ((mode == 'exit' and num_exits > 0) or (mode == 'center' and emergency_exits)):

@@ -50,6 +50,7 @@ class VIEW3D_PT_fire_maze(bpy.types.Panel):
         col.prop(props, "tile_size")
         col.separator(factor=0.5)
         col.prop(props, "floors")
+        col.prop(props, "floor_thickness")
         if props.floors > 1:
             if props.grid_type == 'rect':
                 col.prop(props, "stair_footprint")
