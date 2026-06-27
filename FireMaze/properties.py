@@ -45,6 +45,12 @@ def _clamp_max_room_size(self, context):
         self['min_room_size'] = self.max_room_size
 
 
+def _update_maze_shape(self, context):
+    """Disable smooth shape edges when switching back to rectangle shape."""
+    if self.maze_shape == 'rect':
+        self.smooth_shape_edges = False
+
+
 class FireMazeProperties(bpy.types.PropertyGroup):
     """All user-configurable maze generation and editing properties.
 
@@ -188,6 +194,7 @@ class FireMazeProperties(bpy.types.PropertyGroup):
             ('triangle', 'Triangle', 'Triangular boundary'),
             ('hexagon', 'Hexagon', 'Hexagonal boundary'),
         ],
+        update=_update_maze_shape,
     )
     shape_rotation: bpy.props.EnumProperty(
         name="Shape Rotation",

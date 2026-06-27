@@ -180,7 +180,7 @@ def _build_rect_cube_floor(ctx, props, maze_data, created_objects, name_suffix, 
     if cell_layer is None:
         cell_layer = bm_floor.faces.layers.int.new("cell_id")
     off = ctx['ts'] / 2 if ctx['centered'] else 0
-    pad = 3 if props.smooth_shape_edges and getattr(props, 'smooth_boundary_method', 'filler') == 'clip' else 0
+    pad = 3 if props.smooth_shape_edges and ctx.get('shape_blocked') is not None and getattr(props, 'smooth_boundary_method', 'filler') == 'clip' else 0
     from ..shape_boundaries import get_cell_clip_status
 
     for z in ctx['z_range']:
@@ -204,7 +204,7 @@ def _build_rect_cube_floor(ctx, props, maze_data, created_objects, name_suffix, 
                 
                 # Determine floor generation and clipping status
                 if is_blocked:
-                    if not (props.smooth_shape_edges and getattr(props, 'smooth_boundary_method', 'filler') == 'clip'):
+                    if not (props.smooth_shape_edges and ctx.get('shape_blocked') is not None and getattr(props, 'smooth_boundary_method', 'filler') == 'clip'):
                         continue
                     # Check clipping status for this blocked cell
                     status = get_cell_clip_status(x, y, maze_data.width, maze_data.depth, props.maze_shape, props.shape_rotation, props.smooth_boundary_offset)
@@ -213,7 +213,7 @@ def _build_rect_cube_floor(ctx, props, maze_data, created_objects, name_suffix, 
                     use_clip = (status == 'clip')
                 else:
                     # Active floor cell: check if we should clip it (only when smooth edges & clip are active)
-                    if props.smooth_shape_edges and getattr(props, 'smooth_boundary_method', 'filler') == 'clip':
+                    if props.smooth_shape_edges and ctx.get('shape_blocked') is not None and getattr(props, 'smooth_boundary_method', 'filler') == 'clip':
                         status = get_cell_clip_status(x, y, maze_data.width, maze_data.depth, props.maze_shape, props.shape_rotation, props.smooth_boundary_offset)
                         use_clip = (status == 'clip')
                         if status == 'none':
@@ -883,7 +883,7 @@ def _build_rect_cube_roof(ctx, props, maze_data, created_objects, name_suffix, b
         if cell_layer is None:
             cell_layer = bm_roof.faces.layers.int.new("cell_id")
 
-        pad = 3 if props.smooth_shape_edges and getattr(props, 'smooth_boundary_method', 'filler') == 'clip' else 0
+        pad = 3 if props.smooth_shape_edges and ctx.get('shape_blocked') is not None and getattr(props, 'smooth_boundary_method', 'filler') == 'clip' else 0
         off = ctx['ts'] / 2 if ctx['centered'] else 0
 
         for z in ctx['z_range']:
@@ -912,7 +912,7 @@ def _build_rect_cube_roof(ctx, props, maze_data, created_objects, name_suffix, b
                     if not is_wall:
                         continue
                     
-                    if props.smooth_shape_edges and getattr(props, 'smooth_boundary_method', 'filler') == 'clip':
+                    if props.smooth_shape_edges and ctx.get('shape_blocked') is not None and getattr(props, 'smooth_boundary_method', 'filler') == 'clip':
                         status = get_cell_clip_status(x, y, maze_data.width, maze_data.depth, props.maze_shape, props.shape_rotation, props.smooth_boundary_offset)
                         use_clip = (status == 'clip')
                         if status == 'none':
@@ -1089,7 +1089,7 @@ def _build_rect_thin_floor(ctx, props, maze_data, created_objects, name_suffix, 
     if cell_layer is None:
         cell_layer = bm_floor.faces.layers.int.new("cell_id")
     off = ctx['ts'] / 2 if ctx['centered'] else 0
-    pad = 3 if props.smooth_shape_edges and getattr(props, 'smooth_boundary_method', 'filler') == 'clip' else 0
+    pad = 3 if props.smooth_shape_edges and ctx.get('shape_blocked') is not None and getattr(props, 'smooth_boundary_method', 'filler') == 'clip' else 0
     from ..shape_boundaries import get_cell_clip_status
 
     for z in ctx['z_range']:
@@ -1113,7 +1113,7 @@ def _build_rect_thin_floor(ctx, props, maze_data, created_objects, name_suffix, 
                 
                 # Determine floor generation and clipping status
                 if is_blocked:
-                    if not (props.smooth_shape_edges and getattr(props, 'smooth_boundary_method', 'filler') == 'clip'):
+                    if not (props.smooth_shape_edges and ctx.get('shape_blocked') is not None and getattr(props, 'smooth_boundary_method', 'filler') == 'clip'):
                         continue
                     # Check clipping status for this blocked cell
                     status = get_cell_clip_status(x, y, maze_data.width, maze_data.depth, props.maze_shape, props.shape_rotation, props.smooth_boundary_offset)
@@ -1122,7 +1122,7 @@ def _build_rect_thin_floor(ctx, props, maze_data, created_objects, name_suffix, 
                     use_clip = (status == 'clip')
                 else:
                     # Active floor cell: check if we should clip it (only when smooth edges & clip are active)
-                    if props.smooth_shape_edges and getattr(props, 'smooth_boundary_method', 'filler') == 'clip':
+                    if props.smooth_shape_edges and ctx.get('shape_blocked') is not None and getattr(props, 'smooth_boundary_method', 'filler') == 'clip':
                         status = get_cell_clip_status(x, y, maze_data.width, maze_data.depth, props.maze_shape, props.shape_rotation, props.smooth_boundary_offset)
                         use_clip = (status == 'clip')
                         if status == 'none':
