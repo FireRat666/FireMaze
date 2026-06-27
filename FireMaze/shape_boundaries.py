@@ -424,6 +424,54 @@ def clip_cell(
     return world_verts, tris
 
 
+def _clip_segment_to_box(
+    ax: float, ay: float, bx: float, by: float,
+    xmin: float, xmax: float, ymin: float, ymax: float
+) -> Optional[Tuple[Tuple[float, float], Tuple[float, float]]]:
+    """Clip directed line segment A -> B to the 2D box using Liang-Barsky."""
+    t0, t1 = 0.0, 1.0
+    dx = bx - ax
+    dy = by - ay
+
+    def clip_test(p: float, q: float) -> bool:
+        nonlocal t0, t1
+        if p > 0.0:
+            t = q / p
+            if t < t0:
+                return False
+            if t < t1:
+                t1 = t
+        elif p < 0.0:
+            t = q / p
+            if t > t1:
+                return False
+            if t > t0:
+                t0 = t
+        else:
+            if q < 0.0:
+                return False
+        return True
+
+    # Left:   -dx * t <= ax - xmin
+    if not clip_test(-dx, ax - xmin):
+        return None
+    # Right:  dx * t <= xmax - ax
+    if not clip_test(dx, xmax - ax):
+        return None
+    # Bottom: -dy * t <= ay - ymin
+    if not clip_test(-dy, ay - ymin):
+        return None
+    # Top:    dy * t <= ymax - ay
+    if not clip_test(dy, ymax - ay):
+        return None
+
+    if t0 + 1e-6 < t1:
+        p0 = (ax + t0 * dx, ay + t0 * dy)
+        p1 = (ax + t1 * dx, ay + t1 * dy)
+        return p0, p1
+    return None
+
+
 def get_boundary_edges(
     x: int,
     y: int,
@@ -436,7 +484,7 @@ def get_boundary_edges(
 ) -> List[Tuple[Tuple[float, float, float], Tuple[float, float, float]]]:
     """Return the world-space edge segment(s) representing the shape boundary contour inside cell (x, y).
 
-    Returns a list containing a single (v0, v1) tuple of 3D coordinates, or an empty list if not a boundary cell.
+    Returns a list of (v0, v1) tuples of 3D coordinates.
     """
     if shape == 'rect':
         return []
@@ -445,51 +493,26 @@ def get_boundary_edges(
     if not poly:
         return []
 
-    def is_inside(u: float, v: float) -> bool:
-        return _point_in_polygon(u, v, poly) and not is_point_on_polygon_boundary(u, v, poly)
+    # Convert normalized vertices to world space
+    world_poly = [(u * width * ts, v * depth * ts) for u, v in poly]
 
-    corners = [
-        (x / width, y / depth),          # BL
-        ((x + 1) / width, y / depth),    # BR
-        ((x + 1) / width, (y + 1) / depth), # TR
-        (x / width, (y + 1) / depth),    # TL
-    ]
+    xmin = x * ts
+    xmax = (x + 1) * ts
+    ymin = y * ts
+    ymax = (y + 1) * ts
 
-    inside = [is_inside(u, v) for u, v in corners]
-    num_inside = sum(inside)
-
-    if num_inside == 4 or num_inside == 0:
-        return []
-
-    crossings = []
-    for i in range(4):
-        p1 = corners[i]
-        p2 = corners[(i + 1) % 4]
-        in1 = inside[i]
-        in2 = inside[(i + 1) % 4]
-        if in1 != in2:
-            if in1:
-                # Inside to Outside crossing
-                p_cross = _intersect_segment(p1, p2, is_inside)
-                crossings.append((p_cross, 'out'))
-            else:
-                # Outside to Inside crossing
-                p_cross = _intersect_segment(p2, p1, is_inside)
-                crossings.append((p_cross, 'in'))
-
-    if len(crossings) == 2:
-        # Sort crossings so Inside->Outside transition is first to keep shape interior on the left of the edge
-        if crossings[0][1] == 'in' and crossings[1][1] == 'out':
-            c_out, c_in = crossings[1][0], crossings[0][0]
-        else:
-            c_out, c_in = crossings[0][0], crossings[1][0]
-
-        # Convert to world space
-        v0 = (c_out[0] * width * ts, c_out[1] * depth * ts, 0.0)
-        v1 = (c_in[0] * width * ts, c_in[1] * depth * ts, 0.0)
-        return [(v0, v1)]
-
-    return []
+    edges = []
+    n = len(world_poly)
+    for i in range(n):
+        p0 = world_poly[i]
+        p1 = world_poly[(i + 1) % n]
+        
+        clipped = _clip_segment_to_box(p0[0], p0[1], p1[0], p1[1], xmin, xmax, ymin, ymax)
+        if clipped is not None:
+            v0 = (clipped[0][0], clipped[0][1], 0.0)
+            v1 = (clipped[1][0], clipped[1][1], 0.0)
+            edges.append((v0, v1))
+    return edges
 
 
 def get_cell_clip_status(x: int, y: int, width: int, depth: int, shape: str, rotation: str, offset: float) -> str:

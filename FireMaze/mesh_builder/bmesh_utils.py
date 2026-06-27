@@ -424,13 +424,20 @@ def _add_clipped_custom_mesh_at(bm, src_mesh, matrix, uv_layer, final_materials_
                 to_center = center - plane_co
                 if plane_no.dot(to_center) > 0.0:
                     plane_no = -plane_no
-                bmesh.ops.bisect_plane(
+                res = bmesh.ops.bisect_plane(
                     temp_bm,
                     geom=temp_bm.verts[:] + temp_bm.edges[:] + temp_bm.faces[:],
                     plane_co=plane_co,
                     plane_no=plane_no,
                     clear_outer=True
                 )
+                geom_cut = res.get('geom_cut', [])
+                cut_edges = [e for e in geom_cut if isinstance(e, bmesh.types.BMEdge)]
+                if cut_edges:
+                    res_fill = bmesh.ops.edgeloop_fill(temp_bm, edges=cut_edges)
+                    new_faces = res_fill.get('faces', [])
+                    for f in new_faces:
+                        f.material_index = 2
 
     _merge_bmesh_geometries(temp_bm, bm)
     temp_bm.free()
@@ -471,10 +478,10 @@ def _add_floor_tile_transformed(bm, uv_layer, x, y, ts, mat_offset, z_offset=0.0
 
         # 4 side faces: -Y, +Y, -X, +X
         side_quads = [
-            (v_top[0], v_top[1], v_bot[1], v_bot[0]),
-            (v_top[3], v_top[2], v_bot[2], v_bot[3]),
-            (v_top[0], v_top[3], v_bot[3], v_bot[0]),
-            (v_top[1], v_top[2], v_bot[2], v_bot[1]),
+            (v_bot[0], v_bot[1], v_top[1], v_top[0]),  # -Y
+            (v_bot[2], v_bot[3], v_top[3], v_top[2]),  # +Y
+            (v_bot[3], v_bot[0], v_top[0], v_top[3]),  # -X
+            (v_bot[1], v_bot[2], v_top[2], v_top[1]),  # +X
         ]
         for sq in side_quads:
             f_side = bm.faces.new(sq)
