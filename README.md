@@ -1,7 +1,7 @@
 # FireMaze
 
 [![Blender](https://img.shields.io/badge/Blender-4.2%2B-orange?logo=blender&logoColor=white)](https://www.blender.org/)
-[![Version](https://img.shields.io/badge/version-3.2.0-blue)](https://github.com/FireRat666/FireMaze/releases/tag/v3.2.0)
+[![Version](https://img.shields.io/badge/version-3.3.0-blue)](https://github.com/FireRat666/FireMaze/releases/tag/v3.3.0)
 [![License](https://img.shields.io/badge/license-GPL--3.0--or--later-green)](LICENSE)
 
 A Blender 4.2+ extension for generating, editing, and customizing tile-based mazes.
