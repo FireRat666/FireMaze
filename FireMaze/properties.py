@@ -205,6 +205,22 @@ class FireMazeProperties(bpy.types.PropertyGroup):
         description="Clip boundary tiles to the shape contour for a smoother outline",
         default=False,
     )
+    smooth_boundary_method: bpy.props.EnumProperty(
+        name="Boundary Method",
+        description="How boundary floor/roof tiles are handled at shape edges",
+        default='filler',
+        items=[
+            ('filler', 'Filler Triangles', 'Generate extra triangular faces to fill boundary gaps'),
+            ('clip', 'Clipped Tiles', 'Clip floor/roof tiles to the boundary contour'),
+        ],
+    )
+    smooth_boundary_offset: bpy.props.FloatProperty(
+        name="Boundary Offset",
+        description="Extend the smooth shape boundary outward by this many cell units to clear corners",
+        default=0.15,
+        min=0.0,
+        max=2.0,
+    )
     polar_rings: bpy.props.IntProperty(
         name="Rings",
         description="Number of concentric rings in the polar maze",

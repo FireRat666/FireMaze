@@ -64,7 +64,7 @@ PROP_NAMES = [
     "floors", "stair_footprint", "stair_style", "stair_direction", "edit_floor_level",
     "stair_count", "edit_tool", "edit_roof", "floor_thickness",
     "selection_bias", "straightness", "direction_bias", "east_bias", "orientation_bias", "passage_bias", "eller_merge_prob", "radial_bias",
-    "maze_shape", "shape_rotation", "smooth_shape_edges"
+    "maze_shape", "shape_rotation", "smooth_shape_edges", "smooth_boundary_method", "smooth_boundary_offset"
 ]
 
 POINTER_PROPS = [
@@ -320,6 +320,8 @@ def rebuild_maze_from_collection(context, col):
         props.shape_rotation = data_dict['shape_rotation']
     if 'smooth_shape_edges' in data_dict:
         props.smooth_shape_edges = data_dict['smooth_shape_edges']
+    if 'smooth_boundary_method' in data_dict:
+        props.smooth_boundary_method = data_dict['smooth_boundary_method']
     if 'floor_thickness' in data_dict:
         props.floor_thickness = data_dict['floor_thickness']
 
@@ -402,6 +404,7 @@ def rebuild_maze_from_collection(context, col):
         'maze_shape': props.maze_shape,
         'shape_rotation': props.shape_rotation,
         'smooth_shape_edges': props.smooth_shape_edges,
+        'smooth_boundary_method': props.smooth_boundary_method,
         'floor_thickness': props.floor_thickness,
         'schema_version': 1,
     })
@@ -602,6 +605,7 @@ class MAZE_OT_generate(bpy.types.Operator):
             'maze_shape': props.maze_shape,
             'shape_rotation': props.shape_rotation,
             'smooth_shape_edges': props.smooth_shape_edges,
+            'smooth_boundary_method': props.smooth_boundary_method,
             'schema_version': 1,
         })
 

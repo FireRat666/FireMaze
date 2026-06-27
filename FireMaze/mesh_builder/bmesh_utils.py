@@ -382,6 +382,60 @@ def _add_mesh_at(bm, src_mesh, matrix, uv_layer, final_materials_list=None):
     _merge_bmesh_geometries(temp_bm, bm)
     temp_bm.free()
 
+def _add_clipped_custom_mesh_at(bm, src_mesh, matrix, uv_layer, final_materials_list, x, y, w, d, ts, shape, rotation, offset=0.0):
+    """Place a custom mesh, clip it to the segmented boundary polygon, and merge it into bm."""
+    material_map = []
+    if final_materials_list is not None and src_mesh:
+        for mat in src_mesh.materials:
+            if mat:
+                if mat not in final_materials_list:
+                    final_materials_list.append(mat)
+                material_map.append(final_materials_list.index(mat))
+            else:
+                material_map.append(0)
+
+    temp_bm = _get_bmesh_from_cache(src_mesh)
+
+    bmesh.ops.transform(temp_bm, matrix=matrix, verts=temp_bm.verts)
+
+    if final_materials_list is not None and material_map:
+        for f in temp_bm.faces:
+            if f.material_index < len(material_map):
+                f.material_index = material_map[f.material_index]
+            else:
+                f.material_index = 0
+
+    from ..shape_boundaries import get_perfect_shape_polygon
+    poly = get_perfect_shape_polygon(shape, rotation, w, d, offset)
+    if poly:
+        n = len(poly)
+        world_poly = [Vector((u * w * ts, v * d * ts, 0.0)) for u, v in poly]
+        for i in range(n):
+            p0 = world_poly[i]
+            p1 = world_poly[(i + 1) % n]
+            dx = p1.x - p0.x
+            dy = p1.y - p0.y
+            plane_co = p0
+            plane_no = Vector((dy, -dx, 0.0))
+            if plane_no.length > 1e-6:
+                plane_no.normalize()
+                # Ensure plane_no points to the OUTSIDE of the shape (away from center)
+                center = Vector((w * ts / 2, d * ts / 2, 0.0))
+                to_center = center - plane_co
+                if plane_no.dot(to_center) > 0.0:
+                    plane_no = -plane_no
+                bmesh.ops.bisect_plane(
+                    temp_bm,
+                    geom=temp_bm.verts[:] + temp_bm.edges[:] + temp_bm.faces[:],
+                    plane_co=plane_co,
+                    plane_no=plane_no,
+                    clear_outer=True
+                )
+
+    _merge_bmesh_geometries(temp_bm, bm)
+    temp_bm.free()
+
+
 def _add_floor_tile_transformed(bm, uv_layer, x, y, ts, mat_offset, z_offset=0.0, thickness=0.0):
     """Add a floor tile at cell (x, y) with optional transform and Z offset.
 

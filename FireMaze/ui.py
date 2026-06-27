@@ -31,6 +31,10 @@ class VIEW3D_PT_fire_maze(bpy.types.Panel):
             if props.maze_shape != 'rect':
                 col.prop(props, "shape_rotation", text="Rotation")
                 col.prop(props, "smooth_shape_edges", text="Smooth Shape Edges")
+                if props.smooth_shape_edges:
+                    col.prop(props, "smooth_boundary_method", text="Method")
+                    if getattr(props, 'smooth_boundary_method', 'filler') == 'clip':
+                        col.prop(props, "smooth_boundary_offset", text="Boundary Offset")
             col.prop(props, "width")
             col.prop(props, "depth")
         else:
@@ -311,6 +315,10 @@ class VIEW3D_PT_fire_maze_custom_tiles(bpy.types.Panel):
         col.prop(props, "custom_floor_collection", text="Floor Collection")
         col.prop(props, "custom_roof_mesh", text="Roof Mesh")
         col.prop(props, "custom_roof_collection", text="Roof Collection")
+        if props.floor_thickness > 0.0 and (props.custom_floor_mesh or props.custom_floor_collection or props.custom_roof_mesh or props.custom_roof_collection):
+            warn = col.row()
+            warn.alert = True
+            warn.label(text="Note: Custom floors/roofs do not scale with thickness.", icon='INFO')
         col.separator(factor=0.3)
         col.prop(props, "custom_stair_mesh", text="Stair Mesh")
         col.prop(props, "custom_ramp_mesh", text="Ramp Mesh")

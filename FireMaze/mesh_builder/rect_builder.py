@@ -9,7 +9,9 @@ from ..maze_data import MazeData
 from .bmesh_utils import (
     _create_bmesh_element,
     _add_mesh_at,
+    _add_clipped_custom_mesh_at,
     _add_floor_tile_transformed,
+    _merge_bmesh_geometries,
     _create_object_from_bm,
     _add_wall_face_transformed,
     _safe_remove_doubles,
@@ -33,6 +35,86 @@ from .post_processor import (
 )
 from .polar_builder import _build_polar_maze_objects_impl
 
+
+def _is_boundary_cell(x, y, w, d, shape_blocked):
+    """Return True if cell (x,y) is adjacent to a cell of opposite blocked status (including diagonals)."""
+    cell_blocked = shape_blocked[y][x]
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dx == 0 and dy == 0:
+                continue
+            nx, ny = x + dx, y + dy
+            if nx < 0 or nx >= w or ny < 0 or ny >= d:
+                neighbor_blocked = True
+            else:
+                neighbor_blocked = shape_blocked[ny][nx]
+            if neighbor_blocked != cell_blocked:
+                return True
+    return False
+
+
+def _add_clipped_floor_tile(bm, uv_layer, x, y, w, d, ts, shape, rotation, z_offset, mat_offset, thickness=0.0, offset=0.0):
+    """Clip a floor tile at cell (x, y) to the mathematical shape boundary wall contour using BMesh bisect."""
+    from ..shape_boundaries import get_perfect_shape_polygon
+    poly = get_perfect_shape_polygon(shape, rotation, w, d, offset)
+    if not poly:
+        return False
+
+    temp_bm = bmesh.new()
+    temp_uv = temp_bm.loops.layers.uv.new(uv_layer.name)
+
+    _add_floor_tile_transformed(
+        temp_bm, temp_uv, x, y, ts, mat_offset, z_offset=z_offset, thickness=thickness
+    )
+
+    n = len(poly)
+    world_poly = [Vector((u * w * ts, v * d * ts, 0.0)) for u, v in poly]
+
+    for i in range(n):
+        p0 = world_poly[i]
+        p1 = world_poly[(i + 1) % n]
+        dx = p1.x - p0.x
+        dy = p1.y - p0.y
+        plane_co = p0
+        plane_no = Vector((dy, -dx, 0.0))
+        if plane_no.length > 1e-6:
+            plane_no.normalize()
+            center = Vector((w * ts / 2, d * ts / 2, 0.0))
+            to_center = center - plane_co
+            if plane_no.dot(to_center) > 0.0:
+                plane_no = -plane_no
+
+            if temp_bm.verts:
+                bmesh.ops.bisect_plane(
+                    temp_bm,
+                    geom=temp_bm.verts[:] + temp_bm.edges[:] + temp_bm.faces[:],
+                    plane_co=plane_co,
+                    plane_no=plane_no,
+                    clear_outer=True
+                )
+
+
+    # Remove degenerate/zero-area faces
+    for face in list(temp_bm.faces):
+        if face.calc_area() < 1e-5:
+            temp_bm.faces.remove(face)
+
+    if not temp_bm.faces:
+        temp_bm.free()
+        return True
+
+    # Clean up loose/unused geometry
+    loose_verts = [v for v in temp_bm.verts if not v.link_faces]
+    if loose_verts:
+        bmesh.ops.delete(temp_bm, geom=loose_verts, context='VERTS')
+
+    temp_bm.verts.ensure_lookup_table()
+    temp_bm.faces.ensure_lookup_table()
+    _merge_bmesh_geometries(temp_bm, bm)
+    temp_bm.free()
+    return True
+
+
 def _build_rect_cube_floor(ctx, props, maze_data, created_objects, name_suffix, bm=None, uv_layer=None, materials=None, dirty_cells=None):
     """Build cube-mode floor tiles for a rectangular grid, optionally updating an existing BMesh."""
     if bm is None:
@@ -48,51 +130,111 @@ def _build_rect_cube_floor(ctx, props, maze_data, created_objects, name_suffix, 
     if cell_layer is None:
         cell_layer = bm_floor.faces.layers.int.new("cell_id")
     off = ctx['ts'] / 2 if ctx['centered'] else 0
+    pad = 3 if props.smooth_shape_edges and getattr(props, 'smooth_boundary_method', 'filler') == 'clip' else 0
+    from ..shape_boundaries import get_cell_clip_status
+
     for z in ctx['z_range']:
         z_off = z * ctx['level_height']
         level_cells = ctx['cells_3d'][z]
-        for y in range(maze_data.depth):
-            for x in range(maze_data.width):
-                if dirty_cells is not None and (z, y, x) not in dirty_cells:
-                    continue
-                if (z, y, x) in ctx['stair_top_cells']:
-                    continue
-                is_wall = level_cells[y][x][0]
-                if not is_wall:
-                    if dirty_cells is None:
-                        start_idx = len(bm_floor.faces)
-                    else:
-                        existing_faces = set(bm_floor.faces)
+        for y in range(-pad, maze_data.depth + pad):
+            for x in range(-pad, maze_data.width + pad):
+                # Clamp coordinates for dirty cells check and cell_id encoding
+                y_clamp = max(0, min(maze_data.depth - 1, y))
+                x_clamp = max(0, min(maze_data.width - 1, x))
 
-                    if ctx.get('shape_blocked') is not None and ctx['shape_blocked'][y][x]:
+                if dirty_cells is not None and (z, y_clamp, x_clamp) not in dirty_cells:
+                    continue
+
+                is_in_grid = (0 <= x < maze_data.width and 0 <= y < maze_data.depth)
+
+                if is_in_grid and (z, y, x) in ctx['stair_top_cells']:
+                    continue
+
+                is_blocked = not is_in_grid or (ctx.get('shape_blocked') is not None and ctx['shape_blocked'][y][x])
+                
+                # Determine floor generation and clipping status
+                if is_blocked:
+                    if not (props.smooth_shape_edges and getattr(props, 'smooth_boundary_method', 'filler') == 'clip'):
                         continue
+                    # Check clipping status for this blocked cell
+                    status = get_cell_clip_status(x, y, maze_data.width, maze_data.depth, props.maze_shape, props.shape_rotation, props.smooth_boundary_offset)
+                    if status == 'none':
+                        continue
+                    use_clip = (status == 'clip')
+                else:
+                    is_wall = level_cells[y][x][0]
+                    if is_wall:
+                        continue
+                    # Active floor cell: check if we should clip it (only when smooth edges & clip are active)
+                    if props.smooth_shape_edges and getattr(props, 'smooth_boundary_method', 'filler') == 'clip':
+                        status = get_cell_clip_status(x, y, maze_data.width, maze_data.depth, props.maze_shape, props.shape_rotation, props.smooth_boundary_offset)
+                        use_clip = (status == 'clip')
+                        if status == 'none':
+                            continue
+                    else:
+                        use_clip = False
 
+                if dirty_cells is None:
+                    start_idx = len(bm_floor.faces)
+                else:
+                    existing_faces = set(bm_floor.faces)
+
+                floor_idx = -1
+                if not is_blocked:
                     floor_idx = level_cells[y][x][5] if len(level_cells[y][x]) > 5 else -1
+                if floor_idx < 0 and ctx['floor_meshes_list']:
+                    floor_idx = 0
 
-                    if ctx['floor_meshes_list'] and isinstance(floor_idx, int) and 0 <= floor_idx < len(ctx['floor_meshes_list']):
-                        off = ctx['ts'] / 2 if ctx['centered'] else 0
-                        mat_base = Matrix.Translation(Vector((x * ctx['ts'] + off, y * ctx['ts'] + off, z_off)))
-                        mat = mat_base @ ctx['mat_floor_offset']
+                has_custom = False
+                if ctx['floor_meshes_list'] and isinstance(floor_idx, int) and 0 <= floor_idx < len(ctx['floor_meshes_list']):
+                    has_custom = True
+                    mat_base = Matrix.Translation(Vector((x * ctx['ts'] + off, y * ctx['ts'] + off, z_off)))
+                    mat = mat_base @ ctx['mat_floor_offset']
+                    if use_clip:
+                        _add_clipped_custom_mesh_at(
+                            bm_floor, ctx['floor_meshes_list'][floor_idx], mat, uv_floor, floor_materials,
+                            x, y, maze_data.width, maze_data.depth, ctx['ts'], props.maze_shape, props.shape_rotation,
+                            offset=props.smooth_boundary_offset
+                        )
+                    else:
                         _add_mesh_at(bm_floor, ctx['floor_meshes_list'][floor_idx], mat, uv_floor, final_materials_list=floor_materials)
-                    elif ctx['custom_floor']:
-                        off = ctx['ts'] / 2 if ctx['centered'] else 0
-                        mat_base = Matrix.Translation(Vector((x * ctx['ts'] + off, y * ctx['ts'] + off, z_off)))
-                        mat = mat_base @ ctx['mat_floor_offset']
+                elif ctx['custom_floor']:
+                    has_custom = True
+                    mat_base = Matrix.Translation(Vector((x * ctx['ts'] + off, y * ctx['ts'] + off, z_off)))
+                    mat = mat_base @ ctx['mat_floor_offset']
+                    if use_clip:
+                        _add_clipped_custom_mesh_at(
+                            bm_floor, ctx['custom_floor'], mat, uv_floor, floor_materials,
+                            x, y, maze_data.width, maze_data.depth, ctx['ts'], props.maze_shape, props.shape_rotation,
+                            offset=props.smooth_boundary_offset
+                        )
+                    else:
                         _add_mesh_at(bm_floor, ctx['custom_floor'], mat, uv_floor, final_materials_list=floor_materials)
+
+                if not has_custom:
+                    if use_clip:
+                        clipped = _add_clipped_floor_tile(
+                            bm_floor, uv_floor, x, y, maze_data.width, maze_data.depth,
+                            ctx['ts'], props.maze_shape, props.shape_rotation,
+                            z_offset=z_off, mat_offset=ctx['mat_floor_offset'],
+                            thickness=ctx['ft'], offset=props.smooth_boundary_offset)
+                        if not clipped:
+                            _add_floor_tile_transformed(bm_floor, uv_floor, x, y, ctx['ts'], ctx['mat_floor_offset'], z_offset=z_off, thickness=ctx['ft'])
                     else:
                         _add_floor_tile_transformed(bm_floor, uv_floor, x, y, ctx['ts'], ctx['mat_floor_offset'], z_offset=z_off, thickness=ctx['ft'])
 
-                    cell_id = get_cell_id(z, y, x)
-                    if dirty_cells is None:
-                        bm_floor.faces.ensure_lookup_table()
-                        for i in range(start_idx, len(bm_floor.faces)):
-                            bm_floor.faces[i][cell_layer] = cell_id
-                    else:
-                        for f in bm_floor.faces:
-                            if f not in existing_faces:
-                                f[cell_layer] = cell_id
+                cell_id = get_cell_id(z, y_clamp, x_clamp)
+                if dirty_cells is None:
+                    bm_floor.faces.ensure_lookup_table()
+                    for i in range(start_idx, len(bm_floor.faces)):
+                        bm_floor.faces[i][cell_layer] = cell_id
+                else:
+                    for f in bm_floor.faces:
+                        if f not in existing_faces:
+                            f[cell_layer] = cell_id
 
-    _build_smooth_floor_triangles(ctx, props, maze_data, bm_floor, uv_floor, cell_layer, dirty_cells)
+    if getattr(props, 'smooth_boundary_method', 'filler') != 'clip':
+        _build_smooth_floor_triangles(ctx, props, maze_data, bm_floor, uv_floor, cell_layer, dirty_cells)
 
     if not is_external_bm:
         floor_obj = _create_object_from_bm(bm_floor, f"FireMaze_Floor{name_suffix}", ctx['col'], None)
@@ -197,139 +339,168 @@ def _build_rect_cube_walls(ctx, props, maze_data, created_objects, name_suffix, 
                                     f[cell_layer] = cell_id
 
         if smooth_edges:
-            from ..shape_boundaries import _SHAPE_TESTS, _ROTATION_ANGLES, _rotate_point
+            from ..shape_boundaries import _ROTATION_ANGLES, _rotate_point
+            w = maze_data.width
+            d = maze_data.depth
+            ts = ctx['ts']
+            sb = ctx['shape_blocked']
+            angle_rad = _ROTATION_ANGLES.get(props.shape_rotation, 0.0)
 
-            test_fn = _SHAPE_TESTS.get(props.maze_shape)
-            if test_fn is not None:
-                angle_rad = _ROTATION_ANGLES.get(props.shape_rotation, 0.0)
-                def _pt_outside(u, v):
-                    pu, pv = u, v
-                    if angle_rad != 0.0:
-                        pu, pv = _rotate_point(pu, pv, -angle_rad)
-                    return not test_fn(pu, pv)
+            is_clip_mode = (getattr(props, 'smooth_boundary_method', 'filler') == 'clip')
+            corner_items = []
+            if is_clip_mode:
+                from ..shape_boundaries import _SHAPE_TESTS_STRICT
+                test_fn = _SHAPE_TESTS_STRICT.get(props.maze_shape)
+                if test_fn is not None:
+                    # Clip mode: collect perfect boundary edges segment-by-segment
+                    pad = 3
+                    perfect_contour = []
+                    from ..shape_boundaries import get_boundary_edges
+                    for y in range(-pad, d + pad):
+                        for x in range(-pad, w + pad):
+                            edges = get_boundary_edges(x, y, w, d, ts, props.maze_shape, props.shape_rotation, offset=props.smooth_boundary_offset)
+                            for v0, v1 in edges:
+                                perfect_contour.append((v0[0], v0[1], v1[0], v1[1], x, y))
 
-                w = maze_data.width
-                d = maze_data.depth
-                ts = ctx['ts']
-                sb = ctx['shape_blocked']
+                    if perfect_contour:
+                        cx_center = w * ts / 2
+                        cy_center = d * ts / 2
+                        perfect_contour.sort(key=lambda seg: math.atan2((seg[1] + seg[3])/2 - cy_center, (seg[0] + seg[2])/2 - cx_center))
 
-                # Collect corners of boundary cells that face the outside.
-                corner_dict = {}  # (world_x, world_y) -> set of (cell_x, cell_y)
-                for y in range(d):
-                    for x in range(w):
-                        if sb[y][x]:
-                            continue
-                        boundary = False
-                        for ny, nx in ((y-1,x),(y+1,x),(y,x-1),(y,x+1)):
-                            if nx < 0 or nx >= w or ny < 0 or ny >= d or sb[ny][nx]:
-                                boundary = True
-                                break
-                        if not boundary:
-                            continue
-                        for cu, cv in [(x, y), (x+1, y), (x+1, y+1), (x, y+1)]:
-                            u, v = cu / w, cv / d
-                            if _pt_outside(u, v):
-                                key = (cu * ts, cv * ts)
-                                corner_dict.setdefault(key, set()).add((x, y))
+                        for seg in perfect_contour:
+                            corner_items.append((seg[0], seg[1], frozenset([(seg[4], seg[5])])))
+            else:
+                # Filler mode: collect corners of active grid boundary cells facing outside using original logic
+                from ..shape_boundaries import _SHAPE_TESTS
+                test_fn_filler = _SHAPE_TESTS.get(props.maze_shape)
+                if test_fn_filler is not None:
+                    def _pt_outside_filler(u, v):
+                        pu, pv = u, v
+                        if angle_rad != 0.0:
+                            pu, pv = _rotate_point(pu, pv, -angle_rad)
+                        return not test_fn_filler(pu, pv)
 
-                if corner_dict:
-                    corner_items = [(wx, wy, frozenset(cells)) for (wx, wy), cells in corner_dict.items()]
-                    cx_center = w * ts / 2
-                    cy_center = d * ts / 2
-                    corner_items.sort(key=lambda c: math.atan2(c[1] - cy_center, c[0] - cx_center))
-
-                    n = len(corner_items)
-                    for idx in range(n):
-                        c1 = corner_items[idx]
-                        c2 = corner_items[(idx + 1) % n]
-
-                        x0, y0 = c1[0], c1[1]
-                        x1, y1 = c2[0], c2[1]
-
-                        level_cells = ctx['cells_3d'][z]
-
-                        # Identify all cells associated with this segment (either sharing corners, or close to it).
-                        associated_cells = set()
-                        for cell_set in (c1[2], c2[2]):
-                            associated_cells.update(cell_set)
-
-                        min_cx = max(0, int(min(x0, x1) / ts - 1))
-                        max_cx = min(w - 1, int(max(x0, x1) / ts + 1))
-                        min_cy = max(0, int(min(y0, y1) / ts - 1))
-                        max_cy = min(d - 1, int(max(y0, y1) / ts + 1))
-
-                        for cy in range(min_cy, max_cy + 1):
-                            for cx in range(min_cx, max_cx + 1):
-                                if sb[cy][cx]:
-                                    continue
-                                ccx = cx * ts + ts / 2
-                                ccy = cy * ts + ts / 2
-                                dx = x1 - x0
-                                dy = y1 - y0
-                                if dx == 0 and dy == 0:
-                                    dist = math.hypot(ccx - x0, ccy - y0)
-                                else:
-                                    t = ((ccx - x0) * dx + (ccy - y0) * dy) / (dx * dx + dy * dy)
-                                    t = max(0.0, min(1.0, t))
-                                    qx = x0 + t * dx
-                                    qy = y0 + t * dy
-                                    dist = math.hypot(ccx - qx, ccy - qy)
-
-                                if dist < 1.25 * ts:
-                                    associated_cells.add((cx, cy))
-
-                        # Skip segment if any cell sharing either corner or close to it is a
-                        # walkable floor tile (entrance, exit, or open passage).
-                        skip_seg = False
-                        for (cx, cy) in associated_cells:
-                            if not level_cells[cy][cx][0]:
-                                skip_seg = True
-                                break
-                        if skip_seg:
-                            continue
-
-                        has_dirty = dirty_cells is None
-                        if not has_dirty:
-                            for (cx, cy) in associated_cells:
-                                if (z, cy, cx) in dirty_cells:
-                                    has_dirty = True
+                    corner_dict = {}
+                    for y in range(d):
+                        for x in range(w):
+                            if sb[y][x]:
+                                continue
+                            boundary = False
+                            for ny, nx in ((y-1,x),(y+1,x),(y,x-1),(y,x+1)):
+                                if nx < 0 or nx >= w or ny < 0 or ny >= d or sb[ny][nx]:
+                                    boundary = True
                                     break
-                        if not has_dirty:
+                            if not boundary:
+                                continue
+                            for cu, cv in [(x, y), (x+1, y), (x+1, y+1), (x, y+1)]:
+                                u, v = cu / w, cv / d
+                                if _pt_outside_filler(u, v):
+                                    key = (cu * ts, cv * ts)
+                                    corner_dict.setdefault(key, set()).add((x, y))
+
+                    if corner_dict:
+                        corner_items = [(wx, wy, frozenset(cells)) for (wx, wy), cells in corner_dict.items()]
+                        cx_center = w * ts / 2
+                        cy_center = d * ts / 2
+                        corner_items.sort(key=lambda c: math.atan2(c[1] - cy_center, c[0] - cx_center))
+
+            n = len(corner_items)
+            for idx in range(n):
+                c1 = corner_items[idx]
+                c2 = corner_items[(idx + 1) % n]
+
+                x0, y0 = c1[0], c1[1]
+                x1, y1 = c2[0], c2[1]
+
+                level_cells = ctx['cells_3d'][z]
+
+                # Identify all cells associated with this segment (either sharing corners, or close to it).
+                associated_cells = set()
+                for cell_set in (c1[2], c2[2]):
+                    associated_cells.update(cell_set)
+
+                min_cx = max(0, int(min(x0, x1) / ts - 1))
+                max_cx = min(w - 1, int(max(x0, x1) / ts + 1))
+                min_cy = max(0, int(min(y0, y1) / ts - 1))
+                max_cy = min(d - 1, int(max(y0, y1) / ts + 1))
+
+                for cy in range(min_cy, max_cy + 1):
+                    for cx in range(min_cx, max_cx + 1):
+                        if sb[cy][cx]:
                             continue
+                        ccx = cx * ts + ts / 2
+                        ccy = cy * ts + ts / 2
+                        dx = x1 - x0
+                        dy = y1 - y0
+                        if dx == 0 and dy == 0:
+                            dist = math.hypot(ccx - x0, ccy - y0)
+                        else:
+                            t = ((ccx - x0) * dx + (ccy - y0) * dy) / (dx * dx + dy * dy)
+                            t = max(0.0, min(1.0, t))
+                            qx = x0 + t * dx
+                            qy = y0 + t * dy
+                            dist = math.hypot(ccx - qx, ccy - qy)
 
-                        ref_cx, ref_cy = next(iter(c1[2]))
-                        z_off_floor = z * ctx['level_height']
-                        cx_w = ref_cx * ts + ts / 2
-                        cy_w = ref_cy * ts + ts / 2
+                        if dist < 1.25 * ts:
+                            associated_cells.add((cx, cy))
 
-                        for level in range(ctx['tiles_high']):
-                            z_off = z_off_floor + level * ctx['seg_h']
-                            hw = z_off + ctx['seg_h'] / 2
-                            start_idx = len(bm_wall.faces)
+                # Skip segment if any cell sharing either corner or close to it is a
+                # walkable floor tile (entrance, exit, or open passage).
+                skip_seg = False
+                for (cx, cy) in associated_cells:
+                    if 0 <= cx < w and 0 <= cy < d:
+                        if not level_cells[cy][cx][0]:
+                            skip_seg = True
+                            break
+                if skip_seg:
+                    continue
 
-                            v0_l = Vector((x0 - cx_w, y0 - cy_w, 0.0))
-                            v1_l = Vector((x1 - cx_w, y1 - cy_w, 0.0))
+                has_dirty = dirty_cells is None
+                if not has_dirty:
+                    for (cx, cy) in associated_cells:
+                        cx_clamp = max(0, min(w - 1, cx))
+                        cy_clamp = max(0, min(d - 1, cy))
+                        if (z, cy_clamp, cx_clamp) in dirty_cells:
+                            has_dirty = True
+                            break
+                if not has_dirty:
+                    continue
 
-                            pts = [
-                                Vector((v0_l.x, v0_l.y, -ctx['seg_h']/2)),
-                                Vector((v1_l.x, v1_l.y, -ctx['seg_h']/2)),
-                                Vector((v1_l.x, v1_l.y, ctx['seg_h']/2)),
-                                Vector((v0_l.x, v0_l.y, ctx['seg_h']/2))
-                            ]
-                            final_pts = []
-                            for p in pts:
-                                p_trans = Matrix.Translation(Vector((cx_w, cy_w, hw))) @ ctx['mat_wall_offset'] @ p
-                                final_pts.append(p_trans)
+                ref_cx, ref_cy = next(iter(c1[2]))
+                z_off_floor = z * ctx['level_height']
+                cx_w = ref_cx * ts + ts / 2
+                cy_w = ref_cy * ts + ts / 2
 
-                            f_verts = [bm_wall.verts.new(pt) for pt in final_pts]
-                            face = bm_wall.faces.new(f_verts)
-                            for loop, uv in zip(face.loops, [(0,0),(1,0),(1,1),(0,1)]):
-                                loop[uv_wall].uv = uv
+                for level in range(ctx['tiles_high']):
+                    z_off = z_off_floor + level * ctx['seg_h']
+                    hw = z_off + ctx['seg_h'] / 2
+                    start_idx = len(bm_wall.faces)
 
-                            cell_id = get_cell_id(z, ref_cy, ref_cx)
-                            bm_wall.faces.ensure_lookup_table()
-                            for i_face in range(start_idx, len(bm_wall.faces)):
-                                bm_wall.faces[i_face][cell_layer] = cell_id
+                    v0_l = Vector((x0 - cx_w, y0 - cy_w, 0.0))
+                    v1_l = Vector((x1 - cx_w, y1 - cy_w, 0.0))
+
+                    pts = [
+                        Vector((v0_l.x, v0_l.y, -ctx['seg_h']/2)),
+                        Vector((v1_l.x, v1_l.y, -ctx['seg_h']/2)),
+                        Vector((v1_l.x, v1_l.y, ctx['seg_h']/2)),
+                        Vector((v0_l.x, v0_l.y, ctx['seg_h']/2))
+                    ]
+                    final_pts = []
+                    for p in pts:
+                        p_trans = Matrix.Translation(Vector((cx_w, cy_w, hw))) @ ctx['mat_wall_offset'] @ p
+                        final_pts.append(p_trans)
+
+                    f_verts = [bm_wall.verts.new(pt) for pt in final_pts]
+                    face = bm_wall.faces.new(f_verts)
+                    for loop, uv in zip(face.loops, [(0,0),(1,0),(1,1),(0,1)]):
+                        loop[uv_wall].uv = uv
+
+                    ref_cx_clamp = max(0, min(w - 1, ref_cx))
+                    ref_cy_clamp = max(0, min(d - 1, ref_cy))
+                    cell_id = get_cell_id(z, ref_cy_clamp, ref_cx_clamp)
+                    bm_wall.faces.ensure_lookup_table()
+                    for i_face in range(start_idx, len(bm_wall.faces)):
+                        bm_wall.faces[i_face][cell_layer] = cell_id
 
     if not is_external_bm:
         _safe_remove_doubles(bm_wall, dist=0.001)
@@ -345,9 +516,9 @@ def _build_smooth_roof_triangles(ctx, props, maze_data, bm_roof, uv_roof, cell_l
     if not props.smooth_shape_edges or ctx.get('shape_blocked') is None:
         return
 
-    from ..shape_boundaries import _SHAPE_TESTS, _ROTATION_ANGLES, _rotate_point
+    from ..shape_boundaries import _SHAPE_TESTS_STRICT, _ROTATION_ANGLES, _rotate_point
 
-    test_fn = _SHAPE_TESTS.get(props.maze_shape)
+    test_fn = _SHAPE_TESTS_STRICT.get(props.maze_shape)
     if test_fn is None:
         return
 
@@ -497,9 +668,9 @@ def _build_smooth_floor_triangles(ctx, props, maze_data, bm_floor, uv_floor, cel
     if not props.smooth_shape_edges or ctx.get('shape_blocked') is None:
         return
 
-    from ..shape_boundaries import _SHAPE_TESTS, _ROTATION_ANGLES, _rotate_point
+    from ..shape_boundaries import _SHAPE_TESTS_STRICT, _ROTATION_ANGLES, _rotate_point
 
-    test_fn = _SHAPE_TESTS.get(props.maze_shape)
+    test_fn = _SHAPE_TESTS_STRICT.get(props.maze_shape)
     if test_fn is None:
         return
 
@@ -652,41 +823,135 @@ def _build_rect_cube_roof(ctx, props, maze_data, created_objects, name_suffix, b
         if cell_layer is None:
             cell_layer = bm_roof.faces.layers.int.new("cell_id")
 
+        pad = 3 if props.smooth_shape_edges and getattr(props, 'smooth_boundary_method', 'filler') == 'clip' else 0
+        from ..shape_boundaries import get_cell_clip_status
+
         for z in ctx['z_range']:
             z_off = z * ctx['level_height']
             level_cells = ctx['cells_3d'][z]
-            for y in range(maze_data.depth):
-                for x in range(maze_data.width):
-                    if dirty_cells is not None and (z, y, x) not in dirty_cells:
+            for y in range(-pad, maze_data.depth + pad):
+                for x in range(-pad, maze_data.width + pad):
+                    # Clamp coordinates for dirty cells check and cell_id encoding
+                    y_clamp = max(0, min(maze_data.depth - 1, y))
+                    x_clamp = max(0, min(maze_data.width - 1, x))
+
+                    if dirty_cells is not None and (z, y_clamp, x_clamp) not in dirty_cells:
                         continue
-                    if (z, y, x) in ctx['stair_bottom_cells']:
+
+                    is_in_grid = (0 <= x < maze_data.width and 0 <= y < maze_data.depth)
+
+                    if is_in_grid and (z, y, x) in ctx['stair_bottom_cells']:
                         continue
-                    is_wall = level_cells[y][x][0]
-                    if is_wall:
+
+                    is_blocked = not is_in_grid or (ctx.get('shape_blocked') is not None and ctx['shape_blocked'][y][x])
+                    
+                    # Determine roof generation and clipping status
+                    if is_blocked:
+                        if not (props.smooth_shape_edges and getattr(props, 'smooth_boundary_method', 'filler') == 'clip'):
+                            continue
+                        # Check clipping status for this blocked cell
+                        status = get_cell_clip_status(x, y, maze_data.width, maze_data.depth, props.maze_shape, props.shape_rotation, props.smooth_boundary_offset)
+                        if status == 'none':
+                            continue
+                        use_clip = (status == 'clip')
+                    else:
+                        is_wall = level_cells[y][x][0]
+                        if is_wall:
+                            if dirty_cells is None:
+                                start_idx = len(bm_roof.faces)
+                            else:
+                                existing_faces = set(bm_roof.faces)
+
+                            roof_idx = level_cells[y][x][6] if len(level_cells[y][x]) > 6 else -1
+                            if roof_idx < 0 and ctx['roof_meshes_list']:
+                                roof_idx = 0
+
+                            use_clip = (props.smooth_shape_edges
+                                        and ctx.get('shape_blocked') is not None
+                                        and getattr(props, 'smooth_boundary_method', 'filler') == 'clip'
+                                        and _is_boundary_cell(x, y, maze_data.width, maze_data.depth, ctx['shape_blocked']))
+
+                            if ctx['roof_meshes_list'] and isinstance(roof_idx, int) and 0 <= roof_idx < len(ctx['roof_meshes_list']):
+                                mat_base = Matrix.Translation(Vector((x * ctx['ts'] + off, y * ctx['ts'] + off, z_off + ctx['wh'])))
+                                mat = mat_base @ ctx['mat_roof_offset']
+                                if use_clip:
+                                    _add_clipped_custom_mesh_at(
+                                        bm_roof, ctx['roof_meshes_list'][roof_idx], mat, uv_roof, roof_materials,
+                                        x, y, maze_data.width, maze_data.depth, ctx['ts'], props.maze_shape, props.shape_rotation,
+                                        offset=props.smooth_boundary_offset
+                                    )
+                                else:
+                                    _add_mesh_at(bm_roof, ctx['roof_meshes_list'][roof_idx], mat, uv_roof, final_materials_list=roof_materials)
+                            elif ctx['custom_roof']:
+                                mat_base = Matrix.Translation(Vector((x * ctx['ts'] + off, y * ctx['ts'] + off, z_off + ctx['wh'])))
+                                mat = mat_base @ ctx['mat_roof_offset']
+                                if use_clip:
+                                    _add_clipped_custom_mesh_at(
+                                        bm_roof, ctx['custom_roof'], mat, uv_roof, roof_materials,
+                                        x, y, maze_data.width, maze_data.depth, ctx['ts'], props.maze_shape, props.shape_rotation,
+                                        offset=props.smooth_boundary_offset
+                                    )
+                                else:
+                                    _add_mesh_at(bm_roof, ctx['custom_roof'], mat, uv_roof, final_materials_list=roof_materials)
+                            else:
+                                if use_clip:
+                                    clipped = _add_clipped_floor_tile(
+                                        bm_roof, uv_roof, x, y, maze_data.width, maze_data.depth,
+                                        ctx['ts'], props.maze_shape, props.shape_rotation,
+                                        z_offset=z_off + ctx['wh'], mat_offset=ctx['mat_roof_offset'],
+                                        offset=props.smooth_boundary_offset)
+                                    if not clipped:
+                                        _add_cube_roof_face_transformed(bm_roof, uv_roof, x * ctx['ts'] + ctx['ts'] / 2, y * ctx['ts'] + ctx['ts'] / 2, ctx['ts'], ctx['ts'], z_off + ctx['wh'], ctx['mat_roof_offset'])
+                                else:
+                                    _add_cube_roof_face_transformed(bm_roof, uv_roof, x * ctx['ts'] + ctx['ts'] / 2, y * ctx['ts'] + ctx['ts'] / 2, ctx['ts'], ctx['ts'], z_off + ctx['wh'], ctx['mat_roof_offset'])
+
+                            cell_id = get_cell_id(z, y_clamp, x_clamp)
+                            if dirty_cells is None:
+                                bm_roof.faces.ensure_lookup_table()
+                                for i in range(start_idx, len(bm_roof.faces)):
+                                    bm_roof.faces[i][cell_layer] = cell_id
+                            else:
+                                for f in bm_roof.faces:
+                                    if f not in existing_faces:
+                                        f[cell_layer] = cell_id
+                            continue
+
+                    if is_blocked:
                         if dirty_cells is None:
                             start_idx = len(bm_roof.faces)
                         else:
                             existing_faces = set(bm_roof.faces)
 
-                        if ctx.get('shape_blocked') is not None and ctx['shape_blocked'][y][x]:
-                            continue
-
-                        roof_idx = level_cells[y][x][6] if len(level_cells[y][x]) > 6 else -1
-
-                        if ctx['roof_meshes_list'] and isinstance(roof_idx, int) and 0 <= roof_idx < len(ctx['roof_meshes_list']):
-                            off = ctx['ts'] / 2 if ctx['centered'] else 0
-                            mat_base = Matrix.Translation(Vector((x * ctx['ts'] + off, y * ctx['ts'] + off, z_off + ctx['wh'])))
-                            mat = mat_base @ ctx['mat_roof_offset']
-                            _add_mesh_at(bm_roof, ctx['roof_meshes_list'][roof_idx], mat, uv_roof, final_materials_list=roof_materials)
+                        has_custom = False
+                        if ctx['roof_meshes_list']:
+                            roof_idx = 0
+                            if isinstance(roof_idx, int) and 0 <= roof_idx < len(ctx['roof_meshes_list']):
+                                has_custom = True
+                                mat_base = Matrix.Translation(Vector((x * ctx['ts'] + off, y * ctx['ts'] + off, z_off + ctx['wh'])))
+                                mat = mat_base @ ctx['mat_roof_offset']
+                                _add_clipped_custom_mesh_at(
+                                    bm_roof, ctx['roof_meshes_list'][roof_idx], mat, uv_roof, roof_materials,
+                                    x, y, maze_data.width, maze_data.depth, ctx['ts'], props.maze_shape, props.shape_rotation,
+                                    offset=props.smooth_boundary_offset
+                                )
                         elif ctx['custom_roof']:
-                            off = ctx['ts'] / 2 if ctx['centered'] else 0
+                            has_custom = True
                             mat_base = Matrix.Translation(Vector((x * ctx['ts'] + off, y * ctx['ts'] + off, z_off + ctx['wh'])))
                             mat = mat_base @ ctx['mat_roof_offset']
-                            _add_mesh_at(bm_roof, ctx['custom_roof'], mat, uv_roof, final_materials_list=roof_materials)
-                        else:
-                            _add_cube_roof_face_transformed(bm_roof, uv_roof, x * ctx['ts'] + ctx['ts'] / 2, y * ctx['ts'] + ctx['ts'] / 2, ctx['ts'], ctx['ts'], z_off + ctx['wh'], ctx['mat_roof_offset'])
+                            _add_clipped_custom_mesh_at(
+                                bm_roof, ctx['custom_roof'], mat, uv_roof, roof_materials,
+                                x, y, maze_data.width, maze_data.depth, ctx['ts'], props.maze_shape, props.shape_rotation,
+                                offset=props.smooth_boundary_offset
+                            )
 
-                        cell_id = get_cell_id(z, y, x)
+                        if not has_custom:
+                            _add_clipped_floor_tile(
+                                bm_roof, uv_roof, x, y, maze_data.width, maze_data.depth,
+                                ctx['ts'], props.maze_shape, props.shape_rotation,
+                                z_offset=z_off + ctx['wh'], mat_offset=ctx['mat_roof_offset'],
+                                offset=props.smooth_boundary_offset)
+                        
+                        cell_id = get_cell_id(z, y_clamp, x_clamp)
                         if dirty_cells is None:
                             bm_roof.faces.ensure_lookup_table()
                             for i in range(start_idx, len(bm_roof.faces)):
@@ -696,7 +961,8 @@ def _build_rect_cube_roof(ctx, props, maze_data, created_objects, name_suffix, b
                                 if f not in existing_faces:
                                     f[cell_layer] = cell_id
 
-        _build_smooth_roof_triangles(ctx, props, maze_data, bm_roof, uv_roof, cell_layer, dirty_cells)
+        if getattr(props, 'smooth_boundary_method', 'filler') != 'clip':
+            _build_smooth_roof_triangles(ctx, props, maze_data, bm_roof, uv_roof, cell_layer, dirty_cells)
 
         if not is_external_bm:
             if not ctx['custom_roof'] and not ctx['roof_meshes_list']:
@@ -810,37 +1076,97 @@ def _build_rect_thin_floor(ctx, props, maze_data, created_objects, name_suffix, 
     if cell_layer is None:
         cell_layer = bm_floor.faces.layers.int.new("cell_id")
     off = ctx['ts'] / 2 if ctx['centered'] else 0
+    pad = 3 if props.smooth_shape_edges and getattr(props, 'smooth_boundary_method', 'filler') == 'clip' else 0
+    from ..shape_boundaries import get_cell_clip_status
+
     for z in ctx['z_range']:
         stair_top_cells_z = {(yy, xx) for (zz, yy, xx) in ctx['stair_top_cells'] if zz == z}
         level_cells = ctx['cells_3d'][z]
-        for y in range(maze_data.depth):
-            for x in range(maze_data.width):
-                if dirty_cells is not None and (z, y, x) not in dirty_cells:
+        for y in range(-pad, maze_data.depth + pad):
+            for x in range(-pad, maze_data.width + pad):
+                # Clamp coordinates for dirty cells check and cell_id encoding
+                y_clamp = max(0, min(maze_data.depth - 1, y))
+                x_clamp = max(0, min(maze_data.width - 1, x))
+
+                if dirty_cells is not None and (z, y_clamp, x_clamp) not in dirty_cells:
                     continue
-                if (y, x) in stair_top_cells_z:
+
+                is_in_grid = (0 <= x < maze_data.width and 0 <= y < maze_data.depth)
+
+                if is_in_grid and (y, x) in stair_top_cells_z:
                     continue
+
+                is_blocked = not is_in_grid or (ctx.get('shape_blocked') is not None and ctx['shape_blocked'][y][x])
+                
+                # Determine floor generation and clipping status
+                if is_blocked:
+                    if not (props.smooth_shape_edges and getattr(props, 'smooth_boundary_method', 'filler') == 'clip'):
+                        continue
+                    # Check clipping status for this blocked cell
+                    status = get_cell_clip_status(x, y, maze_data.width, maze_data.depth, props.maze_shape, props.shape_rotation, props.smooth_boundary_offset)
+                    if status == 'none':
+                        continue
+                    use_clip = (status == 'clip')
+                else:
+                    # Active floor cell: check if we should clip it (only when smooth edges & clip are active)
+                    if props.smooth_shape_edges and getattr(props, 'smooth_boundary_method', 'filler') == 'clip':
+                        status = get_cell_clip_status(x, y, maze_data.width, maze_data.depth, props.maze_shape, props.shape_rotation, props.smooth_boundary_offset)
+                        use_clip = (status == 'clip')
+                        if status == 'none':
+                            continue
+                    else:
+                        use_clip = False
+
                 if dirty_cells is None:
                     start_idx = len(bm_floor.faces)
                 else:
                     existing_faces = set(bm_floor.faces)
 
-                if ctx.get('shape_blocked') is not None and ctx['shape_blocked'][y][x]:
-                    continue
+                floor_idx = -1
+                if not is_blocked:
+                    floor_idx = level_cells[y][x][8] if len(level_cells[y][x]) > 8 else -1
+                if floor_idx < 0 and ctx['floor_meshes_list']:
+                    floor_idx = 0
 
-                floor_idx = level_cells[y][x][8] if len(level_cells[y][x]) > 8 else -1
-
+                has_custom = False
                 if ctx['floor_meshes_list'] and isinstance(floor_idx, int) and 0 <= floor_idx < len(ctx['floor_meshes_list']):
+                    has_custom = True
                     mat_base = Matrix.Translation(Vector((x * ctx['ts'] + off, y * ctx['ts'] + off, z * ctx['level_height'])))
                     mat = mat_base @ ctx['mat_floor_offset']
-                    _add_mesh_at(bm_floor, ctx['floor_meshes_list'][floor_idx], mat, uv_floor, final_materials_list=floor_materials)
+                    if use_clip:
+                        _add_clipped_custom_mesh_at(
+                            bm_floor, ctx['floor_meshes_list'][floor_idx], mat, uv_floor, floor_materials,
+                            x, y, maze_data.width, maze_data.depth, ctx['ts'], props.maze_shape, props.shape_rotation,
+                            offset=props.smooth_boundary_offset
+                        )
+                    else:
+                        _add_mesh_at(bm_floor, ctx['floor_meshes_list'][floor_idx], mat, uv_floor, final_materials_list=floor_materials)
                 elif ctx['custom_floor']:
+                    has_custom = True
                     mat_base = Matrix.Translation(Vector((x * ctx['ts'] + off, y * ctx['ts'] + off, z * ctx['level_height'])))
                     mat = mat_base @ ctx['mat_floor_offset']
-                    _add_mesh_at(bm_floor, ctx['custom_floor'], mat, uv_floor, final_materials_list=floor_materials)
-                else:
-                    _add_floor_tile_transformed(bm_floor, uv_floor, x, y, ctx['ts'], ctx['mat_floor_offset'], z_offset=z * ctx['level_height'], thickness=ctx['ft'])
+                    if use_clip:
+                        _add_clipped_custom_mesh_at(
+                            bm_floor, ctx['custom_floor'], mat, uv_floor, floor_materials,
+                            x, y, maze_data.width, maze_data.depth, ctx['ts'], props.maze_shape, props.shape_rotation,
+                            offset=props.smooth_boundary_offset
+                        )
+                    else:
+                        _add_mesh_at(bm_floor, ctx['custom_floor'], mat, uv_floor, final_materials_list=floor_materials)
 
-                cell_id = get_cell_id(z, y, x)
+                if not has_custom:
+                    if use_clip:
+                        clipped = _add_clipped_floor_tile(
+                            bm_floor, uv_floor, x, y, maze_data.width, maze_data.depth,
+                            ctx['ts'], props.maze_shape, props.shape_rotation,
+                            z_offset=z * ctx['level_height'], mat_offset=ctx['mat_floor_offset'],
+                            thickness=ctx['ft'], offset=props.smooth_boundary_offset)
+                        if not clipped:
+                            _add_floor_tile_transformed(bm_floor, uv_floor, x, y, ctx['ts'], ctx['mat_floor_offset'], z_offset=z * ctx['level_height'], thickness=ctx['ft'])
+                    else:
+                        _add_floor_tile_transformed(bm_floor, uv_floor, x, y, ctx['ts'], ctx['mat_floor_offset'], z_offset=z * ctx['level_height'], thickness=ctx['ft'])
+
+                cell_id = get_cell_id(z, y_clamp, x_clamp)
                 if dirty_cells is None:
                     bm_floor.faces.ensure_lookup_table()
                     for i in range(start_idx, len(bm_floor.faces)):
@@ -850,7 +1176,8 @@ def _build_rect_thin_floor(ctx, props, maze_data, created_objects, name_suffix, 
                         if f not in existing_faces:
                             f[cell_layer] = cell_id
 
-    _build_smooth_floor_triangles(ctx, props, maze_data, bm_floor, uv_floor, cell_layer, dirty_cells)
+    if getattr(props, 'smooth_boundary_method', 'filler') != 'clip':
+        _build_smooth_floor_triangles(ctx, props, maze_data, bm_floor, uv_floor, cell_layer, dirty_cells)
 
     if not is_external_bm:
         floor_obj = _create_object_from_bm(bm_floor, f"FireMaze_Floor{name_suffix}", ctx['col'], None)
@@ -1228,315 +1555,342 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, 
                             f[cell_layer_cap] = cell_id
 
         if smooth_edges:
-            from ..shape_boundaries import _SHAPE_TESTS, _ROTATION_ANGLES, _rotate_point
+            from ..shape_boundaries import _ROTATION_ANGLES, _rotate_point
+            w = maze_data.width
+            d = maze_data.depth
+            ts = ctx['ts']
+            sb = ctx['shape_blocked']
+            angle_rad = _ROTATION_ANGLES.get(props.shape_rotation, 0.0)
 
-            test_fn = _SHAPE_TESTS.get(props.maze_shape)
-            if test_fn is not None:
-                angle_rad = _ROTATION_ANGLES.get(props.shape_rotation, 0.0)
-                def _pt_outside(u, v):
-                    pu, pv = u, v
-                    if angle_rad != 0.0:
-                        pu, pv = _rotate_point(pu, pv, -angle_rad)
-                    return not test_fn(pu, pv)
+            is_clip_mode = (getattr(props, 'smooth_boundary_method', 'filler') == 'clip')
+            corner_items = []
+            if is_clip_mode:
+                from ..shape_boundaries import _SHAPE_TESTS_STRICT
+                test_fn = _SHAPE_TESTS_STRICT.get(props.maze_shape)
+                if test_fn is not None:
+                    # Clip mode: collect perfect boundary edges segment-by-segment
+                    pad = 3
+                    perfect_contour = []
+                    from ..shape_boundaries import get_boundary_edges
+                    for y in range(-pad, d + pad):
+                        for x in range(-pad, w + pad):
+                            edges = get_boundary_edges(x, y, w, d, ts, props.maze_shape, props.shape_rotation, offset=props.smooth_boundary_offset)
+                            for v0, v1 in edges:
+                                perfect_contour.append((v0[0], v0[1], v1[0], v1[1], x, y))
 
-                w = maze_data.width
-                d = maze_data.depth
-                ts = ctx['ts']
-                sb = ctx['shape_blocked']
+                    if perfect_contour:
+                        cx_center = w * ts / 2
+                        cy_center = d * ts / 2
+                        perfect_contour.sort(key=lambda seg: math.atan2((seg[1] + seg[3])/2 - cy_center, (seg[0] + seg[2])/2 - cx_center))
 
-                # Collect corners of boundary cells that face the outside.
-                corner_dict = {}  # (world_x, world_y) -> set of (cell_x, cell_y)
-                for y in range(d):
-                    for x in range(w):
-                        if sb[y][x]:
-                            continue
-                        boundary = False
-                        for ny, nx in ((y-1,x),(y+1,x),(y,x-1),(y,x+1)):
-                            if nx < 0 or nx >= w or ny < 0 or ny >= d or sb[ny][nx]:
-                                boundary = True
-                                break
-                        if not boundary:
-                            continue
-                        for cu, cv in [(x, y), (x+1, y), (x+1, y+1), (x, y+1)]:
-                            u, v = cu / w, cv / d
-                            if _pt_outside(u, v):
-                                key = (cu * ts, cv * ts)
-                                corner_dict.setdefault(key, set()).add((x, y))
+                        for seg in perfect_contour:
+                            corner_items.append((seg[0], seg[1], frozenset([(seg[4], seg[5])])))
+            else:
+                # Filler mode: collect corners of active grid boundary cells facing outside using original logic
+                from ..shape_boundaries import _SHAPE_TESTS
+                test_fn_filler = _SHAPE_TESTS.get(props.maze_shape)
+                if test_fn_filler is not None:
+                    def _pt_outside_filler(u, v):
+                        pu, pv = u, v
+                        if angle_rad != 0.0:
+                            pu, pv = _rotate_point(pu, pv, -angle_rad)
+                        return not test_fn_filler(pu, pv)
 
-                if corner_dict:
-                    corner_items = [(wx, wy, frozenset(cells)) for (wx, wy), cells in corner_dict.items()]
-                    cx_center = w * ts / 2
-                    cy_center = d * ts / 2
-                    corner_items.sort(key=lambda c: math.atan2(c[1] - cy_center, c[0] - cx_center))
-
-                    n = len(corner_items)
-
-                    # Pre-calculate normals and miter vectors for corner vertices
-                    normals = []
-                    for i in range(n):
-                        c_curr = corner_items[i]
-                        c_next = corner_items[(i + 1) % n]
-                        v_dir = Vector((c_next[0] - c_curr[0], c_next[1] - c_curr[1], 0.0))
-                        if v_dir.length > 0:
-                            norm = Vector((v_dir.y, -v_dir.x, 0.0)).normalized()
-                        else:
-                            norm = Vector((0, 0, 0))
-                        normals.append(norm)
-
-                    def get_miter_vector(m_prev, m_curr, W):
-                        denom = 1.0 + m_prev.dot(m_curr)
-                        if denom < 0.05:
-                            avg = (m_prev + m_curr).normalized() if (m_prev + m_curr).length > 0 else m_curr
-                            return avg * (W * 4.0)
-                        miter = W * (m_prev + m_curr) / denom
-                        max_len = 4.0 * W
-                        if miter.length > max_len:
-                            miter = miter.normalized() * max_len
-                        return miter
-
-                    miter_double = []
-                    miter_single = []
-                    for i in range(n):
-                        m_prev = normals[i - 1]
-                        m_curr = normals[i]
-                        miter_double.append(get_miter_vector(m_prev, m_curr, ctx['wt']))
-                        miter_single.append(get_miter_vector(m_prev, m_curr, ctx['wt'] / 2.0))
-
-                    segment_skipped = [False] * n
-                    for idx in range(n):
-                        c1 = corner_items[idx]
-                        c2 = corner_items[(idx + 1) % n]
-                        x0, y0 = c1[0], c1[1]
-                        x1, y1 = c2[0], c2[1]
-                        
-                        associated_cells = set()
-                        for cell_set in (c1[2], c2[2]):
-                            associated_cells.update(cell_set)
-
-                        min_cx = max(0, int(min(x0, x1) / ts - 1))
-                        max_cx = min(w - 1, int(max(x0, x1) / ts + 1))
-                        min_cy = max(0, int(min(y0, y1) / ts - 1))
-                        max_cy = min(d - 1, int(max(y0, y1) / ts + 1))
-
-                        for cy in range(min_cy, max_cy + 1):
-                            for cx in range(min_cx, max_cx + 1):
-                                if sb[cy][cx]:
-                                    continue
-                                ccx = cx * ts + ts / 2
-                                ccy = cy * ts + ts / 2
-                                dx = x1 - x0
-                                dy = y1 - y0
-                                if dx == 0 and dy == 0:
-                                    dist = math.hypot(ccx - x0, ccy - y0)
-                                else:
-                                    t = ((ccx - x0) * dx + (ccy - y0) * dy) / (dx * dx + dy * dy)
-                                    t = max(0.0, min(1.0, t))
-                                    qx = x0 + t * dx
-                                    qy = y0 + t * dy
-                                    dist = math.hypot(ccx - qx, ccy - qy)
-
-                                if dist < 1.25 * ts:
-                                    associated_cells.add((cx, cy))
-
-                        entrance_exit_cells = set()
-                        if z == 0 and maze_data.entrance:
-                            ex, ey = maze_data.entrance[0], maze_data.entrance[1]
-                            entrance_exit_cells.add((ey, ex))
-                        if maze_data.exits:
-                            top_z = max(ctx['z_range'])
-                            if z == top_z:
-                                for e in maze_data.exits:
-                                    entrance_exit_cells.add((e[1], e[0]))
-
-                        for (cx, cy) in associated_cells:
-                            if (cy, cx) in entrance_exit_cells:
-                                segment_skipped[idx] = True
-                                break
-
-                    for idx in range(n):
-                        c1 = corner_items[idx]
-                        c2 = corner_items[(idx + 1) % n]
-
-                        if segment_skipped[idx]:
-                            continue
-
-                        x0, y0 = c1[0], c1[1]
-                        x1, y1 = c2[0], c2[1]
-
-                        # Identify associated cells
-                        associated_cells = set()
-                        for cell_set in (c1[2], c2[2]):
-                            associated_cells.update(cell_set)
-
-                        min_cx = max(0, int(min(x0, x1) / ts - 1))
-                        max_cx = min(w - 1, int(max(x0, x1) / ts + 1))
-                        min_cy = max(0, int(min(y0, y1) / ts - 1))
-                        max_cy = min(d - 1, int(max(y0, y1) / ts + 1))
-
-                        for cy in range(min_cy, max_cy + 1):
-                            for cx in range(min_cx, max_cx + 1):
-                                if sb[cy][cx]:
-                                    continue
-                                ccx = cx * ts + ts / 2
-                                ccy = cy * ts + ts / 2
-                                dx = x1 - x0
-                                dy = y1 - y0
-                                if dx == 0 and dy == 0:
-                                    dist = math.hypot(ccx - x0, ccy - y0)
-                                else:
-                                    t = ((ccx - x0) * dx + (ccy - y0) * dy) / (dx * dx + dy * dy)
-                                    t = max(0.0, min(1.0, t))
-                                    qx = x0 + t * dx
-                                    qy = y0 + t * dy
-                                    dist = math.hypot(ccx - qx, ccy - qy)
-
-                                if dist < 1.25 * ts:
-                                    associated_cells.add((cx, cy))
-
-                        has_dirty = dirty_cells is None
-                        if not has_dirty:
-                            for (cx, cy) in associated_cells:
-                                if (z, cy, cx) in dirty_cells:
-                                    has_dirty = True
+                    corner_dict = {}
+                    for y in range(d):
+                        for x in range(w):
+                            if sb[y][x]:
+                                continue
+                            boundary = False
+                            for ny, nx in ((y-1,x),(y+1,x),(y,x-1),(y,x+1)):
+                                if nx < 0 or nx >= w or ny < 0 or ny >= d or sb[ny][nx]:
+                                    boundary = True
                                     break
-                        if not has_dirty:
+                            if not boundary:
+                                continue
+                            for cu, cv in [(x, y), (x+1, y), (x+1, y+1), (x, y+1)]:
+                                u, v = cu / w, cv / d
+                                if _pt_outside_filler(u, v):
+                                    key = (cu * ts, cv * ts)
+                                    corner_dict.setdefault(key, set()).add((x, y))
+
+                    if corner_dict:
+                        corner_items = [(wx, wy, frozenset(cells)) for (wx, wy), cells in corner_dict.items()]
+                        cx_center = w * ts / 2
+                        cy_center = d * ts / 2
+                        corner_items.sort(key=lambda c: math.atan2(c[1] - cy_center, c[0] - cx_center))
+
+            n = len(corner_items)
+
+            # Pre-calculate normals and miter vectors for corner vertices
+            normals = []
+            for i in range(n):
+                c_curr = corner_items[i]
+                c_next = corner_items[(i + 1) % n]
+                v_dir = Vector((c_next[0] - c_curr[0], c_next[1] - c_curr[1], 0.0))
+                if v_dir.length > 0:
+                    norm = Vector((v_dir.y, -v_dir.x, 0.0)).normalized()
+                else:
+                    norm = Vector((0, 0, 0))
+                normals.append(norm)
+
+            def get_miter_vector(m_prev, m_curr, W):
+                denom = 1.0 + m_prev.dot(m_curr)
+                if denom < 0.05:
+                    avg = (m_prev + m_curr).normalized() if (m_prev + m_curr).length > 0 else m_curr
+                    return avg * (W * 4.0)
+                miter = W * (m_prev + m_curr) / denom
+                max_len = 4.0 * W
+                if miter.length > max_len:
+                    miter = miter.normalized() * max_len
+                return miter
+
+            miter_double = []
+            miter_single = []
+            for i in range(n):
+                m_prev = normals[i - 1]
+                m_curr = normals[i]
+                miter_double.append(get_miter_vector(m_prev, m_curr, ctx['wt']))
+                miter_single.append(get_miter_vector(m_prev, m_curr, ctx['wt'] / 2.0))
+
+            segment_skipped = [False] * n
+            for idx in range(n):
+                c1 = corner_items[idx]
+                c2 = corner_items[(idx + 1) % n]
+                x0, y0 = c1[0], c1[1]
+                x1, y1 = c2[0], c2[1]
+                
+                associated_cells = set()
+                for cell_set in (c1[2], c2[2]):
+                    associated_cells.update(cell_set)
+
+                min_cx = max(0, int(min(x0, x1) / ts - 1))
+                max_cx = min(w - 1, int(max(x0, x1) / ts + 1))
+                min_cy = max(0, int(min(y0, y1) / ts - 1))
+                max_cy = min(d - 1, int(max(y0, y1) / ts + 1))
+
+                for cy in range(min_cy, max_cy + 1):
+                    for cx in range(min_cx, max_cx + 1):
+                        if sb[cy][cx]:
                             continue
+                        ccx = cx * ts + ts / 2
+                        ccy = cy * ts + ts / 2
+                        dx = x1 - x0
+                        dy = y1 - y0
+                        if dx == 0 and dy == 0:
+                            dist = math.hypot(ccx - x0, ccy - y0)
+                        else:
+                            t = ((ccx - x0) * dx + (ccy - y0) * dy) / (dx * dx + dy * dy)
+                            t = max(0.0, min(1.0, t))
+                            qx = x0 + t * dx
+                            qy = y0 + t * dy
+                            dist = math.hypot(ccx - qx, ccy - qy)
 
-                        ref_cx, ref_cy = next(iter(c1[2]))
-                        z_off_floor = z * ctx['level_height']
-                        cx_w = ref_cx * ts + ts / 2
-                        cy_w = ref_cy * ts + ts / 2
+                        if dist < 1.25 * ts:
+                            associated_cells.add((cx, cy))
 
-                        for level in range(ctx['tiles_high']):
-                            z_off = z_off_floor + level * ctx['seg_h']
-                            hw = z_off + ctx['seg_h'] / 2
-                            start_idx = len(bm_wall.faces)
-                            start_cap_idx = len(bm_cap.faces)
+                entrance_exit_cells = set()
+                if z == 0 and maze_data.entrance:
+                    ex, ey = maze_data.entrance[0], maze_data.entrance[1]
+                    entrance_exit_cells.add((ey, ex))
+                if maze_data.exits:
+                    top_z = max(ctx['z_range'])
+                    if z == top_z:
+                        for e in maze_data.exits:
+                            entrance_exit_cells.add((e[1], e[0]))
 
-                            md0 = miter_double[idx]
-                            md1 = miter_double[(idx + 1) % n]
-                            ms0 = miter_single[idx]
-                            ms1 = miter_single[(idx + 1) % n]
+                for (cx, cy) in associated_cells:
+                    if (cy, cx) in entrance_exit_cells:
+                        segment_skipped[idx] = True
+                        break
 
-                            if props.thin_wall_double_sided:
-                                # First Face (Inner Face) - CCW when looking from inside
-                                # This face lies exactly on the original boundary (no offset)
-                                v0_l = Vector((x0 - cx_w, y0 - cy_w, 0.0))
-                                v1_l = Vector((x1 - cx_w, y1 - cy_w, 0.0))
-                                pts = [
-                                    Vector((v1_l.x, v1_l.y, -ctx['seg_h']/2)),
-                                    Vector((v0_l.x, v0_l.y, -ctx['seg_h']/2)),
-                                    Vector((v0_l.x, v0_l.y, ctx['seg_h']/2)),
-                                    Vector((v1_l.x, v1_l.y, ctx['seg_h']/2))
-                                ]
-                                final_pts = []
-                                for p in pts:
-                                    p_trans = Matrix.Translation(Vector((cx_w, cy_w, hw))) @ ctx['mat_wall_offset'] @ p
-                                    final_pts.append(p_trans)
+            for idx in range(n):
+                c1 = corner_items[idx]
+                c2 = corner_items[(idx + 1) % n]
 
-                                f_verts = [bm_wall.verts.new(pt) for pt in final_pts]
-                                face = bm_wall.faces.new(f_verts)
-                                for loop, uv in zip(face.loops, [(0,0),(1,0),(1,1),(0,1)]):
-                                    loop[uv_wall].uv = uv
+                if segment_skipped[idx]:
+                    continue
 
-                                # Second Face (Outer Face) - CCW when looking from outside
-                                # This face is offset outwards by a full wall thickness 'wt' using miter vectors
-                                v0_l2 = Vector((x0 + md0.x - cx_w, y0 + md0.y - cy_w, 0.0))
-                                v1_l2 = Vector((x1 + md1.x - cx_w, y1 + md1.y - cy_w, 0.0))
-                                pts2 = [
-                                    Vector((v0_l2.x, v0_l2.y, -ctx['seg_h']/2)),
-                                    Vector((v1_l2.x, v1_l2.y, -ctx['seg_h']/2)),
-                                    Vector((v1_l2.x, v1_l2.y, ctx['seg_h']/2)),
-                                    Vector((v0_l2.x, v0_l2.y, ctx['seg_h']/2))
-                                ]
-                                final_pts2 = []
-                                for p in pts2:
-                                    p_trans = Matrix.Translation(Vector((cx_w, cy_w, hw))) @ ctx['mat_wall_offset'] @ p
-                                    final_pts2.append(p_trans)
+                x0, y0 = c1[0], c1[1]
+                x1, y1 = c2[0], c2[1]
 
-                                f_verts2 = [bm_wall.verts.new(pt) for pt in final_pts2]
-                                face2 = bm_wall.faces.new(f_verts2)
-                                for loop, uv in zip(face2.loops, [(0,0),(1,0),(1,1),(0,1)]):
-                                    loop[uv_wall].uv = uv
+                # Identify associated cells
+                associated_cells = set()
+                for cell_set in (c1[2], c2[2]):
+                    associated_cells.update(cell_set)
 
-                                # --- Top Cap (Roof Segment of the Wall) ---
-                                v0_inner_top = Vector((x0 - cx_w, y0 - cy_w, ctx['seg_h']/2))
-                                v1_inner_top = Vector((x1 - cx_w, y1 - cy_w, ctx['seg_h']/2))
-                                v1_outer_top = Vector((x1 + md1.x - cx_w, y1 + md1.y - cy_w, ctx['seg_h']/2))
-                                v0_outer_top = Vector((x0 + md0.x - cx_w, y0 + md0.y - cy_w, ctx['seg_h']/2))
-                                pts_top = [v0_inner_top, v0_outer_top, v1_outer_top, v1_inner_top]
-                                final_pts_top = []
-                                for p in pts_top:
-                                    p_trans = Matrix.Translation(Vector((cx_w, cy_w, hw))) @ ctx['mat_wall_offset'] @ p
-                                    final_pts_top.append(p_trans)
-                                f_top = bm_cap.faces.new([bm_cap.verts.new(pt) for pt in final_pts_top])
-                                for loop, uv in zip(f_top.loops, [(0,0),(1,0),(1,1),(0,1)]):
-                                    loop[uv_cap].uv = uv
+                min_cx = max(0, int(min(x0, x1) / ts - 1))
+                max_cx = min(w - 1, int(max(x0, x1) / ts + 1))
+                min_cy = max(0, int(min(y0, y1) / ts - 1))
+                max_cy = min(d - 1, int(max(y0, y1) / ts + 1))
 
-                                # --- Vertical End Caps ---
-                                prev_skipped = segment_skipped[(idx - 1) % n]
-                                next_skipped = segment_skipped[(idx + 1) % n]
+                for cy in range(min_cy, max_cy + 1):
+                    for cx in range(min_cx, max_cx + 1):
+                        if sb[cy][cx]:
+                            continue
+                        ccx = cx * ts + ts / 2
+                        ccy = cy * ts + ts / 2
+                        dx = x1 - x0
+                        dy = y1 - y0
+                        if dx == 0 and dy == 0:
+                            dist = math.hypot(ccx - x0, ccy - y0)
+                        else:
+                            t = ((ccx - x0) * dx + (ccy - y0) * dy) / (dx * dx + dy * dy)
+                            t = max(0.0, min(1.0, t))
+                            qx = x0 + t * dx
+                            qy = y0 + t * dy
+                            dist = math.hypot(ccx - qx, ccy - qy)
 
-                                # Start End Cap (at corner c1)
-                                if prev_skipped:
-                                    v_bottom_inner = Vector((x0 - cx_w, y0 - cy_w, -ctx['seg_h']/2))
-                                    v_bottom_outer = Vector((x0 + md0.x - cx_w, y0 + md0.y - cy_w, -ctx['seg_h']/2))
-                                    v_top_outer = Vector((x0 + md0.x - cx_w, y0 + md0.y - cy_w, ctx['seg_h']/2))
-                                    v_top_inner = Vector((x0 - cx_w, y0 - cy_w, ctx['seg_h']/2))
-                                    pts_start_cap = [v_bottom_inner, v_bottom_outer, v_top_outer, v_top_inner]
-                                    final_pts_start = []
-                                    for p in pts_start_cap:
-                                        p_trans = Matrix.Translation(Vector((cx_w, cy_w, hw))) @ ctx['mat_wall_offset'] @ p
-                                        final_pts_start.append(p_trans)
-                                    f_start = bm_cap.faces.new([bm_cap.verts.new(pt) for pt in final_pts_start])
-                                    for loop, uv in zip(f_start.loops, [(0,0),(1,0),(1,1),(0,1)]):
-                                        loop[uv_cap].uv = uv
+                        if dist < 1.25 * ts:
+                            associated_cells.add((cx, cy))
 
-                                # End End Cap (at corner c2)
-                                if next_skipped:
-                                    v_bottom_inner = Vector((x1 - cx_w, y1 - cy_w, -ctx['seg_h']/2))
-                                    v_bottom_outer = Vector((x1 + md1.x - cx_w, y1 + md1.y - cy_w, -ctx['seg_h']/2))
-                                    v_top_outer = Vector((x1 + md1.x - cx_w, y1 + md1.y - cy_w, ctx['seg_h']/2))
-                                    v_top_inner = Vector((x1 - cx_w, y1 - cy_w, ctx['seg_h']/2))
-                                    pts_end_cap = [v_bottom_outer, v_bottom_inner, v_top_inner, v_top_outer]
-                                    final_pts_end = []
-                                    for p in pts_end_cap:
-                                        p_trans = Matrix.Translation(Vector((cx_w, cy_w, hw))) @ ctx['mat_wall_offset'] @ p
-                                        final_pts_end.append(p_trans)
-                                    f_end = bm_cap.faces.new([bm_cap.verts.new(pt) for pt in final_pts_end])
-                                    for loop, uv in zip(f_end.loops, [(0,0),(1,0),(1,1),(0,1)]):
-                                        loop[uv_cap].uv = uv
-                            else:
-                                # Single centered face - CCW when looking from inside
-                                # Offset outwards by half wall thickness 'wt/2' using miter vectors
-                                v0_l = Vector((x0 + ms0.x - cx_w, y0 + ms0.y - cy_w, 0.0))
-                                v1_l = Vector((x1 + ms1.x - cx_w, y1 + ms1.y - cy_w, 0.0))
-                                pts = [
-                                    Vector((v1_l.x, v1_l.y, -ctx['seg_h']/2)),
-                                    Vector((v0_l.x, v0_l.y, -ctx['seg_h']/2)),
-                                    Vector((v0_l.x, v0_l.y, ctx['seg_h']/2)),
-                                    Vector((v1_l.x, v1_l.y, ctx['seg_h']/2))
-                                ]
-                                final_pts = []
-                                for p in pts:
-                                    p_trans = Matrix.Translation(Vector((cx_w, cy_w, hw))) @ ctx['mat_wall_offset'] @ p
-                                    final_pts.append(p_trans)
+                has_dirty = dirty_cells is None
+                if not has_dirty:
+                    for (cx, cy) in associated_cells:
+                        cx_clamp = max(0, min(w - 1, cx))
+                        cy_clamp = max(0, min(d - 1, cy))
+                        if (z, cy_clamp, cx_clamp) in dirty_cells:
+                            has_dirty = True
+                            break
+                if not has_dirty:
+                    continue
 
-                                f_verts = [bm_wall.verts.new(pt) for pt in final_pts]
-                                face = bm_wall.faces.new(f_verts)
-                                for loop, uv in zip(face.loops, [(1,0),(0,0),(0,1),(1,1)]):
-                                    loop[uv_wall].uv = uv
+                ref_cx, ref_cy = next(iter(c1[2]))
+                z_off_floor = z * ctx['level_height']
+                cx_w = ref_cx * ts + ts / 2
+                cy_w = ref_cy * ts + ts / 2
 
-                            cell_id = get_cell_id(z, ref_cy, ref_cx)
-                            bm_wall.faces.ensure_lookup_table()
-                            for i_face in range(start_idx, len(bm_wall.faces)):
-                                bm_wall.faces[i_face][cell_layer] = cell_id
-                            
-                            if bm_cap.faces:
-                                bm_cap.faces.ensure_lookup_table()
-                                for i_face in range(start_cap_idx, len(bm_cap.faces)):
-                                    bm_cap.faces[i_face][cell_layer_cap] = cell_id
+                for level in range(ctx['tiles_high']):
+                    z_off = z_off_floor + level * ctx['seg_h']
+                    hw = z_off + ctx['seg_h'] / 2
+                    start_idx = len(bm_wall.faces)
+                    start_cap_idx = len(bm_cap.faces)
 
+                    md0 = miter_double[idx]
+                    md1 = miter_double[(idx + 1) % n]
+                    ms0 = miter_single[idx]
+                    ms1 = miter_single[(idx + 1) % n]
+
+                    if props.thin_wall_double_sided:
+                        # First Face (Inner Face) - CCW when looking from inside
+                        # This face lies exactly on the original boundary (no offset)
+                        v0_l = Vector((x0 - cx_w, y0 - cy_w, 0.0))
+                        v1_l = Vector((x1 - cx_w, y1 - cy_w, 0.0))
+                        pts = [
+                            Vector((v1_l.x, v1_l.y, -ctx['seg_h']/2)),
+                            Vector((v0_l.x, v0_l.y, -ctx['seg_h']/2)),
+                            Vector((v0_l.x, v0_l.y, ctx['seg_h']/2)),
+                            Vector((v1_l.x, v1_l.y, ctx['seg_h']/2))
+                        ]
+                        final_pts = []
+                        for p in pts:
+                            p_trans = Matrix.Translation(Vector((cx_w, cy_w, hw))) @ ctx['mat_wall_offset'] @ p
+                            final_pts.append(p_trans)
+
+                        f_verts = [bm_wall.verts.new(pt) for pt in final_pts]
+                        face = bm_wall.faces.new(f_verts)
+                        for loop, uv in zip(face.loops, [(0,0),(1,0),(1,1),(0,1)]):
+                            loop[uv_wall].uv = uv
+
+                        # Second Face (Outer Face) - CCW when looking from outside
+                        # This face is offset outwards by a full wall thickness 'wt' using miter vectors
+                        v0_l2 = Vector((x0 + md0.x - cx_w, y0 + md0.y - cy_w, 0.0))
+                        v1_l2 = Vector((x1 + md1.x - cx_w, y1 + md1.y - cy_w, 0.0))
+                        pts2 = [
+                            Vector((v0_l2.x, v0_l2.y, -ctx['seg_h']/2)),
+                            Vector((v1_l2.x, v1_l2.y, -ctx['seg_h']/2)),
+                            Vector((v1_l2.x, v1_l2.y, ctx['seg_h']/2)),
+                            Vector((v0_l2.x, v0_l2.y, ctx['seg_h']/2))
+                        ]
+                        final_pts2 = []
+                        for p in pts2:
+                            p_trans = Matrix.Translation(Vector((cx_w, cy_w, hw))) @ ctx['mat_wall_offset'] @ p
+                            final_pts2.append(p_trans)
+
+                        f_verts2 = [bm_wall.verts.new(pt) for pt in final_pts2]
+                        face2 = bm_wall.faces.new(f_verts2)
+                        for loop, uv in zip(face2.loops, [(0,0),(1,0),(1,1),(0,1)]):
+                            loop[uv_wall].uv = uv
+
+                        # --- Top Cap (Roof Segment of the Wall) ---
+                        v0_inner_top = Vector((x0 - cx_w, y0 - cy_w, ctx['seg_h']/2))
+                        v1_inner_top = Vector((x1 - cx_w, y1 - cy_w, ctx['seg_h']/2))
+                        v1_outer_top = Vector((x1 + md1.x - cx_w, y1 + md1.y - cy_w, ctx['seg_h']/2))
+                        v0_outer_top = Vector((x0 + md0.x - cx_w, y0 + md0.y - cy_w, ctx['seg_h']/2))
+                        pts_top = [v0_inner_top, v0_outer_top, v1_outer_top, v1_inner_top]
+                        final_pts_top = []
+                        for p in pts_top:
+                            p_trans = Matrix.Translation(Vector((cx_w, cy_w, hw))) @ ctx['mat_wall_offset'] @ p
+                            final_pts_top.append(p_trans)
+                        f_top = bm_cap.faces.new([bm_cap.verts.new(pt) for pt in final_pts_top])
+                        for loop, uv in zip(f_top.loops, [(0,0),(1,0),(1,1),(0,1)]):
+                            loop[uv_cap].uv = uv
+
+                        # --- Vertical End Caps ---
+                        prev_skipped = segment_skipped[(idx - 1) % n]
+                        next_skipped = segment_skipped[(idx + 1) % n]
+
+                        # Start End Cap (at corner c1)
+                        if prev_skipped:
+                            v_bottom_inner = Vector((x0 - cx_w, y0 - cy_w, -ctx['seg_h']/2))
+                            v_bottom_outer = Vector((x0 + md0.x - cx_w, y0 + md0.y - cy_w, -ctx['seg_h']/2))
+                            v_top_outer = Vector((x0 + md0.x - cx_w, y0 + md0.y - cy_w, ctx['seg_h']/2))
+                            v_top_inner = Vector((x0 - cx_w, y0 - cy_w, ctx['seg_h']/2))
+                            pts_start_cap = [v_bottom_inner, v_bottom_outer, v_top_outer, v_top_inner]
+                            final_pts_start = []
+                            for p in pts_start_cap:
+                                p_trans = Matrix.Translation(Vector((cx_w, cy_w, hw))) @ ctx['mat_wall_offset'] @ p
+                                final_pts_start.append(p_trans)
+                            f_start = bm_cap.faces.new([bm_cap.verts.new(pt) for pt in final_pts_start])
+                            for loop, uv in zip(f_start.loops, [(0,0),(1,0),(1,1),(0,1)]):
+                                loop[uv_cap].uv = uv
+
+                        # End End Cap (at corner c2)
+                        if next_skipped:
+                            v_bottom_inner = Vector((x1 - cx_w, y1 - cy_w, -ctx['seg_h']/2))
+                            v_bottom_outer = Vector((x1 + md1.x - cx_w, y1 + md1.y - cy_w, -ctx['seg_h']/2))
+                            v_top_outer = Vector((x1 + md1.x - cx_w, y1 + md1.y - cy_w, ctx['seg_h']/2))
+                            v_top_inner = Vector((x1 - cx_w, y1 - cy_w, ctx['seg_h']/2))
+                            pts_end_cap = [v_bottom_outer, v_bottom_inner, v_top_inner, v_top_outer]
+                            final_pts_end = []
+                            for p in pts_end_cap:
+                                p_trans = Matrix.Translation(Vector((cx_w, cy_w, hw))) @ ctx['mat_wall_offset'] @ p
+                                final_pts_end.append(p_trans)
+                            f_end = bm_cap.faces.new([bm_cap.verts.new(pt) for pt in final_pts_end])
+                            for loop, uv in zip(f_end.loops, [(0,0),(1,0),(1,1),(0,1)]):
+                                loop[uv_cap].uv = uv
+                    else:
+                        # Single centered face - CCW when looking from inside
+                        # Offset outwards by half wall thickness 'wt/2' using miter vectors
+                        v0_l = Vector((x0 + ms0.x - cx_w, y0 + ms0.y - cy_w, 0.0))
+                        v1_l = Vector((x1 + ms1.x - cx_w, y1 + ms1.y - cy_w, 0.0))
+                        pts = [
+                            Vector((v1_l.x, v1_l.y, -ctx['seg_h']/2)),
+                            Vector((v0_l.x, v0_l.y, -ctx['seg_h']/2)),
+                            Vector((v0_l.x, v0_l.y, ctx['seg_h']/2)),
+                            Vector((v1_l.x, v1_l.y, ctx['seg_h']/2))
+                        ]
+                        final_pts = []
+                        for p in pts:
+                            p_trans = Matrix.Translation(Vector((cx_w, cy_w, hw))) @ ctx['mat_wall_offset'] @ p
+                            final_pts.append(p_trans)
+
+                        f_verts = [bm_wall.verts.new(pt) for pt in final_pts]
+                        face = bm_wall.faces.new(f_verts)
+                        for loop, uv in zip(face.loops, [(1,0),(0,0),(0,1),(1,1)]):
+                            loop[uv_wall].uv = uv
+
+                    ref_cx_clamp = max(0, min(w - 1, ref_cx))
+                    ref_cy_clamp = max(0, min(d - 1, ref_cy))
+                    cell_id = get_cell_id(z, ref_cy_clamp, ref_cx_clamp)
+                    bm_wall.faces.ensure_lookup_table()
+                    for i_face in range(start_idx, len(bm_wall.faces)):
+                        bm_wall.faces[i_face][cell_layer] = cell_id
+                    
+                    if bm_cap.faces:
+                        bm_cap.faces.ensure_lookup_table()
+                        for i_face in range(start_cap_idx, len(bm_cap.faces)):
+                            bm_cap.faces[i_face][cell_layer_cap] = cell_id
 
     # Handle single wall object merge of caps
     if props.single_wall_object and bm_cap.verts:
@@ -1738,6 +2092,9 @@ def _build_rect_thin_roof(ctx, props, maze_data, created_objects, name_suffix, b
                         else:
                             mat_base = Matrix.Translation(Vector((cx, cy, sz)))
                     
+                    if roof_idx < 0 and ctx['roof_meshes_list']:
+                        roof_idx = 0
+
                     if ctx['roof_meshes_list'] and isinstance(roof_idx, int) and 0 <= roof_idx < len(ctx['roof_meshes_list']):
                         mat = mat_base @ ctx['mat_roof_offset']
                         _add_mesh_at(bm_roof, ctx['roof_meshes_list'][roof_idx], mat, uv_roof, final_materials_list=roof_materials)
