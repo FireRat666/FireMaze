@@ -45,6 +45,12 @@ def _clamp_max_room_size(self, context):
         self['min_room_size'] = self.max_room_size
 
 
+def _update_maze_shape(self, context):
+    """Disable smooth shape edges when switching back to rectangle shape."""
+    if self.maze_shape == 'rect':
+        self.smooth_shape_edges = False
+
+
 class FireMazeProperties(bpy.types.PropertyGroup):
     """All user-configurable maze generation and editing properties.
 
@@ -91,6 +97,14 @@ class FireMazeProperties(bpy.types.PropertyGroup):
         description="Thickness of wall segments",
         default=0.1,
         min=0.01,
+        max=10.0,
+        unit='LENGTH',
+    )
+    floor_thickness: bpy.props.FloatProperty(
+        name="Floor Thickness",
+        description="Thickness of the floor slab between levels. Adds visual depth in multi-floor mazes.",
+        default=0.0,
+        min=0.0,
         max=10.0,
         unit='LENGTH',
     )
@@ -169,6 +183,50 @@ class FireMazeProperties(bpy.types.PropertyGroup):
             ('rect', 'Rectangular', 'Standard rectangular grid maze'),
             ('polar', 'Polar (Circular)', 'Circular maze generated in concentric rings'),
         ],
+    )
+    maze_shape: bpy.props.EnumProperty(
+        name="Maze Shape",
+        description="Outer boundary shape of the maze (rectangular grids only)",
+        default='rect',
+        items=[
+            ('rect', 'Rectangle', 'Standard rectangular boundary'),
+            ('diamond', 'Diamond', 'Diamond/rhombus boundary'),
+            ('triangle', 'Triangle', 'Triangular boundary'),
+            ('hexagon', 'Hexagon', 'Hexagonal boundary'),
+        ],
+        update=_update_maze_shape,
+    )
+    shape_rotation: bpy.props.EnumProperty(
+        name="Shape Rotation",
+        description="Rotation angle for the maze shape boundary",
+        default='0',
+        items=[
+            ('0', '0°', 'No rotation'),
+            ('90', '90°', 'Rotate 90 degrees'),
+            ('180', '180°', 'Rotate 180 degrees'),
+            ('270', '270°', 'Rotate 270 degrees'),
+        ],
+    )
+    smooth_shape_edges: bpy.props.BoolProperty(
+        name="Smooth Shape Edges",
+        description="Clip boundary tiles to the shape contour for a smoother outline",
+        default=False,
+    )
+    smooth_boundary_method: bpy.props.EnumProperty(
+        name="Boundary Method",
+        description="How boundary floor/roof tiles are handled at shape edges",
+        default='filler',
+        items=[
+            ('filler', 'Filler Triangles', 'Generate extra triangular faces to fill boundary gaps'),
+            ('clip', 'Clipped Tiles', 'Clip floor/roof tiles to the boundary contour'),
+        ],
+    )
+    smooth_boundary_offset: bpy.props.FloatProperty(
+        name="Boundary Offset",
+        description="Extend the smooth shape boundary outward by this many cell units to clear corners",
+        default=0.15,
+        min=0.0,
+        max=2.0,
     )
     polar_rings: bpy.props.IntProperty(
         name="Rings",
@@ -693,8 +751,8 @@ class FireMazeProperties(bpy.types.PropertyGroup):
         name="Edit Tool",
         description="Action performed when clicking on the maze during Interactive Edit",
         items=[
-            ('wall', "Toggle Walls", "Left-click to add/remove walls"),
-            ('stair', "Toggle Stairs", "Left-click to place/remove stairs"),
+            ('wall', "Toggle Walls", "Left-click to toggle walls, Shift+click to cycle mesh index"),
+            ('stair', "Toggle Stairs", "Left-click to place/remove stairs, Shift+click to rotate"),
         ],
         default='wall',
     )

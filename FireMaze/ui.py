@@ -27,6 +27,14 @@ class VIEW3D_PT_fire_maze(bpy.types.Panel):
         col.prop(props, "grid_type", text="Grid Type")
         col.separator(factor=0.5)
         if props.grid_type == 'rect':
+            col.prop(props, "maze_shape", text="Shape")
+            if props.maze_shape != 'rect':
+                col.prop(props, "shape_rotation", text="Rotation")
+                col.prop(props, "smooth_shape_edges", text="Smooth Shape Edges")
+                if props.smooth_shape_edges:
+                    col.prop(props, "smooth_boundary_method", text="Method")
+                    if getattr(props, 'smooth_boundary_method', 'filler') == 'clip':
+                        col.prop(props, "smooth_boundary_offset", text="Boundary Offset")
             col.prop(props, "width")
             col.prop(props, "depth")
         else:
@@ -46,6 +54,7 @@ class VIEW3D_PT_fire_maze(bpy.types.Panel):
         col.prop(props, "tile_size")
         col.separator(factor=0.5)
         col.prop(props, "floors")
+        col.prop(props, "floor_thickness")
         if props.floors > 1:
             if props.grid_type == 'rect':
                 col.prop(props, "stair_footprint")
@@ -77,16 +86,22 @@ class VIEW3D_PT_fire_maze(bpy.types.Panel):
                     col.prop(props, "stair_direction")
             alert_box = layout.box()
             alert_box.alert = True
-            alert_box.label(text="Editing Mode Active", icon="ERROR")
-            if props.wall_mode == 'thin' and props.grid_type == 'polar' and props.edit_roof:
-                alert_box.label(text="Shift-Click to swap/edit roof mesh")
-            elif props.edit_tool == 'stair':
-                alert_box.label(text="Left-Click to toggle stairs")
+            alert_box.label(text="Edit Mode Active", icon="EDITMODE_HLT")
+            if props.floors > 1:
+                alert_box.label(text=f"Floor {props.edit_floor_level + 1} of {props.floors}")
+            if props.edit_tool == 'stair':
+                alert_box.label(text="Left-click: Place / remove stair")
+                alert_box.label(text="Shift+click: Rotate stair direction")
+            elif props.wall_mode == 'thin' and props.grid_type == 'polar' and props.edit_roof:
+                alert_box.label(text="Left-click: Toggle wall on/off")
+                alert_box.label(text="Shift+click: Cycle roof mesh")
             else:
-                alert_box.label(text="Left-Click walls to toggle")
-            alert_box.label(text="Press Esc or click Exit to finish")
+                alert_box.label(text="Left-click: Toggle wall on/off")
+                alert_box.label(text="Shift+click: Cycle custom mesh index")
+            alert_box.label(text="Esc / Enter: Exit edit mode")
         else:
             col.operator("fire_maze.interactive_edit", text="Interactive Edit", icon="EDITMODE_HLT")
+            col.label(text="Click walls in the viewport to edit after generation")
 
         layout.separator(factor=0.5)
 
@@ -300,6 +315,10 @@ class VIEW3D_PT_fire_maze_custom_tiles(bpy.types.Panel):
         col.prop(props, "custom_floor_collection", text="Floor Collection")
         col.prop(props, "custom_roof_mesh", text="Roof Mesh")
         col.prop(props, "custom_roof_collection", text="Roof Collection")
+        if props.floor_thickness > 0.0 and (props.custom_floor_mesh or props.custom_floor_collection or props.custom_roof_mesh or props.custom_roof_collection):
+            warn = col.row()
+            warn.alert = True
+            warn.label(text="Note: Custom floors/roofs do not scale with thickness.", icon='INFO')
         col.separator(factor=0.3)
         col.prop(props, "custom_stair_mesh", text="Stair Mesh")
         col.prop(props, "custom_ramp_mesh", text="Ramp Mesh")

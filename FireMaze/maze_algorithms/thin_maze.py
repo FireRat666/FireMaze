@@ -9,6 +9,8 @@ from .common_helpers import (
     _expand_cells_to_3d,
     _get_image_mask_data,
     _get_start_cell,
+    _merge_shape_mask,
+    _get_shape_boundary_candidates,
 )
 
 def _generate_thin_maze(
@@ -46,6 +48,7 @@ def _generate_thin_maze(
     passage_bias: float = 0.5,
     eller_merge_prob: float = 0.5,
     wall_mode: str = 'thin',
+    shape_blocked = None,
 ) -> MazeData:
     """Carve a rectangular maze in thin wall mode."""
     set_seed(seed)
@@ -55,6 +58,8 @@ def _generate_thin_maze(
     # cells[y][x] = [N, S, E, W, n_wall_idx, s_wall_idx, e_wall_idx, w_wall_idx, floor_mesh_index, roof_mesh_index]
     cells = [[[True, True, True, True, -1, -1, -1, -1, -1, -1] for _ in range(width)] for _ in range(depth)]
     blocked = _get_image_mask_data(mask_image, mask_invert, width, depth)
+    if shape_blocked is not None:
+        blocked = _merge_shape_mask(blocked, shape_blocked)
     index = {'N': 0, 'S': 1, 'E': 2, 'W': 3}
     opposites = {'N': 'S', 'S': 'N', 'E': 'W', 'W': 'E'}
 
@@ -736,6 +741,16 @@ def _generate_thin_maze(
             for y in range(depth):
                 candidates.append((0, y, 'W'))
 
+        # When a shape mask is active, add shape boundary cells as candidates
+        # so entrances can be placed on the shape contour
+        if shape_blocked is not None:
+            shape_candidates = _get_shape_boundary_candidates(shape_blocked, width, depth)
+            existing = {(x, y, d) for x, y, d in candidates}
+            for x, y, d in shape_candidates:
+                if side == 'ANY' or d == side:
+                    if (x, y, d) not in existing:
+                        candidates.append((x, y, d))
+
         random.shuffle(candidates)
         carved_count = 0
         for x, y, d in candidates:
@@ -752,6 +767,11 @@ def _generate_thin_maze(
                 continue
 
             cells[y][x][index[d]] = False
+            dir_offsets = {'N': (0, 1), 'S': (0, -1), 'E': (1, 0), 'W': (-1, 0)}
+            dx, dy = dir_offsets[d]
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < width and 0 <= ny < depth:
+                cells[ny][nx][index[opposites[d]]] = False
             if is_entrance:
                 entrance_list.append((x, y, d))
             else:
@@ -773,6 +793,11 @@ def _generate_thin_maze(
                 if already_used:
                     continue
                 cells[y][x][index[d]] = False
+                dir_offsets = {'N': (0, 1), 'S': (0, -1), 'E': (1, 0), 'W': (-1, 0)}
+                dx, dy = dir_offsets[d]
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < width and 0 <= ny < depth:
+                    cells[ny][nx][index[opposites[d]]] = False
                 if is_entrance:
                     entrance_list.append((x, y, d))
                 else:
@@ -835,16 +860,27 @@ def _generate_thin_maze(
         cells, stairs_placed = _expand_cells_to_3d(
             cells, width, depth, floors, wall_mode,
             stair_count=stair_count, stair_footprint=stair_footprint,
-            stair_style=stair_style, stair_direction=stair_direction
+            stair_style=stair_style, stair_direction=stair_direction,
+            blocked=blocked
         )
         # Close cloned entrance/exit openings on non-applicable floors
         for z in range(floors):
             if z != 0:
                 for ex, ey, ed in entrance_list:
                     cells[z][ey][ex][index[ed]] = True
+                    dir_offsets = {'N': (0, 1), 'S': (0, -1), 'E': (1, 0), 'W': (-1, 0)}
+                    dx, dy = dir_offsets[ed]
+                    nx, ny = ex + dx, ey + dy
+                    if 0 <= nx < width and 0 <= ny < depth:
+                        cells[z][ny][nx][index[opposites[ed]]] = True
             if z != floors - 1:
                 for ex, ey, ed in exit_list:
                     cells[z][ey][ex][index[ed]] = True
+                    dir_offsets = {'N': (0, 1), 'S': (0, -1), 'E': (1, 0), 'W': (-1, 0)}
+                    dx, dy = dir_offsets[ed]
+                    nx, ny = ex + dx, ey + dy
+                    if 0 <= nx < width and 0 <= ny < depth:
+                        cells[z][ny][nx][index[opposites[ed]]] = True
     else:
         cells = [cells]
         stairs_placed = []
@@ -852,8 +888,15 @@ def _generate_thin_maze(
     maze_data = MazeData(width, depth, cells, main_entrance, main_exits, center)
     maze_data.floors = floors
     maze_data.stairs = stairs_placed
-    if mask_image:
+    if mask_image or shape_blocked is not None:
         for z in range(floors):
+            open_walls = set()
+            if z == 0 and main_entrance:
+                open_walls.add((main_entrance[0], main_entrance[1], main_entrance[2]))
+            if z == floors - 1 and main_exits:
+                for ex, ey, ed in main_exits:
+                    open_walls.add((ex, ey, ed))
+
             for y in range(depth):
                 for x in range(width):
                     if blocked[y][x]:
@@ -861,13 +904,17 @@ def _generate_thin_maze(
                         cells[z][y][x][9] = -1
                         
                         if y + 1 < depth and not blocked[y+1][x]:
-                            cells[z][y+1][x][1] = True
+                            if (x, y + 1, 'S') not in open_walls:
+                                cells[z][y+1][x][1] = True
                         if y - 1 >= 0 and not blocked[y-1][x]:
-                            cells[z][y-1][x][0] = True
+                            if (x, y - 1, 'N') not in open_walls:
+                                cells[z][y-1][x][0] = True
                         if x + 1 < width and not blocked[y][x+1]:
-                            cells[z][y][x+1][3] = True
+                            if (x + 1, y, 'W') not in open_walls:
+                                cells[z][y][x+1][3] = True
                         if x - 1 >= 0 and not blocked[y][x-1]:
-                            cells[z][y][x-1][2] = True
+                            if (x - 1, y, 'E') not in open_walls:
+                                cells[z][y][x-1][2] = True
         # Filter entrances and exits to exclude masked cells
         entrance_list = [item for item in entrance_list if not blocked[item[1]][item[0]]]
         exit_list = [item for item in exit_list if not blocked[item[1]][item[0]]]

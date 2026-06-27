@@ -39,40 +39,87 @@ IDX_OUT_MESH  = 6
 IDX_IN2_MESH  = 7  # Cube mode only: IN wall mesh (pillar sections)
 IDX_OUT2_MESH = 8  # Cube mode only: OUT wall mesh (pillar sections)
 
-def _add_polar_center_fan(bm, uv_layer, ts, z_base, is_roof=False, flip_normal=False):
+def _add_polar_center_fan(bm, uv_layer, ts, z_base, is_roof=False, flip_normal=False, thickness=0.0):
     """Build a triangulated fan at the polar centre (ring 0) for the floor or roof."""
     radius = 0.5 * ts
     segments = 24
-    
-    # Create center vertex
-    v_center = bm.verts.new((0.0, 0.0, z_base))
-    
-    # Create outer vertices
-    outer_verts = []
-    for i in range(segments):
-        phi = i * (2 * math.pi / segments)
-        x = radius * math.cos(phi)
-        y = radius * math.sin(phi)
-        outer_verts.append(bm.verts.new((x, y, z_base)))
-        
-    for i in range(segments):
-        v1 = outer_verts[i]
-        v2 = outer_verts[(i + 1) % segments]
-        
-        # Face winding
-        if flip_normal:
-            f = bm.faces.new([v_center, v2, v1])
-        else:
-            f = bm.faces.new([v_center, v1, v2])
-            
-        # UV mapping
-        for loop in f.loops:
-            co = loop.vert.co
-            u = (co.x / ts) + 0.5
-            v = (co.y / ts) + 0.5
-            loop[uv_layer].uv = (u, v)
 
-def _add_polar_floor_wedge(bm, uv_layer, r, theta, Nr, ts, z_base, is_roof=False, flip_normal=False):
+    if thickness > 0:
+        z_top = z_base
+        z_bot = z_base - thickness
+
+        # Create center vertices
+        vc_top = bm.verts.new((0.0, 0.0, z_top))
+        vc_bot = bm.verts.new((0.0, 0.0, z_bot))
+
+        # Create ring vertices
+        ring_top = []
+        ring_bot = []
+        for i in range(segments):
+            phi = i * (2 * math.pi / segments)
+            x = radius * math.cos(phi)
+            y = radius * math.sin(phi)
+            ring_top.append(bm.verts.new((x, y, z_top)))
+            ring_bot.append(bm.verts.new((x, y, z_bot)))
+
+        for i in range(segments):
+            j = (i + 1) % segments
+            # Top face
+            if flip_normal:
+                f_top = bm.faces.new([vc_top, ring_top[j], ring_top[i]])
+            else:
+                f_top = bm.faces.new([vc_top, ring_top[i], ring_top[j]])
+            f_top.material_index = 0
+            for loop in f_top.loops:
+                co = loop.vert.co
+                loop[uv_layer].uv = ((co.x / ts) + 0.5, (co.y / ts) + 0.5)
+
+            # Bottom face (reversed winding)
+            if flip_normal:
+                f_bot = bm.faces.new([vc_bot, ring_bot[i], ring_bot[j]])
+            else:
+                f_bot = bm.faces.new([vc_bot, ring_bot[j], ring_bot[i]])
+            f_bot.material_index = 1
+            for loop in f_bot.loops:
+                co = loop.vert.co
+                loop[uv_layer].uv = ((co.x / ts) + 0.5, (co.y / ts) + 0.5)
+
+            # Side face
+            if flip_normal:
+                f_side = bm.faces.new([ring_top[i], ring_top[j], ring_bot[j], ring_bot[i]])
+            else:
+                f_side = bm.faces.new([ring_top[j], ring_top[i], ring_bot[i], ring_bot[j]])
+            f_side.material_index = 2
+            for loop, uv in zip(f_side.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
+                loop[uv_layer].uv = uv
+    else:
+        # Original flat fan
+        v_center = bm.verts.new((0.0, 0.0, z_base))
+
+        outer_verts = []
+        for i in range(segments):
+            phi = i * (2 * math.pi / segments)
+            x = radius * math.cos(phi)
+            y = radius * math.sin(phi)
+            outer_verts.append(bm.verts.new((x, y, z_base)))
+
+        for i in range(segments):
+            v1 = outer_verts[i]
+            v2 = outer_verts[(i + 1) % segments]
+
+            if flip_normal:
+                f = bm.faces.new([v_center, v2, v1])
+            else:
+                f = bm.faces.new([v_center, v1, v2])
+
+            for loop in f.loops:
+                co = loop.vert.co
+                u = (co.x / ts) + 0.5
+                v = (co.y / ts) + 0.5
+                loop[uv_layer].uv = (u, v)
+
+
+def _add_polar_floor_wedge(bm, uv_layer, r, theta, Nr, ts, z_base, is_roof=False, flip_normal=False, thickness=0.0):
     """Build a subdivided wedge quad for a polar floor or roof tile at ring r, sector theta."""
     if Nr <= 0:
         return
@@ -84,33 +131,121 @@ def _add_polar_floor_wedge(bm, uv_layer, r, theta, Nr, ts, z_base, is_roof=False
     subdivs = 8
     r_mid = r * ts
     
-    for i in range(subdivs):
-        phi_1 = phi_start + (i / subdivs) * alpha_r
-        phi_2 = phi_start + ((i + 1) / subdivs) * alpha_r
-        
-        ix1, iy1 = R_in * math.cos(phi_1), R_in * math.sin(phi_1)
-        ix2, iy2 = R_in * math.cos(phi_2), R_in * math.sin(phi_2)
-        ox1, oy1 = R_out * math.cos(phi_1), R_out * math.sin(phi_1)
-        ox2, oy2 = R_out * math.cos(phi_2), R_out * math.sin(phi_2)
-        
-        vi1 = bm.verts.new((ix1, iy1, z_base))
-        vo1 = bm.verts.new((ox1, oy1, z_base))
-        vo2 = bm.verts.new((ox2, oy2, z_base))
-        vi2 = bm.verts.new((ix2, iy2, z_base))
-        
+    if thickness > 0:
+        z_top = z_base
+        z_bot = z_base - thickness
+
+        # Collect edge vertices for side-wall stitching
+        inner_top = []
+        inner_bot = []
+        outer_top = []
+        outer_bot = []
+
+        for i in range(subdivs + 1):
+            phi = phi_start + (i / subdivs) * alpha_r
+            cos_p, sin_p = math.cos(phi), math.sin(phi)
+            ix, iy = R_in * cos_p, R_in * sin_p
+            ox, oy = R_out * cos_p, R_out * sin_p
+            inner_top.append(bm.verts.new((ix, iy, z_top)))
+            inner_bot.append(bm.verts.new((ix, iy, z_bot)))
+            outer_top.append(bm.verts.new((ox, oy, z_top)))
+            outer_bot.append(bm.verts.new((ox, oy, z_bot)))
+
+        for i in range(subdivs):
+            phi_1 = phi_start + (i / subdivs) * alpha_r
+            phi_2 = phi_start + ((i + 1) / subdivs) * alpha_r
+
+            # Top face
+            if flip_normal:
+                f_top = bm.faces.new([inner_top[i], inner_top[i+1], outer_top[i+1], outer_top[i]])
+            else:
+                f_top = bm.faces.new([inner_top[i], outer_top[i], outer_top[i+1], inner_top[i+1]])
+            f_top.material_index = 0
+            uv_top = {
+                inner_top[i]: (0.0, r_mid * phi_1 / ts),
+                outer_top[i]: (1.0, r_mid * phi_1 / ts),
+                outer_top[i+1]: (1.0, r_mid * phi_2 / ts),
+                inner_top[i+1]: (0.0, r_mid * phi_2 / ts),
+            }
+            for loop in f_top.loops:
+                loop[uv_layer].uv = uv_top[loop.vert]
+
+            # Bottom face (reversed winding)
+            if flip_normal:
+                f_bot = bm.faces.new([inner_bot[i], outer_bot[i], outer_bot[i+1], inner_bot[i+1]])
+            else:
+                f_bot = bm.faces.new([inner_bot[i], inner_bot[i+1], outer_bot[i+1], outer_bot[i]])
+            f_bot.material_index = 1
+            for loop, uv in zip(f_bot.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
+                loop[uv_layer].uv = uv
+
+        # Inner arc side wall
+        for i in range(subdivs):
+            if flip_normal:
+                f = bm.faces.new([inner_top[i+1], inner_top[i], inner_bot[i], inner_bot[i+1]])
+            else:
+                f = bm.faces.new([inner_top[i], inner_top[i+1], inner_bot[i+1], inner_bot[i]])
+            f.material_index = 2
+            for loop, uv in zip(f.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
+                loop[uv_layer].uv = uv
+
+        # Outer arc side wall
+        for i in range(subdivs):
+            if flip_normal:
+                f = bm.faces.new([outer_top[i], outer_top[i+1], outer_bot[i+1], outer_bot[i]])
+            else:
+                f = bm.faces.new([outer_top[i+1], outer_top[i], outer_bot[i], outer_bot[i+1]])
+            f.material_index = 2
+            for loop, uv in zip(f.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
+                loop[uv_layer].uv = uv
+
+        # Start radial edge (phi_start)
         if flip_normal:
-            f = bm.faces.new([vi1, vi2, vo2, vo1])
+            f_s = bm.faces.new([inner_top[0], outer_top[0], outer_bot[0], inner_bot[0]])
         else:
-            f = bm.faces.new([vi1, vo1, vo2, vi2])
+            f_s = bm.faces.new([outer_top[0], inner_top[0], inner_bot[0], outer_bot[0]])
+        f_s.material_index = 2
+        for loop, uv in zip(f_s.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
+            loop[uv_layer].uv = uv
+
+        # End radial edge (phi_end)
+        if flip_normal:
+            f_e = bm.faces.new([outer_top[-1], inner_top[-1], inner_bot[-1], outer_bot[-1]])
+        else:
+            f_e = bm.faces.new([inner_top[-1], outer_top[-1], outer_bot[-1], inner_bot[-1]])
+        f_e.material_index = 2
+        for loop, uv in zip(f_e.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
+            loop[uv_layer].uv = uv
+    else:
+        # Original flat wedge
+        for i in range(subdivs):
+            phi_1 = phi_start + (i / subdivs) * alpha_r
+            phi_2 = phi_start + ((i + 1) / subdivs) * alpha_r
             
-        uv_map_dict = {
-            vi1: (0.0, r_mid * phi_1 / ts),
-            vo1: (1.0, r_mid * phi_1 / ts),
-            vo2: (1.0, r_mid * phi_2 / ts),
-            vi2: (0.0, r_mid * phi_2 / ts)
-        }
-        for loop in f.loops:
-            loop[uv_layer].uv = uv_map_dict[loop.vert]
+            ix1, iy1 = R_in * math.cos(phi_1), R_in * math.sin(phi_1)
+            ix2, iy2 = R_in * math.cos(phi_2), R_in * math.sin(phi_2)
+            ox1, oy1 = R_out * math.cos(phi_1), R_out * math.sin(phi_1)
+            ox2, oy2 = R_out * math.cos(phi_2), R_out * math.sin(phi_2)
+            
+            vi1 = bm.verts.new((ix1, iy1, z_base))
+            vo1 = bm.verts.new((ox1, oy1, z_base))
+            vo2 = bm.verts.new((ox2, oy2, z_base))
+            vi2 = bm.verts.new((ix2, iy2, z_base))
+            
+            if flip_normal:
+                f = bm.faces.new([vi1, vi2, vo2, vo1])
+            else:
+                f = bm.faces.new([vi1, vo1, vo2, vi2])
+                
+            uv_map_dict = {
+                vi1: (0.0, r_mid * phi_1 / ts),
+                vo1: (1.0, r_mid * phi_1 / ts),
+                vo2: (1.0, r_mid * phi_2 / ts),
+                vi2: (0.0, r_mid * phi_2 / ts)
+            }
+            for loop in f.loops:
+                loop[uv_layer].uv = uv_map_dict[loop.vert]
+
 
 def _add_circular_wall(bm, uv_layer, radius, phi_start, phi_end, ts, h, wt, z_base, flip=False, add_start=True, add_end=True):
     """Build a thick circular wall arc with inner/outer faces and top/bottom/end caps."""
@@ -774,7 +909,7 @@ def _build_polar_floor(ctx, props, maze_data, created_objects, name_suffix, bm=N
     alignment = props.polar_custom_alignment
 
     for z in ctx['z_range']:
-        z_off = z * ctx['wh']
+        z_off = z * ctx['level_height']
         level_cells = ctx['cells_3d'][z]
         for r in range(rings):
             Nr = ring_sectors[r]
@@ -812,7 +947,7 @@ def _build_polar_floor(ctx, props, maze_data, created_objects, name_suffix, bm=N
                     if src_floor and alignment != 'procedural':
                         _add_mesh_polar_center(bm_floor, src_floor, ctx['mat_floor_offset'], uv_floor, floor_materials, ctx['ts'], z_off, ctx['centered'], reverse_faces=False)
                     else:
-                        _add_polar_center_fan(bm_floor, uv_floor, ctx['ts'], z_off, is_roof=False, flip_normal=False)
+                        _add_polar_center_fan(bm_floor, uv_floor, ctx['ts'], z_off, is_roof=False, flip_normal=False, thickness=ctx['ft'])
                 elif src_floor and alignment != 'procedural':
                     mat_flipped = ctx['mat_floor_offset'] @ Matrix.Scale(-1, 4, Vector((1, 0, 0)))
                     if alignment == 'trapezoid':
@@ -823,7 +958,7 @@ def _build_polar_floor(ctx, props, maze_data, created_objects, name_suffix, bm=N
                         cuts = min(max(1, ratio * 8 - 1), 8)
                         _add_mesh_polar_bend(bm_floor, src_floor, mat_flipped, uv_floor, floor_materials, r, theta, Nr, ctx['ts'], z_off, ctx['centered'], cuts=cuts, reverse_faces=False)
                 else:
-                    _add_polar_floor_wedge(bm_floor, uv_floor, r, theta, Nr, ctx['ts'], z_off, is_roof=False)
+                    _add_polar_floor_wedge(bm_floor, uv_floor, r, theta, Nr, ctx['ts'], z_off, is_roof=False, thickness=ctx['ft'])
 
                 cell_id = get_cell_id(z, r, theta)
                 if dirty_cells is None:
@@ -876,7 +1011,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
 
     if props.wall_mode == 'cube':
         for z in ctx['z_range']:
-            z_off_floor = z * ctx['wh']
+            z_off_floor = z * ctx['level_height']
             level_cells = ctx['cells_3d'][z]
             for level in range(ctx['tiles_high']):
                 z_off = z_off_floor + level * ctx['seg_h']
@@ -1137,7 +1272,7 @@ def _build_polar_walls(ctx, props, maze_data, created_objects, name_suffix, bm=N
         clean_corners = ctx['clean_wall_corners']
         tw = ctx['wt'] / 2
         for z in ctx['z_range']:
-            z_off_floor = z * ctx['wh']
+            z_off_floor = z * ctx['level_height']
             level_cells = ctx['cells_3d'][z]
  
             def has_cw_wall(r_val, t_val):
@@ -1571,7 +1706,7 @@ def _build_polar_roof(ctx, props, maze_data, created_objects, name_suffix, bm=No
         alignment = props.polar_custom_alignment
 
         for z in ctx['z_range']:
-            z_off_roof = z * ctx['wh'] + ctx['wh']
+            z_off_roof = z * ctx['level_height'] + ctx['wh']
             level_cells = ctx['cells_3d'][z]
             for r in range(rings):
                 Nr = ring_sectors[r]
@@ -1614,7 +1749,7 @@ def _build_polar_roof(ctx, props, maze_data, created_objects, name_suffix, bm=No
                             rev_val = (props.wall_mode == 'thin')
                             _add_mesh_polar_center(bm_roof, src_roof, ctx['mat_roof_offset'], uv_roof, roof_materials, ctx['ts'], z_off_roof, ctx['centered'], reverse_faces=rev_val)
                         else:
-                            _add_polar_center_fan(bm_roof, uv_roof, ctx['ts'], z_off_roof, is_roof=True, flip_normal=(props.wall_mode == 'thin'))
+                            _add_polar_center_fan(bm_roof, uv_roof, ctx['ts'], z_off_roof, is_roof=True, flip_normal=(props.wall_mode == 'thin'), thickness=0.0)
                     elif src_roof and alignment != 'procedural':
                         mat_flipped = ctx['mat_roof_offset'] @ Matrix.Scale(-1, 4, Vector((1, 0, 0)))
                         rev_val = (props.wall_mode == 'thin')
@@ -1627,7 +1762,7 @@ def _build_polar_roof(ctx, props, maze_data, created_objects, name_suffix, bm=No
                             _add_mesh_polar_bend(bm_roof, src_roof, mat_flipped, uv_roof, roof_materials, r, theta, Nr, ctx['ts'], z_off_roof, ctx['centered'], cuts=cuts, reverse_faces=rev_val)
                     else:
                         flip = props.wall_mode == 'thin'
-                        _add_polar_floor_wedge(bm_roof, uv_roof, r, theta, Nr, ctx['ts'], z_off_roof, is_roof=True, flip_normal=flip)
+                        _add_polar_floor_wedge(bm_roof, uv_roof, r, theta, Nr, ctx['ts'], z_off_roof, is_roof=True, flip_normal=flip, thickness=0.0)
 
                     cell_id = get_cell_id(z, r, theta)
                     if dirty_cells is None:
@@ -1664,7 +1799,7 @@ def _build_polar_stairs(ctx, props, maze_data, created_objects, name_suffix, bm=
             cell_layer = bm_stairs.faces.layers.int.new("cell_id")
         ring_sectors = maze_data.ring_sectors
         for zstair in ctx['z_range']:
-            z_offset = zstair * ctx['wh']
+            z_offset = zstair * ctx['level_height']
             for s in maze_data.stairs:
                 if s.get('z') != zstair:
                     continue
@@ -1713,9 +1848,9 @@ def _build_polar_stairs(ctx, props, maze_data, created_objects, name_suffix, bm=
                 elif style == 'stair' and ctx['custom_stair_mesh']:
                     _add_mesh_at(bm_stairs, ctx['custom_stair_mesh'].data if ctx['custom_stair_mesh'].type == 'MESH' else ctx['custom_stair_mesh'], mat, uv_stairs, final_materials_list=stair_materials)
                 elif style == 'ramp':
-                    _build_ramp_1x1(bm_stairs, uv_stairs, cx, cy, ctx['ts'], ctx['wh'], z_offset, combined_rot @ ctx['mat_floor_offset'])
+                    _build_ramp_1x1(bm_stairs, uv_stairs, cx, cy, ctx['ts'], ctx['level_height'], z_offset, combined_rot @ ctx['mat_floor_offset'])
                 else:
-                    _build_spiral_stair_1x1(bm_stairs, uv_stairs, cx, cy, ctx['ts'], ctx['wh'], z_offset, combined_rot @ ctx['mat_floor_offset'])
+                    _build_spiral_stair_1x1(bm_stairs, uv_stairs, cx, cy, ctx['ts'], ctx['level_height'], z_offset, combined_rot @ ctx['mat_floor_offset'])
 
                 cell_id = get_cell_id(zstair, sy, sx)
                 if dirty_cells is None:

@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 id = "fire_maze"
 name = "FireMaze"
-version = "3.2.0"
+version = "3.3.0"
 tagline = "Random maze generator with tiled construction"
 maintainer = "FireRat666 <maze@firer.at>"
 blender_version_min = "4.2.0"

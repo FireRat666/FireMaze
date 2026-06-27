@@ -192,15 +192,14 @@ def _rebuild_maze_incrementally_impl(
         else:
             if props.wall_mode == 'cube':
                 from .rect_builder import _build_rect_cube_floor
-                _build_rect_cube_floor(ctx, maze_data, created_objects, name_suffix, bm=bm, uv_layer=uv_layer, materials=materials, dirty_cells=dirty_cells)
+                _build_rect_cube_floor(ctx, props, maze_data, created_objects, name_suffix, bm=bm, uv_layer=uv_layer, materials=materials, dirty_cells=dirty_cells)
             else:
                 from .rect_builder import _build_rect_thin_floor
-                _build_rect_thin_floor(ctx, maze_data, created_objects, name_suffix, bm=bm, uv_layer=uv_layer, materials=materials, dirty_cells=dirty_cells)
+                _build_rect_thin_floor(ctx, props, maze_data, created_objects, name_suffix, bm=bm, uv_layer=uv_layer, materials=materials, dirty_cells=dirty_cells)
         
         bm.to_mesh(floor_obj.data)
         bm.free()
-        floor_obj.data.materials.clear()
-        for mat in materials:
+        for mat in materials[len(floor_obj.data.materials):]:
             floor_obj.data.materials.append(mat)
         floor_obj.data.update()
     else:
@@ -210,10 +209,10 @@ def _rebuild_maze_incrementally_impl(
         else:
             if props.wall_mode == 'cube':
                 from .rect_builder import _build_rect_cube_floor
-                _build_rect_cube_floor(ctx, maze_data, created_objects, name_suffix)
+                _build_rect_cube_floor(ctx, props, maze_data, created_objects, name_suffix)
             else:
                 from .rect_builder import _build_rect_thin_floor
-                _build_rect_thin_floor(ctx, maze_data, created_objects, name_suffix)
+                _build_rect_thin_floor(ctx, props, maze_data, created_objects, name_suffix)
 
     # Walls & Caps
     wall_obj = _find_role_object(collection, f"FireMaze_Walls{name_suffix}")
@@ -280,15 +279,13 @@ def _rebuild_maze_incrementally_impl(
     if wall_obj and bm_wall:
         bm_wall.to_mesh(wall_obj.data)
         bm_wall.free()
-        wall_obj.data.materials.clear()
-        for mat in wall_materials:
+        for mat in wall_materials[len(wall_obj.data.materials):]:
             wall_obj.data.materials.append(mat)
         wall_obj.data.update()
     if cap_obj and bm_cap:
         bm_cap.to_mesh(cap_obj.data)
         bm_cap.free()
-        cap_obj.data.materials.clear()
-        for mat in cap_materials:
+        for mat in cap_materials[len(cap_obj.data.materials):]:
             cap_obj.data.materials.append(mat)
         cap_obj.data.update()
         
@@ -335,8 +332,7 @@ def _rebuild_maze_incrementally_impl(
                     
             bm.to_mesh(roof_obj.data)
             bm.free()
-            roof_obj.data.materials.clear()
-            for mat in materials:
+            for mat in materials[len(roof_obj.data.materials):]:
                 roof_obj.data.materials.append(mat)
             roof_obj.data.update()
         else:
@@ -379,8 +375,7 @@ def _rebuild_maze_incrementally_impl(
             
         bm.to_mesh(stair_obj.data)
         bm.free()
-        stair_obj.data.materials.clear()
-        for mat in materials:
+        for mat in materials[len(stair_obj.data.materials):]:
             stair_obj.data.materials.append(mat)
         stair_obj.data.update()
     else:

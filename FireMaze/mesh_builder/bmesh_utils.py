@@ -78,7 +78,15 @@ def _create_bmesh_element(element_type: str, materials_dict: dict):
     """
     bm = bmesh.new()
     uv_layer = bm.loops.layers.uv.new("UVMap")
-    mat_list = [m for m in [materials_dict.get(element_type)] if m]
+    mat = materials_dict.get(element_type)
+    mat_list = []
+    if mat:
+        mat_list.append(mat)
+        if element_type in ("floor", "roof"):
+            mat_bot = materials_dict.get("roof") if element_type == "floor" else materials_dict.get("floor")
+            mat_list.append(mat_bot if mat_bot else mat)
+            mat_side = materials_dict.get("wall")
+            mat_list.append(mat_side if mat_side else mat)
     return bm, uv_layer, mat_list
 
 
@@ -93,6 +101,8 @@ def _prepare_maze_building_context(props, maze_data, context, collection, force_
     wh = ts * tiles_high if tiled else props.wall_height
     seg_h = ts if tiled else wh
     wt = props.tile_size if props.wall_mode == 'cube' else props.wall_thickness
+    ft = getattr(props, 'floor_thickness', 0.0)
+    level_height = wh + ft
 
     if force_simple:
         custom_floor = None
@@ -171,6 +181,13 @@ def _prepare_maze_building_context(props, maze_data, context, collection, force_
                             if 0 <= ex_y < len(cells_3d[z]) and 0 <= ex_x < len(cells_3d[z][ex_y]):
                                 cells_3d[z][ex_y][ex_x][0] = True
 
+    if hasattr(props, 'maze_shape') and props.maze_shape != 'rect':
+        from ..shape_boundaries import get_shape_mask
+        rotation = getattr(props, 'shape_rotation', '0')
+        shape_blocked = get_shape_mask(maze_data.width, maze_data.depth, props.maze_shape, rotation)
+    else:
+        shape_blocked = None
+
     return {
         'ts': ts,
         'tiled': tiled,
@@ -178,6 +195,8 @@ def _prepare_maze_building_context(props, maze_data, context, collection, force_
         'wh': wh,
         'seg_h': seg_h,
         'wt': wt,
+        'ft': ft,
+        'level_height': level_height,
         'custom_floor': custom_floor,
         'custom_wall': custom_wall,
         'custom_roof': custom_roof,
@@ -199,7 +218,27 @@ def _prepare_maze_building_context(props, maze_data, context, collection, force_
         'stair_top_cells': stair_top_cells,
         'stair_cells': stair_cells,
         'clean_wall_corners': props.clean_wall_corners,
+        'shape_blocked': shape_blocked,
     }
+
+
+def _filter_wall_segments(segments, width, depth, shape_blocked):
+    """Filter out wall segments where both adjacent cells are outside the shape."""
+    if not shape_blocked:
+        return segments
+    filtered = set()
+    for seg in segments:
+        seg_type, x, y = seg
+        if seg_type == 'H':
+            blocked_a = (x < 0 or x >= width or y - 1 < 0 or y - 1 >= depth or shape_blocked[y - 1][x])
+            blocked_b = (x < 0 or x >= width or y < 0 or y >= depth or shape_blocked[y][x])
+        else: # 'V'
+            blocked_a = (x - 1 < 0 or x - 1 >= width or y < 0 or y >= depth or shape_blocked[y][x - 1])
+            blocked_b = (x < 0 or x >= width or y < 0 or y >= depth or shape_blocked[y][x])
+        
+        if not (blocked_a and blocked_b):
+            filtered.add(seg)
+    return filtered
 
 
 def _get_wall_segments(maze_data, cells=None):
@@ -351,20 +390,120 @@ def _add_mesh_at(bm, src_mesh, matrix, uv_layer, final_materials_list=None):
     _merge_bmesh_geometries(temp_bm, bm)
     temp_bm.free()
 
-def _add_floor_tile_transformed(bm, uv_layer, x, y, ts, mat_offset, z_offset=0.0):
-    """Add a single quad floor tile at cell (x, y) with optional transform and Z offset."""
+def _add_clipped_custom_mesh_at(bm, src_mesh, matrix, uv_layer, final_materials_list, x, y, w, d, ts, shape, rotation, offset=0.0):
+    """Place a custom mesh, clip it to the segmented boundary polygon, and merge it into bm."""
+    material_map = []
+    if final_materials_list is not None and src_mesh:
+        for mat in src_mesh.materials:
+            if mat:
+                if mat not in final_materials_list:
+                    final_materials_list.append(mat)
+                material_map.append(final_materials_list.index(mat))
+            else:
+                material_map.append(0)
+
+    temp_bm = _get_bmesh_from_cache(src_mesh)
+
+    bmesh.ops.transform(temp_bm, matrix=matrix, verts=temp_bm.verts)
+
+    if final_materials_list is not None and material_map:
+        for f in temp_bm.faces:
+            if f.material_index < len(material_map):
+                f.material_index = material_map[f.material_index]
+            else:
+                f.material_index = 0
+
+    from ..shape_boundaries import get_perfect_shape_polygon
+    poly = get_perfect_shape_polygon(shape, rotation, w, d, offset)
+    if poly:
+        n = len(poly)
+        world_poly = [Vector((u * w * ts, v * d * ts, 0.0)) for u, v in poly]
+        for i in range(n):
+            p0 = world_poly[i]
+            p1 = world_poly[(i + 1) % n]
+            dx = p1.x - p0.x
+            dy = p1.y - p0.y
+            plane_co = p0
+            plane_no = Vector((dy, -dx, 0.0))
+            if plane_no.length > 1e-6:
+                plane_no.normalize()
+                # Ensure plane_no points to the OUTSIDE of the shape (away from center)
+                center = Vector((w * ts / 2, d * ts / 2, 0.0))
+                to_center = center - plane_co
+                if plane_no.dot(to_center) > 0.0:
+                    plane_no = -plane_no
+                res = bmesh.ops.bisect_plane(
+                    temp_bm,
+                    geom=temp_bm.verts[:] + temp_bm.edges[:] + temp_bm.faces[:],
+                    plane_co=plane_co,
+                    plane_no=plane_no,
+                    clear_outer=True
+                )
+                geom_cut = res.get('geom_cut', [])
+                cut_edges = [e for e in geom_cut if isinstance(e, bmesh.types.BMEdge)]
+                if cut_edges:
+                    res_fill = bmesh.ops.edgeloop_fill(temp_bm, edges=cut_edges)
+                    new_faces = res_fill.get('faces', [])
+                    for f in new_faces:
+                        f.material_index = 2
+
+    _merge_bmesh_geometries(temp_bm, bm)
+    temp_bm.free()
+
+
+def _add_floor_tile_transformed(bm, uv_layer, x, y, ts, mat_offset, z_offset=0.0, thickness=0.0):
+    """Add a floor tile at cell (x, y) with optional transform and Z offset.
+
+    When *thickness* > 0, generates a 6-face box (top, bottom, 4 sides)
+    so the floor has physical depth.  When *thickness* == 0, a single
+    quad is emitted (backward‑compatible).
+    """
     cx = x * ts + ts / 2
     cy = y * ts + ts / 2
     T = Matrix.Translation(Vector((cx, cy, z_offset))) @ mat_offset
 
     t2 = ts / 2
-    pts = [(-t2, -t2, 0.0), (t2, -t2, 0.0), (t2, t2, 0.0), (-t2, t2, 0.0)]
-    verts = [bm.verts.new(T @ Vector(p)) for p in pts]
-    face = bm.faces.new(verts)
 
-    uvs = [(0, 0), (1, 0), (1, 1), (0, 1)]
-    for loop, uv in zip(face.loops, uvs):
-        loop[uv_layer].uv = uv
+    if thickness > 0:
+        bot_z = -thickness
+        # Top face (walkable surface, at Z = 0 local)
+        pts_t = [(-t2, -t2, 0.0), (t2, -t2, 0.0), (t2, t2, 0.0), (-t2, t2, 0.0)]
+        # Bottom face (underside, at Z = -thickness local)
+        pts_b = [(-t2, -t2, bot_z), (t2, -t2, bot_z), (t2, t2, bot_z), (-t2, t2, bot_z)]
+
+        v_top = [bm.verts.new(T @ Vector(p)) for p in pts_t]
+        v_bot = [bm.verts.new(T @ Vector(p)) for p in pts_b]
+
+        f_top = bm.faces.new(v_top)
+        f_top.material_index = 0
+        for loop, uv in zip(f_top.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
+            loop[uv_layer].uv = uv
+
+        f_bot = bm.faces.new([v_bot[0], v_bot[3], v_bot[2], v_bot[1]])
+        f_bot.material_index = 1
+        for loop, uv in zip(f_bot.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
+            loop[uv_layer].uv = uv
+
+        # 4 side faces: -Y, +Y, -X, +X
+        side_quads = [
+            (v_bot[0], v_bot[1], v_top[1], v_top[0]),  # -Y
+            (v_bot[2], v_bot[3], v_top[3], v_top[2]),  # +Y
+            (v_bot[3], v_bot[0], v_top[0], v_top[3]),  # -X
+            (v_bot[1], v_bot[2], v_top[2], v_top[1]),  # +X
+        ]
+        for sq in side_quads:
+            f_side = bm.faces.new(sq)
+            f_side.material_index = 2
+            for loop, uv in zip(f_side.loops, [(0, 0), (1, 0), (1, 1), (0, 1)]):
+                loop[uv_layer].uv = uv
+    else:
+        pts = [(-t2, -t2, 0.0), (t2, -t2, 0.0), (t2, t2, 0.0), (-t2, t2, 0.0)]
+        verts = [bm.verts.new(T @ Vector(p)) for p in pts]
+        face = bm.faces.new(verts)
+
+        uvs = [(0, 0), (1, 0), (1, 1), (0, 1)]
+        for loop, uv in zip(face.loops, uvs):
+            loop[uv_layer].uv = uv
 
 
 def _add_horizontal_roof_face_transformed(bm, uv_layer, x, y, ts, wh, wt, mat_offset, extend_left=False, extend_right=False):
@@ -476,6 +615,8 @@ def _build_guide_path(props, maze_data, collection, materials):
     tiled = props.wall_height_tiled
     tiles_high = props.wall_height_tiles if tiled else 1
     wh = ts * tiles_high if tiled else props.wall_height
+    ft = getattr(props, 'floor_thickness', 0.0)
+    level_height = wh + ft
     ho = props.guide_height_offset
     amp = props.guide_wave_amplitude
     freq = props.guide_wave_frequency
@@ -511,7 +652,7 @@ def _build_guide_path(props, maze_data, collection, materials):
             px = x * ts + ts / 2
             py = y * ts + ts / 2
 
-        pz = ho + z_coord * wh
+        pz = ho + z_coord * level_height
         if amp > 0:
             pz += amp * math.sin(freq * i)
         spline.points[i].co = (px, py, pz, 1.0)

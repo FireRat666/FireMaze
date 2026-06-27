@@ -178,6 +178,8 @@ def _apply_vertex_painting_on_obj(obj, props, maze_data):
     wh = ts * tiles_high if tiled else props.wall_height
     if wh <= 0:
         wh = 2.0
+    ft = getattr(props, 'floor_thickness', 0.0)
+    level_height = wh + ft
         
     # Pre-calculate bounding box heights for relative height gradients
     coords_z = [v.co.z for v in bm.verts]
@@ -324,7 +326,7 @@ def _apply_vertex_painting_on_obj(obj, props, maze_data):
                     gcy_world = gr_mid * math.sin(gtheta_mid)
             else:
                 # rect coordinate (last two values)
-                gcx, gcy = coord[-2], coord[-1]
+                gcx, gcy = coord[-1], coord[-2]
                 gcx_world = gcx * ts + ts / 2
                 gcy_world = gcy * ts + ts / 2
             guide_world_coords.append((gz_c, gcx_world, gcy_world))
@@ -336,7 +338,7 @@ def _apply_vertex_painting_on_obj(obj, props, maze_data):
             h_rel = (pz - z_min) / z_range
             
             # Map vertex to floor level z
-            z = max(0, min(maze_data.floors - 1, int((pz - 1e-6) / wh)))
+            z = max(0, min(maze_data.floors - 1, int((pz - 1e-6) / level_height)))
             
             # Map vertex to cell
             if maze_data.grid_type == 'polar':
@@ -502,6 +504,8 @@ def _spawn_decorations(props, maze_data, context, parent_collection, dirty_cells
     wh = props.wall_height
     if props.wall_height_tiled:
         wh = ts * props.wall_height_tiles
+    ft = getattr(props, 'floor_thickness', 0.0)
+    level_height = wh + ft
 
     wall_mode = props.wall_mode
 
@@ -561,14 +565,14 @@ def _spawn_decorations(props, maze_data, context, parent_collection, dirty_cells
                                 if cell_rng.random() < density:
                                     pos_x = r_mid * math.cos(phi_cw) + offset * math.sin(phi_cw)
                                     pos_y = r_mid * math.sin(phi_cw) - offset * math.cos(phi_cw)
-                                    pos = (pos_x, pos_y, z * wh + 0.6 * wh)
+                                    pos = (pos_x, pos_y, z * level_height + 0.6 * wh)
                                     place_prop(torch_src, pos, phi_cw - math.pi / 2, cell_id)
                             elif not this_cell_wall and cw_wall_cell:
                                 # Torch on CW boundary of open cell, facing CCW/inward
                                 if cell_rng.random() < density:
                                     pos_x = r_mid * math.cos(phi_cw) - offset * math.sin(phi_cw)
                                     pos_y = r_mid * math.sin(phi_cw) + offset * math.cos(phi_cw)
-                                    pos = (pos_x, pos_y, z * wh + 0.6 * wh)
+                                    pos = (pos_x, pos_y, z * level_height + 0.6 * wh)
                                     place_prop(torch_src, pos, phi_cw + math.pi / 2, cell_id)
                                     
                             # IN boundary check
@@ -588,14 +592,14 @@ def _spawn_decorations(props, maze_data, context, parent_collection, dirty_cells
                                 if cell_rng.random() < density:
                                     pos_x = (r_in - offset) * math.cos(theta_mid)
                                     pos_y = (r_in - offset) * math.sin(theta_mid)
-                                    pos = (pos_x, pos_y, z * wh + 0.6 * wh)
+                                    pos = (pos_x, pos_y, z * level_height + 0.6 * wh)
                                     place_prop(torch_src, pos, theta_mid + math.pi, cell_id)
                             elif not this_cell_wall and in_wall_cell:
                                 # Torch on IN boundary of open cell, facing OUT
                                 if cell_rng.random() < density:
                                     pos_x = (r_in + offset) * math.cos(theta_mid)
                                     pos_y = (r_in + offset) * math.sin(theta_mid)
-                                    pos = (pos_x, pos_y, z * wh + 0.6 * wh)
+                                    pos = (pos_x, pos_y, z * level_height + 0.6 * wh)
                                     place_prop(torch_src, pos, theta_mid, cell_id)
                         else:
                             cw_wall = resolved_cells[r][theta][0]
@@ -606,7 +610,7 @@ def _spawn_decorations(props, maze_data, context, parent_collection, dirty_cells
                                 phi_cw = (theta + 1) * alpha_r
                                 pos_x = r_mid * math.cos(phi_cw) + offset * math.sin(phi_cw)
                                 pos_y = r_mid * math.sin(phi_cw) - offset * math.cos(phi_cw)
-                                pos = (pos_x, pos_y, z * wh + 0.6 * wh)
+                                pos = (pos_x, pos_y, z * level_height + 0.6 * wh)
                                 place_prop(torch_src, pos, phi_cw - math.pi / 2, cell_id)
                                 
                             # Inward wall torch
@@ -614,7 +618,7 @@ def _spawn_decorations(props, maze_data, context, parent_collection, dirty_cells
                                 r_in = (r - 0.5) * ts
                                 pos_x = (r_in + offset) * math.cos(theta_mid)
                                 pos_y = (r_in + offset) * math.sin(theta_mid)
-                                pos = (pos_x, pos_y, z * wh + 0.6 * wh)
+                                pos = (pos_x, pos_y, z * level_height + 0.6 * wh)
                                 place_prop(torch_src, pos, theta_mid, cell_id)
 
                         # Outer boundary torch
@@ -635,7 +639,7 @@ def _spawn_decorations(props, maze_data, context, parent_collection, dirty_cells
                                     r_out = (r + 0.5) * ts
                                     pos_x = (r_out - offset) * math.cos(theta_mid)
                                     pos_y = (r_out - offset) * math.sin(theta_mid)
-                                    pos = (pos_x, pos_y, z * wh + 0.6 * wh)
+                                    pos = (pos_x, pos_y, z * level_height + 0.6 * wh)
                                     place_prop(torch_src, pos, theta_mid + math.pi, cell_id)
 
             # 2. Chests
@@ -740,19 +744,19 @@ def _spawn_decorations(props, maze_data, context, parent_collection, dirty_cells
                                 if direction == 'IN':
                                     pos_x = (r_mid + chest_offset) * math.cos(theta_mid)
                                     pos_y = (r_mid + chest_offset) * math.sin(theta_mid)
-                                    place_prop(chest_src, (pos_x, pos_y, z * wh), theta_mid + math.pi, cell_id)
+                                    place_prop(chest_src, (pos_x, pos_y, z * level_height), theta_mid + math.pi, cell_id)
                                 elif direction == 'OUT':
                                     pos_x = (r_mid - chest_offset) * math.cos(theta_mid)
                                     pos_y = (r_mid - chest_offset) * math.sin(theta_mid)
-                                    place_prop(chest_src, (pos_x, pos_y, z * wh), theta_mid, cell_id)
+                                    place_prop(chest_src, (pos_x, pos_y, z * level_height), theta_mid, cell_id)
                                 elif direction == 'CW':
                                     pos_x = r_mid * math.cos(theta_mid - alpha_r / 4)
                                     pos_y = r_mid * math.sin(theta_mid - alpha_r / 4)
-                                    place_prop(chest_src, (pos_x, pos_y, z * wh), theta_mid - math.pi / 2, cell_id)
+                                    place_prop(chest_src, (pos_x, pos_y, z * level_height), theta_mid - math.pi / 2, cell_id)
                                 else: # CCW
                                     pos_x = r_mid * math.cos(theta_mid + alpha_r / 4)
                                     pos_y = r_mid * math.sin(theta_mid + alpha_r / 4)
-                                    place_prop(chest_src, (pos_x, pos_y, z * wh), theta_mid + math.pi / 2, cell_id)
+                                    place_prop(chest_src, (pos_x, pos_y, z * level_height), theta_mid + math.pi / 2, cell_id)
 
             # 3. Doors
             if door_mesh:
@@ -768,7 +772,7 @@ def _spawn_decorations(props, maze_data, context, parent_collection, dirty_cells
                         r_door = (er + 0.5) * ts
                         pos_x = r_door * math.cos(etheta_mid)
                         pos_y = r_door * math.sin(etheta_mid)
-                        place_prop(door_src, (pos_x, pos_y, z * wh), etheta_mid, cell_id)
+                        place_prop(door_src, (pos_x, pos_y, z * level_height), etheta_mid, cell_id)
                     
                 if z == floors - 1 and maze_data.exits:
                     for ex_r, ex_theta, ex_side in maze_data.exits:
@@ -783,7 +787,7 @@ def _spawn_decorations(props, maze_data, context, parent_collection, dirty_cells
                                 r_door = (ex_r + 0.5) * ts
                             pos_x = r_door * math.cos(extheta_mid)
                             pos_y = r_door * math.sin(extheta_mid)
-                            place_prop(door_src, (pos_x, pos_y, z * wh), extheta_mid, cell_id)
+                            place_prop(door_src, (pos_x, pos_y, z * level_height), extheta_mid, cell_id)
         return
 
     for z in range(floors):
@@ -807,41 +811,41 @@ def _spawn_decorations(props, maze_data, context, parent_collection, dirty_cells
                         c = resolved_cells[y][x]
                         # North wall
                         if c[0] and cell_rng.random() < density:
-                            pos = (x * ts + ts/2, (y + 1) * ts - offset, z * wh + 0.6 * wh)
+                            pos = (x * ts + ts/2, (y + 1) * ts - offset, z * level_height + 0.6 * wh)
                             place_prop(torch_src, pos, math.pi, cell_id)
                         # South wall
                         if c[1] and cell_rng.random() < density:
-                            pos = (x * ts + ts/2, y * ts + offset, z * wh + 0.6 * wh)
+                            pos = (x * ts + ts/2, y * ts + offset, z * level_height + 0.6 * wh)
                             place_prop(torch_src, pos, 0.0, cell_id)
                         # East wall
                         if c[2] and cell_rng.random() < density:
-                            pos = ((x + 1) * ts - offset, y * ts + ts/2, z * wh + 0.6 * wh)
+                            pos = ((x + 1) * ts - offset, y * ts + ts/2, z * level_height + 0.6 * wh)
                             place_prop(torch_src, pos, math.pi / 2, cell_id)
                         # West wall
                         if c[3] and cell_rng.random() < density:
-                            pos = (x * ts + offset, y * ts + ts/2, z * wh + 0.6 * wh)
+                            pos = (x * ts + offset, y * ts + ts/2, z * level_height + 0.6 * wh)
                             place_prop(torch_src, pos, -math.pi / 2, cell_id)
                     else: # cube
                         if resolved_cells[y][x][0]: # wall cube
                             # North
                             if y + 1 < maze_data.depth and not resolved_cells[y+1][x][0]:
                                 if cell_rng.random() < density:
-                                    pos = (x * ts + ts/2, (y + 1) * ts + offset, z * wh + 0.6 * wh)
+                                    pos = (x * ts + ts/2, (y + 1) * ts + offset, z * level_height + 0.6 * wh)
                                     place_prop(torch_src, pos, 0.0, cell_id)
                             # South
                             if y - 1 >= 0 and not resolved_cells[y-1][x][0]:
                                 if cell_rng.random() < density:
-                                    pos = (x * ts + ts/2, y * ts - offset, z * wh + 0.6 * wh)
+                                    pos = (x * ts + ts/2, y * ts - offset, z * level_height + 0.6 * wh)
                                     place_prop(torch_src, pos, math.pi, cell_id)
                             # East
                             if x + 1 < maze_data.width and not resolved_cells[y][x+1][0]:
                                 if cell_rng.random() < density:
-                                    pos = ((x + 1) * ts + offset, y * ts + ts/2, z * wh + 0.6 * wh)
+                                    pos = ((x + 1) * ts + offset, y * ts + ts/2, z * level_height + 0.6 * wh)
                                     place_prop(torch_src, pos, math.pi / 2, cell_id)
                             # West
                             if x - 1 >= 0 and not resolved_cells[y][x-1][0]:
                                 if cell_rng.random() < density:
-                                    pos = (x * ts - offset, y * ts + ts/2, z * wh + 0.6 * wh)
+                                    pos = (x * ts - offset, y * ts + ts/2, z * level_height + 0.6 * wh)
                                     place_prop(torch_src, pos, -math.pi / 2, cell_id)
 
         # 2. Chests (Dead-Ends)
@@ -899,16 +903,16 @@ def _spawn_decorations(props, maze_data, context, parent_collection, dirty_cells
                         
                         if not is_ent_or_exit and cell_rng.random() < density:
                             if open_dir == 'N':
-                                pos = (x * ts + ts/2, y * ts + chest_offset, z * wh)
+                                pos = (x * ts + ts/2, y * ts + chest_offset, z * level_height)
                                 place_prop(chest_src, pos, 0.0, cell_id)
                             elif open_dir == 'S':
-                                pos = (x * ts + ts/2, (y + 1) * ts - chest_offset, z * wh)
+                                pos = (x * ts + ts/2, (y + 1) * ts - chest_offset, z * level_height)
                                 place_prop(chest_src, pos, math.pi, cell_id)
                             elif open_dir == 'E':
-                                pos = (x * ts + chest_offset, y * ts + ts/2, z * wh)
+                                pos = (x * ts + chest_offset, y * ts + ts/2, z * level_height)
                                 place_prop(chest_src, pos, math.pi / 2, cell_id)
                             elif open_dir == 'W':
-                                pos = ((x + 1) * ts - chest_offset, y * ts + ts/2, z * wh)
+                                pos = ((x + 1) * ts - chest_offset, y * ts + ts/2, z * level_height)
                                 place_prop(chest_src, pos, -math.pi / 2, cell_id)
 
         # 3. Doors (Entrance / Exits)
@@ -919,30 +923,30 @@ def _spawn_decorations(props, maze_data, context, parent_collection, dirty_cells
                 cell_id = get_cell_id(z, ey, ex)
                 if dirty_cell_ids is None or cell_id in dirty_cell_ids:
                     if side == 'N':
-                        pos = (ex * ts + ts/2, (ey + 1) * ts, z * wh)
+                        pos = (ex * ts + ts/2, (ey + 1) * ts, z * level_height)
                         place_prop(door_src, pos, 0.0, cell_id)
                     elif side == 'S':
-                        pos = (ex * ts + ts/2, ey * ts, z * wh)
+                        pos = (ex * ts + ts/2, ey * ts, z * level_height)
                         place_prop(door_src, pos, 0.0, cell_id)
                     elif side == 'E':
-                        pos = ((ex + 1) * ts, ey * ts + ts/2, z * wh)
+                        pos = ((ex + 1) * ts, ey * ts + ts/2, z * level_height)
                         place_prop(door_src, pos, math.pi / 2, cell_id)
                     elif side == 'W':
-                        pos = (ex * ts, ey * ts + ts/2, z * wh)
+                        pos = (ex * ts, ey * ts + ts/2, z * level_height)
                         place_prop(door_src, pos, -math.pi / 2, cell_id)
             if z == floors - 1 and maze_data.exits:
                 for ex, ey, side in maze_data.exits:
                     cell_id = get_cell_id(z, ey, ex)
                     if dirty_cell_ids is None or cell_id in dirty_cell_ids:
                         if side == 'N':
-                            pos = (ex * ts + ts/2, (ey + 1) * ts, z * wh)
+                            pos = (ex * ts + ts/2, (ey + 1) * ts, z * level_height)
                             place_prop(door_src, pos, 0.0, cell_id)
                         elif side == 'S':
-                            pos = (ex * ts + ts/2, ey * ts, z * wh)
+                            pos = (ex * ts + ts/2, ey * ts, z * level_height)
                             place_prop(door_src, pos, 0.0, cell_id)
                         elif side == 'E':
-                            pos = ((ex + 1) * ts, ey * ts + ts/2, z * wh)
+                            pos = ((ex + 1) * ts, ey * ts + ts/2, z * level_height)
                             place_prop(door_src, pos, math.pi / 2, cell_id)
                         elif side == 'W':
-                            pos = (ex * ts, ey * ts + ts/2, z * wh)
+                            pos = (ex * ts, ey * ts + ts/2, z * level_height)
                             place_prop(door_src, pos, -math.pi / 2, cell_id)

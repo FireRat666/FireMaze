@@ -54,7 +54,7 @@ def _force_cell_open(cells: List, z: int, y: int, x: int, wall_mode: str) -> Non
                 cells[z][y][x - 1][2] = False
 
 
-def _place_stairs(cells_3d: List, width: int, depth: int, floors: int, wall_mode: str, stair_count: int = 1, stair_footprint: str = '1x1', stair_style: str = 'stair', stair_direction: str = 'random') -> List[dict]:
+def _place_stairs(cells_3d: List, width: int, depth: int, floors: int, wall_mode: str, stair_count: int = 1, stair_footprint: str = '1x1', stair_style: str = 'stair', stair_direction: str = 'random', blocked: Optional[List[List[bool]]] = None) -> List[dict]:
     """Place stair footprints in 3D cells and return placed stair records."""
     placed = []
     rng = get_rng()
@@ -62,6 +62,15 @@ def _place_stairs(cells_3d: List, width: int, depth: int, floors: int, wall_mode
         candidates = []
         for y in range(1, depth - 1):
             for x in range(1, width - 1):
+                if blocked:
+                    if wall_mode == 'cube':
+                        sub_x = (x - 1) // 2
+                        sub_y = (y - 1) // 2
+                        if 0 <= sub_y < len(blocked) and 0 <= sub_x < len(blocked[0]) and blocked[sub_y][sub_x]:
+                            continue
+                    else:
+                        if 0 <= y < len(blocked) and 0 <= x < len(blocked[0]) and blocked[y][x]:
+                            continue
                 src_ok = not cells_3d[z][y][x][0] if wall_mode == 'cube' else True
                 dst_ok = not cells_3d[z + 1][y][x][0] if wall_mode == 'cube' else True
                 if src_ok and dst_ok:
@@ -87,6 +96,22 @@ def _place_stairs(cells_3d: List, width: int, depth: int, floors: int, wall_mode
                 continue
             if any(c in placed_cells for c in fp_coords):
                 continue
+            if blocked:
+                footprint_blocked = False
+                for cx, cy in fp_coords:
+                    if wall_mode == 'cube':
+                        sub_cx = (cx - 1) // 2
+                        sub_cy = (cy - 1) // 2
+                        if 0 <= sub_cy < len(blocked) and 0 <= sub_cx < len(blocked[0]) and blocked[sub_cy][sub_cx]:
+                            footprint_blocked = True
+                            break
+                    else:
+                        if 0 <= cy < len(blocked) and 0 <= cx < len(blocked[0]) and blocked[cy][cx]:
+                            footprint_blocked = True
+                            break
+                if footprint_blocked:
+                    continue
+
             for c in fp_coords:
                 placed_cells.add(c)
                 _force_cell_open(cells_3d, z, c[1], c[0], wall_mode)
@@ -106,7 +131,7 @@ def _place_stairs(cells_3d: List, width: int, depth: int, floors: int, wall_mode
     return placed
 
 
-def _expand_cells_to_3d(cells_2d: List, width: int, depth: int, floors: int, wall_mode: str, stair_count: int = 1, stair_footprint: str = '1x1', stair_style: str = 'stair', stair_direction: str = 'random') -> Tuple[List, List]:
+def _expand_cells_to_3d(cells_2d: List, width: int, depth: int, floors: int, wall_mode: str, stair_count: int = 1, stair_footprint: str = '1x1', stair_style: str = 'stair', stair_direction: str = 'random', blocked: Optional[List[List[bool]]] = None) -> Tuple[List, List]:
     """Clone 2D cells to 3D [floors][depth][width] and carve stair footprints."""
     if floors <= 1:
         return [cells_2d], []
@@ -116,7 +141,8 @@ def _expand_cells_to_3d(cells_2d: List, width: int, depth: int, floors: int, wal
     stairs_placed = _place_stairs(
         cells_3d, width, depth, floors, wall_mode,
         stair_count=stair_count, stair_footprint=stair_footprint,
-        stair_style=stair_style, stair_direction=stair_direction
+        stair_style=stair_style, stair_direction=stair_direction,
+        blocked=blocked
     )
     return cells_3d, stairs_placed
 
@@ -154,6 +180,29 @@ def _get_image_mask_data(mask_image, invert: bool, width: int, depth: int) -> Li
     return blocked
 
 
+def _merge_shape_mask(blocked: List[List[bool]], shape_blocked: List[List[bool]]) -> List[List[bool]]:
+    """Union a shape mask into the existing blocked array.
+
+    A cell is blocked if it was blocked by either the image mask or the
+    shape mask.  Mutates and returns *blocked* for convenience.
+    """
+    if not shape_blocked:
+        return blocked
+    sb_h = len(shape_blocked)
+    sb_w = len(shape_blocked[0]) if sb_h else 0
+    for y in range(len(blocked)):
+        for x in range(len(blocked[0])):
+            if sb_h == len(blocked) and sb_w == len(blocked[0]):
+                if shape_blocked[y][x]:
+                    blocked[y][x] = True
+            else:
+                sy = y * 2 + 1
+                sx = x * 2 + 1
+                if sy < sb_h and sx < sb_w and shape_blocked[sy][sx]:
+                    blocked[y][x] = True
+    return blocked
+
+
 def _get_start_cell(blocked: List[List[bool]], w: int, h: int) -> Optional[Tuple[int, int]]:
     """Find a non-blocked starting cell close to the center, or None if all cells are blocked."""
     cx, cy = w // 2, h // 2
@@ -169,3 +218,24 @@ def _get_start_cell(blocked: List[List[bool]], w: int, h: int) -> Optional[Tuple
                 if 0 <= nx < w and 0 <= ny < h and not blocked[ny][nx]:
                     return nx, ny
     return None
+
+
+def _get_shape_boundary_candidates(blocked: List[List[bool]], width: int, depth: int) -> List[Tuple[int, int, str]]:
+    """Find cells on the shape boundary — inside the shape but adjacent to an outside cell.
+
+    Returns a list of (x, y, direction) tuples where *direction* is the
+    outward-facing wall direction (N/S/E/W) toward the nearest blocked
+    neighbour.  Only cells that are unblocked and have at least one
+    blocked (or out-of-bounds) neighbour are included.
+    """
+    candidates = []
+    dir_deltas = [('N', 0, 1), ('S', 0, -1), ('E', 1, 0), ('W', -1, 0)]
+    for y in range(depth):
+        for x in range(width):
+            if blocked[y][x]:
+                continue  # cell itself is outside the shape
+            for d, dx, dy in dir_deltas:
+                nx, ny = x + dx, y + dy
+                if nx < 0 or nx >= width or ny < 0 or ny >= depth or blocked[ny][nx]:
+                    candidates.append((x, y, d))
+    return candidates
