@@ -564,10 +564,14 @@ def _cell_intersects_polygon(corners, poly):
         def on_segment(p, q, r):
             return (q[0] <= max(p[0], r[0]) and q[0] >= min(p[0], r[0]) and
                     q[1] <= max(p[1], r[1]) and q[1] >= min(p[1], r[1]))
-        if o1 == 0 and on_segment(a, c, b): return True
-        if o2 == 0 and on_segment(a, d, b): return True
-        if o3 == 0 and on_segment(c, a, d): return True
-        if o4 == 0 and on_segment(c, b, d): return True
+        if o1 == 0 and on_segment(a, c, b):
+            return True
+        if o2 == 0 and on_segment(a, d, b):
+            return True
+        if o3 == 0 and on_segment(c, a, d):
+            return True
+        if o4 == 0 and on_segment(c, b, d):
+            return True
         return False
 
     cell_edges = [(corners[0], corners[1]), (corners[1], corners[2]), (corners[2], corners[3]), (corners[3], corners[0])]
