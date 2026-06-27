@@ -553,6 +553,7 @@ def _build_smooth_roof_triangles(ctx, props, maze_data, bm_roof, uv_roof, cell_l
 
     angle_rad = _ROTATION_ANGLES.get(props.shape_rotation, 0.0)
     def _pt_outside(u, v):
+        """Return True if (u,v) in normalized space falls outside the smooth roof shape boundary (rotation-aware)."""
         pu, pv = u, v
         if angle_rad != 0.0:
             pu, pv = _rotate_point(pu, pv, -angle_rad)
@@ -705,6 +706,7 @@ def _build_smooth_floor_triangles(ctx, props, maze_data, bm_floor, uv_floor, cel
 
     angle_rad = _ROTATION_ANGLES.get(props.shape_rotation, 0.0)
     def _pt_outside(u, v):
+        """Return True if (u,v) in normalized space falls outside the smooth floor shape boundary (rotation-aware)."""
         pu, pv = u, v
         if angle_rad != 0.0:
             pu, pv = _rotate_point(pu, pv, -angle_rad)
@@ -1717,6 +1719,7 @@ def _build_rect_thin_walls(ctx, props, maze_data, created_objects, name_suffix, 
                 normals.append(norm)
 
             def get_miter_vector(m_prev, m_curr, W):
+                """Return the miter offset vector for a corner, given previous and next edge normals and wall thickness W."""
                 denom = 1.0 + m_prev.dot(m_curr)
                 if denom < 0.05:
                     avg = (m_prev + m_curr).normalized() if (m_prev + m_curr).length > 0 else m_curr

@@ -80,23 +80,28 @@ def _point_in_polygon(u: float, v: float, polygon: List[Tuple[float, float]]) ->
 
 
 def _inside_triangle(u: float, v: float) -> bool:
+    """Return True if (u,v) lies inside the equilateral-triangle shape boundary (inclusive)."""
     return _point_in_polygon(u, v, _triangle_vertices())
 
 
 def _inside_hexagon(u: float, v: float) -> bool:
+    """Return True if (u,v) lies inside the regular-hexagon shape boundary (inclusive)."""
     return _point_in_polygon(u, v, _hexagon_vertices())
 
 
 def _inside_diamond_strict(u: float, v: float) -> bool:
+    """Return True if (u,v) lies strictly inside the diamond shape (exclusive of boundary)."""
     return abs(u - 0.5) + abs(v - 0.5) < 0.5
 
 
 def _inside_triangle_strict(u: float, v: float) -> bool:
+    """Return True if (u,v) lies strictly inside the triangle shape (exclusive of boundary)."""
     verts = _triangle_vertices()
     return _point_in_polygon(u, v, verts) and not is_point_on_polygon_boundary(u, v, verts)
 
 
 def _inside_hexagon_strict(u: float, v: float) -> bool:
+    """Return True if (u,v) lies strictly inside the hexagon shape (exclusive of boundary)."""
     verts = _hexagon_vertices()
     return _point_in_polygon(u, v, verts) and not is_point_on_polygon_boundary(u, v, verts)
 

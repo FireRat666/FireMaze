@@ -97,6 +97,7 @@ def check_has_autosave():
 _has_autosave_cached = None
 
 def has_autosave():
+    """Return cached result of check_has_autosave(), recomputing on first call."""
     global _has_autosave_cached
     if _has_autosave_cached is None:
         _has_autosave_cached = check_has_autosave()
