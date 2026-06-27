@@ -78,7 +78,15 @@ def _create_bmesh_element(element_type: str, materials_dict: dict):
     """
     bm = bmesh.new()
     uv_layer = bm.loops.layers.uv.new("UVMap")
-    mat_list = [m for m in [materials_dict.get(element_type)] if m]
+    mat = materials_dict.get(element_type)
+    mat_list = []
+    if mat:
+        mat_list.append(mat)
+        if element_type in ("floor", "roof"):
+            mat_bot = materials_dict.get("roof") if element_type == "floor" else materials_dict.get("floor")
+            mat_list.append(mat_bot if mat_bot else mat)
+            mat_side = materials_dict.get("wall")
+            mat_list.append(mat_side if mat_side else mat)
     return bm, uv_layer, mat_list
 
 

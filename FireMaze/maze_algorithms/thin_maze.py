@@ -744,7 +744,7 @@ def _generate_thin_maze(
         # When a shape mask is active, add shape boundary cells as candidates
         # so entrances can be placed on the shape contour
         if shape_blocked is not None:
-            shape_candidates = _get_shape_boundary_candidates(blocked, width, depth)
+            shape_candidates = _get_shape_boundary_candidates(shape_blocked, width, depth)
             existing = {(x, y, d) for x, y, d in candidates}
             for x, y, d in shape_candidates:
                 if side == 'ANY' or d == side:

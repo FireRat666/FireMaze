@@ -379,45 +379,71 @@ def clip_cell(
     if not segmented_poly:
         return None
 
+    xmin, xmax = x / width, (x + 1) / width
+    ymin, ymax = y / depth, (y + 1) / depth
+
+    corners = [
+        (xmin, ymin),
+        (xmax, ymin),
+        (xmax, ymax),
+        (xmin, ymax)
+    ]
+
     def is_inside_poly(u: float, v: float) -> bool:
         return (_point_in_polygon(u, v, segmented_poly) or
                 is_point_on_polygon_boundary(u, v, segmented_poly))
 
-    # 4 cell corners in normalized space
-    corners = [
-        (x / width, y / depth),          # BL (0)
-        ((x + 1) / width, y / depth),    # BR (1)
-        ((x + 1) / width, (y + 1) / depth), # TR (2)
-        (x / width, (y + 1) / depth),    # TL (3)
-    ]
-
     inside = [is_inside_poly(u, v) for u, v in corners]
     num_inside = sum(inside)
 
-    if num_inside == 4 or num_inside == 0:
+    if num_inside == 4:
         return None
 
-    # Construct the clipped polygon
-    poly_verts = []
-    for i in range(4):
-        p1 = corners[i]
-        p2 = corners[(i + 1) % 4]
-        in1 = inside[i]
-        in2 = inside[(i + 1) % 4]
+    if num_inside == 0:
+        if not _cell_intersects_polygon(corners, segmented_poly):
+            return None
 
-        if in1:
-            poly_verts.append(p1)
-            if not in2:
-                # Inside to Outside crossing
-                poly_verts.append(_intersect_segment(p1, p2, is_inside_poly))
-        else:
-            if in2:
-                # Outside to Inside crossing
-                poly_verts.append(_intersect_segment(p2, p1, is_inside_poly))
+    # Sutherland-Hodgman Polygon Clipping
+    def clip_edge(poly, boundary_test, intersect_fn):
+        result = []
+        if not poly:
+            return result
+        s = poly[-1]
+        for p in poly:
+            if boundary_test(p):
+                if not boundary_test(s):
+                    result.append(intersect_fn(s, p))
+                result.append(p)
+            elif boundary_test(s):
+                result.append(intersect_fn(s, p))
+            s = p
+        return result
+
+    def interpolate_x(s, p, target_x):
+        dx = p[0] - s[0]
+        if abs(dx) < 1e-9:
+            return target_x, s[1]
+        return target_x, s[1] + (p[1] - s[1]) * (target_x - s[0]) / dx
+
+    def interpolate_y(s, p, target_y):
+        dy = p[1] - s[1]
+        if abs(dy) < 1e-9:
+            return s[0], target_y
+        return s[0] + (p[0] - s[0]) * (target_y - s[1]) / dy
+
+    clipped_poly = segmented_poly
+    clipped_poly = clip_edge(clipped_poly, lambda p: p[0] >= xmin, lambda s, p: interpolate_x(s, p, xmin))
+    clipped_poly = clip_edge(clipped_poly, lambda p: p[0] <= xmax, lambda s, p: interpolate_x(s, p, xmax))
+    clipped_poly = clip_edge(clipped_poly, lambda p: p[1] >= ymin, lambda s, p: interpolate_y(s, p, ymin))
+    clipped_poly = clip_edge(clipped_poly, lambda p: p[1] <= ymax, lambda s, p: interpolate_y(s, p, ymax))
+
+    # If the clipped polygon has less than 3 vertices, it doesn't form a face
+    if len(clipped_poly) < 3:
+        return None
 
     # Convert to world space
     world_verts = []
-    for u, v in poly_verts:
+    for u, v in clipped_poly:
         world_verts.append((u * width * ts, v * depth * ts, 0.0))
 
     # Fan triangulate
@@ -520,6 +546,40 @@ def get_boundary_edges(
     return edges
 
 
+def _cell_intersects_polygon(corners, poly):
+    # Orientation test
+    def ccw(p1, p2, p3):
+        val = (p3[1] - p1[1]) * (p2[0] - p1[0]) - (p2[1] - p1[1]) * (p3[0] - p1[0])
+        if abs(val) < 1e-9:
+            return 0  # collinear
+        return 1 if val > 0 else -1
+
+    def segments_intersect(a, b, c, d):
+        o1 = ccw(a, b, c)
+        o2 = ccw(a, b, d)
+        o3 = ccw(c, d, a)
+        o4 = ccw(c, d, b)
+        if o1 != o2 and o3 != o4:
+            return True
+        def on_segment(p, q, r):
+            return (q[0] <= max(p[0], r[0]) and q[0] >= min(p[0], r[0]) and
+                    q[1] <= max(p[1], r[1]) and q[1] >= min(p[1], r[1]))
+        if o1 == 0 and on_segment(a, c, b): return True
+        if o2 == 0 and on_segment(a, d, b): return True
+        if o3 == 0 and on_segment(c, a, d): return True
+        if o4 == 0 and on_segment(c, b, d): return True
+        return False
+
+    cell_edges = [(corners[0], corners[1]), (corners[1], corners[2]), (corners[2], corners[3]), (corners[3], corners[0])]
+    poly_edges = [(poly[j], poly[(j + 1) % len(poly)]) for j in range(len(poly))]
+    
+    for pe in poly_edges:
+        for ce in cell_edges:
+            if segments_intersect(pe[0], pe[1], ce[0], ce[1]):
+                return True
+    return False
+
+
 def get_cell_clip_status(x: int, y: int, width: int, depth: int, shape: str, rotation: str, offset: float) -> str:
     """Determine if a cell is completely inside, intersected (clip), or completely outside the shape boundary."""
     if shape == 'rect':
@@ -547,4 +607,6 @@ def get_cell_clip_status(x: int, y: int, width: int, depth: int, shape: str, rot
     elif inside_count > 0:
         return 'clip'
     else:
+        if _cell_intersects_polygon(corners, poly):
+            return 'clip'
         return 'none'

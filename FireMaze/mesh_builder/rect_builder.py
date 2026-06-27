@@ -851,23 +851,24 @@ def _build_smooth_floor_triangles(ctx, props, maze_data, bm_floor, uv_floor, cel
                     edges_idx = [(0, 1), (1, 2), (2, 0)]
                     for i0, i1 in edges_idx:
                         side_pts = [
-                            tri_w[i0], tri_w[i1],
-                            tri_w_bot[i1], tri_w_bot[i0],
+                            tri_w_bot[i0], tri_w_bot[i1],
+                            tri_w[i1], tri_w[i0],
                         ]
                         side_world = [Matrix.Translation(center) @ ctx['mat_floor_offset'] @ (p - center) for p in side_pts]
                         side_verts = [bm_floor.verts.new(p) for p in side_world]
                         f_side = bm_floor.faces.new(side_verts)
                         f_side.material_index = 2
-                        f_side.loops[0][uv_floor].uv = (0.0, 1.0)
-                        f_side.loops[1][uv_floor].uv = (1.0, 1.0)
-                        f_side.loops[2][uv_floor].uv = (1.0, 0.0)
-                        f_side.loops[3][uv_floor].uv = (0.0, 0.0)
+                        f_side.loops[0][uv_floor].uv = (0.0, 0.0)
+                        f_side.loops[1][uv_floor].uv = (1.0, 0.0)
+                        f_side.loops[2][uv_floor].uv = (1.0, 1.0)
+                        f_side.loops[3][uv_floor].uv = (0.0, 1.0)
                         f_side[cell_layer] = get_cell_id(z, ref_cy, ref_cx)
 
 
 
 def _build_rect_cube_roof(ctx, props, maze_data, created_objects, name_suffix, bm=None, uv_layer=None, materials=None, dirty_cells=None):
     """Build cube-mode roof tiles for a rectangular grid, optionally updating an existing BMesh."""
+    from ..shape_boundaries import get_cell_clip_status
     if not props.cube_mode_pillar or name_suffix in {"_EditHelper", "_Collider"}:
         if bm is None:
             bm_roof, uv_roof, roof_materials = _create_bmesh_element("roof", ctx['materials'])
@@ -904,112 +905,74 @@ def _build_rect_cube_roof(ctx, props, maze_data, created_objects, name_suffix, b
 
                     is_blocked = not is_in_grid or (ctx.get('shape_blocked') is not None and ctx['shape_blocked'][y][x])
                     
-                    # Determine roof generation and clipping status
                     if is_blocked:
+                        continue
+
+                    is_wall = level_cells[y][x][0]
+                    if not is_wall:
                         continue
                     
-                    is_wall = level_cells[y][x][0]
-                    if is_wall:
-                        if dirty_cells is None:
-                            start_idx = len(bm_roof.faces)
-                        else:
-                            existing_faces = set(bm_roof.faces)
-
-                        roof_idx = level_cells[y][x][6] if len(level_cells[y][x]) > 6 else -1
-                        if roof_idx < 0 and ctx['roof_meshes_list']:
-                            roof_idx = 0
-
+                    if props.smooth_shape_edges and getattr(props, 'smooth_boundary_method', 'filler') == 'clip':
+                        status = get_cell_clip_status(x, y, maze_data.width, maze_data.depth, props.maze_shape, props.shape_rotation, props.smooth_boundary_offset)
+                        use_clip = (status == 'clip')
+                        if status == 'none':
+                            continue
+                    else:
                         use_clip = False
 
-                        if ctx['roof_meshes_list'] and isinstance(roof_idx, int) and 0 <= roof_idx < len(ctx['roof_meshes_list']):
-                            mat_base = Matrix.Translation(Vector((x * ctx['ts'] + off, y * ctx['ts'] + off, z_off + ctx['wh'])))
-                            mat = mat_base @ ctx['mat_roof_offset']
-                            if use_clip:
-                                _add_clipped_custom_mesh_at(
-                                    bm_roof, ctx['roof_meshes_list'][roof_idx], mat, uv_roof, roof_materials,
-                                    x, y, maze_data.width, maze_data.depth, ctx['ts'], props.maze_shape, props.shape_rotation,
-                                    offset=props.smooth_boundary_offset
-                                )
-                            else:
-                                _add_mesh_at(bm_roof, ctx['roof_meshes_list'][roof_idx], mat, uv_roof, final_materials_list=roof_materials)
-                        elif ctx['custom_roof']:
-                            mat_base = Matrix.Translation(Vector((x * ctx['ts'] + off, y * ctx['ts'] + off, z_off + ctx['wh'])))
-                            mat = mat_base @ ctx['mat_roof_offset']
-                            if use_clip:
-                                _add_clipped_custom_mesh_at(
-                                    bm_roof, ctx['custom_roof'], mat, uv_roof, roof_materials,
-                                    x, y, maze_data.width, maze_data.depth, ctx['ts'], props.maze_shape, props.shape_rotation,
-                                    offset=props.smooth_boundary_offset
-                                )
-                            else:
-                                _add_mesh_at(bm_roof, ctx['custom_roof'], mat, uv_roof, final_materials_list=roof_materials)
-                        else:
-                            if use_clip:
-                                clipped = _add_clipped_floor_tile(
-                                    bm_roof, uv_roof, x, y, maze_data.width, maze_data.depth,
-                                    ctx['ts'], props.maze_shape, props.shape_rotation,
-                                    z_offset=z_off + ctx['wh'], mat_offset=ctx['mat_roof_offset'],
-                                    offset=props.smooth_boundary_offset)
-                                if not clipped:
-                                    _add_cube_roof_face_transformed(bm_roof, uv_roof, x * ctx['ts'] + ctx['ts'] / 2, y * ctx['ts'] + ctx['ts'] / 2, ctx['ts'], ctx['ts'], z_off + ctx['wh'], ctx['mat_roof_offset'])
-                            else:
-                                _add_cube_roof_face_transformed(bm_roof, uv_roof, x * ctx['ts'] + ctx['ts'] / 2, y * ctx['ts'] + ctx['ts'] / 2, ctx['ts'], ctx['ts'], z_off + ctx['wh'], ctx['mat_roof_offset'])
+                    roof_idx = level_cells[y][x][6] if len(level_cells[y][x]) > 6 else -1
 
-                        cell_id = get_cell_id(z, y_clamp, x_clamp)
-                        if dirty_cells is None:
-                            bm_roof.faces.ensure_lookup_table()
-                            for i in range(start_idx, len(bm_roof.faces)):
-                                bm_roof.faces[i][cell_layer] = cell_id
-                        else:
-                            for f in bm_roof.faces:
-                                if f not in existing_faces:
-                                    f[cell_layer] = cell_id
-                        continue
+                    if dirty_cells is None:
+                        start_idx = len(bm_roof.faces)
+                    else:
+                        existing_faces = set(bm_roof.faces)
 
-                    if is_blocked:
-                        if dirty_cells is None:
-                            start_idx = len(bm_roof.faces)
-                        else:
-                            existing_faces = set(bm_roof.faces)
+                    if roof_idx < 0 and ctx['roof_meshes_list']:
+                        roof_idx = 0
 
-                        has_custom = False
-                        if ctx['roof_meshes_list']:
-                            roof_idx = 0
-                            if isinstance(roof_idx, int) and 0 <= roof_idx < len(ctx['roof_meshes_list']):
-                                has_custom = True
-                                mat_base = Matrix.Translation(Vector((x * ctx['ts'] + off, y * ctx['ts'] + off, z_off + ctx['wh'])))
-                                mat = mat_base @ ctx['mat_roof_offset']
-                                _add_clipped_custom_mesh_at(
-                                    bm_roof, ctx['roof_meshes_list'][roof_idx], mat, uv_roof, roof_materials,
-                                    x, y, maze_data.width, maze_data.depth, ctx['ts'], props.maze_shape, props.shape_rotation,
-                                    offset=props.smooth_boundary_offset
-                                )
-                        elif ctx['custom_roof']:
-                            has_custom = True
-                            mat_base = Matrix.Translation(Vector((x * ctx['ts'] + off, y * ctx['ts'] + off, z_off + ctx['wh'])))
-                            mat = mat_base @ ctx['mat_roof_offset']
+                    if ctx['roof_meshes_list'] and isinstance(roof_idx, int) and 0 <= roof_idx < len(ctx['roof_meshes_list']):
+                        mat_base = Matrix.Translation(Vector((x * ctx['ts'] + off, y * ctx['ts'] + off, z_off + ctx['wh'])))
+                        mat = mat_base @ ctx['mat_roof_offset']
+                        if use_clip:
+                            _add_clipped_custom_mesh_at(
+                                bm_roof, ctx['roof_meshes_list'][roof_idx], mat, uv_roof, roof_materials,
+                                x, y, maze_data.width, maze_data.depth, ctx['ts'], props.maze_shape, props.shape_rotation,
+                                offset=props.smooth_boundary_offset
+                            )
+                        else:
+                            _add_mesh_at(bm_roof, ctx['roof_meshes_list'][roof_idx], mat, uv_roof, final_materials_list=roof_materials)
+                    elif ctx['custom_roof']:
+                        mat_base = Matrix.Translation(Vector((x * ctx['ts'] + off, y * ctx['ts'] + off, z_off + ctx['wh'])))
+                        mat = mat_base @ ctx['mat_roof_offset']
+                        if use_clip:
                             _add_clipped_custom_mesh_at(
                                 bm_roof, ctx['custom_roof'], mat, uv_roof, roof_materials,
                                 x, y, maze_data.width, maze_data.depth, ctx['ts'], props.maze_shape, props.shape_rotation,
                                 offset=props.smooth_boundary_offset
                             )
-
-                        if not has_custom:
-                            _add_clipped_floor_tile(
+                        else:
+                            _add_mesh_at(bm_roof, ctx['custom_roof'], mat, uv_roof, final_materials_list=roof_materials)
+                    else:
+                        if use_clip:
+                            clipped = _add_clipped_floor_tile(
                                 bm_roof, uv_roof, x, y, maze_data.width, maze_data.depth,
                                 ctx['ts'], props.maze_shape, props.shape_rotation,
                                 z_offset=z_off + ctx['wh'], mat_offset=ctx['mat_roof_offset'],
                                 offset=props.smooth_boundary_offset)
-                        
-                        cell_id = get_cell_id(z, y_clamp, x_clamp)
-                        if dirty_cells is None:
-                            bm_roof.faces.ensure_lookup_table()
-                            for i in range(start_idx, len(bm_roof.faces)):
-                                bm_roof.faces[i][cell_layer] = cell_id
+                            if not clipped:
+                                _add_cube_roof_face_transformed(bm_roof, uv_roof, x * ctx['ts'] + ctx['ts'] / 2, y * ctx['ts'] + ctx['ts'] / 2, ctx['ts'], ctx['ts'], z_off + ctx['wh'], ctx['mat_roof_offset'])
                         else:
-                            for f in bm_roof.faces:
-                                if f not in existing_faces:
-                                    f[cell_layer] = cell_id
+                            _add_cube_roof_face_transformed(bm_roof, uv_roof, x * ctx['ts'] + ctx['ts'] / 2, y * ctx['ts'] + ctx['ts'] / 2, ctx['ts'], ctx['ts'], z_off + ctx['wh'], ctx['mat_roof_offset'])
+
+                    cell_id = get_cell_id(z, y_clamp, x_clamp)
+                    if dirty_cells is None:
+                        bm_roof.faces.ensure_lookup_table()
+                        for i in range(start_idx, len(bm_roof.faces)):
+                            bm_roof.faces[i][cell_layer] = cell_id
+                    else:
+                        for f in bm_roof.faces:
+                            if f not in existing_faces:
+                                f[cell_layer] = cell_id
 
         if getattr(props, 'smooth_boundary_method', 'filler') != 'clip':
             _build_smooth_roof_triangles(ctx, props, maze_data, bm_roof, uv_roof, cell_layer, dirty_cells)

@@ -789,7 +789,14 @@ def _generate_cube_maze(
         # When a shape mask is active, add shape boundary cells as candidates
         # so entrances can be placed on the shape contour
         if shape_blocked is not None:
-            sub_candidates = _get_shape_boundary_candidates(blocked, sub_w, sub_h)
+            sb_h = len(shape_blocked)
+            sb_w = len(shape_blocked[0]) if sb_h else 0
+            if sb_h == sub_h and sb_w == sub_w:
+                sub_shape_blocked = shape_blocked
+            else:
+                sub_shape_blocked = [[shape_blocked[y * 2 + 1][x * 2 + 1] for x in range(sub_w)] for y in range(sub_h)]
+            
+            sub_candidates = _get_shape_boundary_candidates(sub_shape_blocked, sub_w, sub_h)
             shape_candidates = []
             for sx, sy, d in sub_candidates:
                 if side == 'ANY' or d == side:
@@ -807,7 +814,8 @@ def _generate_cube_maze(
                         y = 2 * sy + 1
                     else:
                         continue
-                    shape_candidates.append((x, y, d))
+                    if not blocked[sy][sx]:
+                        shape_candidates.append((x, y, d))
 
             existing = {(x, y, d) for x, y, d in candidates}
             for x, y, d in shape_candidates:

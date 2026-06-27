@@ -325,6 +325,8 @@ def rebuild_maze_from_collection(context, col):
         props.smooth_boundary_method = data_dict['smooth_boundary_method']
     if 'floor_thickness' in data_dict:
         props.floor_thickness = data_dict['floor_thickness']
+    if 'smooth_boundary_offset' in data_dict:
+        props.smooth_boundary_offset = data_dict['smooth_boundary_offset']
 
     # Determine number of meshes in collections
     num_wall_meshes = 0
@@ -407,6 +409,7 @@ def rebuild_maze_from_collection(context, col):
         'smooth_shape_edges': props.smooth_shape_edges,
         'smooth_boundary_method': props.smooth_boundary_method,
         'floor_thickness': props.floor_thickness,
+        'smooth_boundary_offset': props.smooth_boundary_offset,
         'schema_version': 1,
     })
 
@@ -607,6 +610,8 @@ class MAZE_OT_generate(bpy.types.Operator):
             'shape_rotation': props.shape_rotation,
             'smooth_shape_edges': props.smooth_shape_edges,
             'smooth_boundary_method': props.smooth_boundary_method,
+            'floor_thickness': props.floor_thickness,
+            'smooth_boundary_offset': props.smooth_boundary_offset,
             'schema_version': 1,
         })
 

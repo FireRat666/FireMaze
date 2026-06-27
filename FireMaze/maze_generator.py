@@ -65,13 +65,7 @@ def generate_maze(
     # Compute shape mask (rect grids only; polar grids ignore shape)
     shape_blocked = None
     if grid_type == 'rect' and maze_shape != 'rect':
-        if wall_mode == 'cube':
-            # Cube mode's blocked array uses the sub-grid dimensions
-            sub_w = max(1, (width - 1) // 2)
-            sub_h = max(1, (depth - 1) // 2)
-            shape_blocked = get_shape_mask(sub_w, sub_h, maze_shape, shape_rotation)
-        else:
-            shape_blocked = get_shape_mask(width, depth, maze_shape, shape_rotation)
+        shape_blocked = get_shape_mask(width, depth, maze_shape, shape_rotation)
 
     if grid_type == 'polar':
         return generate_polar_maze(
