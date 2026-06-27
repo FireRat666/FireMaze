@@ -18,7 +18,7 @@ When generated, the addon creates separate objects based on your merge configura
 ## Collection & Data Management
 
 - Generating a maze creates a new nested collection (e.g. `FireMaze`, `FireMaze.001`, etc.) containing all generated objects.
-- The collection stores a serialized JSON custom property named `fire_maze_data`. This property contains the grid dimensions, cell states, entrance/exit coordinates, and wall mode.
+- The collection stores a serialized JSON custom property named `fire_maze_data`. This property contains the grid dimensions, cell states, entrance/exit coordinates, wall mode, shape boundary and smooth edge settings, and floor thickness.
 - Interactive editing and rebuild operators read this serialized data directly, ensuring that the viewport editor works seamlessly across different files and sessions.
 - Prop/decor objects are grouped under a scoped sub-collection (e.g. `FireMaze_Props_FireMaze`), linked as a child of the maze collection, and tagged with a `fire_maze_data` custom property.
 - Clicking **Clear Maze** scans the scene for any object or collection carrying the `fire_maze_data` custom property, unlinks them, and purges empty collections. Orphaned mesh/curve datablocks are swept from the database to prevent memory leaks.

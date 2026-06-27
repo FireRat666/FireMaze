@@ -16,7 +16,7 @@ Detailed reference of all features and settings available in the FireMaze Blende
 
 Rectangular and Polar (Circular) grids are supported, each with its own maze generation and mesh construction logic.
 
-- **Rectangular Grid**: Standard width x depth cell layout. All algorithms, rooms, loops, and entrances/exits work as documented.
+- **Rectangular Grid**: Standard width x depth cell layout. All algorithms, rooms, loops, shape boundaries, image masking, and entrances/exits work as documented.
 - **Polar (Circular) Grid**: Maze generated in concentric rings with radially-divided sectors. Each ring's sector count increases outward for a natural circular look. Custom tile alignment modes are available for polar mazes:
   - **Procedural Only**: Uses procedurally generated curved meshes (wedges, circular arcs, radial walls). Custom tiles are ignored.
   - **Trapezoidal Scaling**: Stretches custom tiles to fit the wedge-shaped cells (straight walls, segmented appearance).
@@ -121,7 +121,7 @@ Generate and display the shortest route through your maze:
 
 Replace standard meshes with randomized objects from collections and customize individual faces:
 
-- **Floor / Roof Meshes & Collections**: Replace standard tiles with a custom mesh or assign collections (`Floor Collection` / `Roof Collection`) containing multiple mesh objects to randomly distribute varied floor and roof tiles.
+- **Floor / Roof Meshes & Collections**: Replace standard tiles with a custom mesh or assign collections (`Floor Collection` / `Roof Collection`) containing multiple mesh objects to randomly distribute varied floor and roof tiles. *Note: When `floor_thickness > 0`, custom floor/roof meshes are placed at the top surface and do not scale with thickness.*
 - **Wall Mesh & Wall Collection**: All wall segments are generated from a single optional `Wall Mesh` (or, when `Wall Collection` is set, randomly distributed across all meshes in that collection). There is no separate mesh-per-direction - directional variety comes from the runtime per-face cycling described in the **Independent Face/Tile Swapping** bullet below.
 - **Double-Sided Thin Walls** (Thin Wall Mode only): When enabled, a single-sided custom thin-wall tile is duplicated on both sides of the grid line to fake thickness. Disable this when your custom wall tile already has built-in thickness, so a single centered tile is used.
 - **Instanced Pillars (Pillar Mode)** (Cube Mode only): Enable **Instanced Pillars** to use whole meshes from your Wall Collection as single pillars/cubes rather than assembling them face-by-face. Roof tile generation is automatically suppressed in this mode because each pillar mesh is assumed to already have its own roof. Clicking or Shift-clicking on the top/roof area of these pillars works seamlessly to toggle or cycle them.
@@ -157,7 +157,50 @@ Use a black-and-white image to define the walkable shape of the maze:
 - The mask image is sampled at each cell's position, making it easy to create mazes shaped like logos, text, or custom silhouettes.
 - *Note: Image masking is only available for Rectangular grids.*
 
-## 12. Vertex Painting
+## 12. Shape Boundaries & Smooth Edges
+
+*(Maze Settings panel — Rectangular grids only)*
+
+Define the walkable area of your maze using geometric shape boundaries. Shape boundaries produce a blocked grid that the generation algorithms respect — cells outside the shape are treated as solid walls.
+
+### Available Shapes
+
+| Shape | Description |
+|---|---|
+| **Rectangle** (`rect`) | Standard rectangular boundary. No masking applied. |
+| **Diamond** (`diamond`) | Manhattan-distance diamond silhouette. |
+| **Triangle** (`triangle`) | Equilateral triangle inscribed in the grid, pointing upward. |
+| **Hexagon** (`hexagon`) | Regular flat-top hexagon inscribed in the grid. |
+
+### Shape Rotation
+
+*`shape_rotation` — Enum: 0°, 90°, 180°, 270° (default 0°)*
+
+Rotates the shape boundary around the grid center. Each cell center is tested against the rotated shape to determine if it falls inside or outside.
+
+### Smooth Shape Edges
+
+*`smooth_shape_edges` — Toggle (default OFF)*
+
+When enabled, boundary cells at the shape contour receive additional geometry for a smoother outline. Two methods are available:
+
+| Method | Property Value | Behavior |
+|---|---|---|
+| **Filler Triangles** | `'filler'` | Generates extra triangular faces at the shape contour to fill gaps between the square grid and the shape boundary. Applied per-floor for multilevel mazes. |
+| **Clipped Tiles** | `'clip'` | Clips floor and roof tiles exactly to the shape boundary contour using polygon intersection. |
+
+- **Boundary Offset** (`smooth_boundary_offset` — Float, 0.0–2.0, default 0.15): Extends the shape boundary outward to clear corner fragments when using Clipped Tiles.
+
+### Integration
+
+- All generation algorithms respect the shape mask — blocked cells are never traversed or carved.
+- Entrances and exits are placed on the actual shape contour via `_get_shape_boundary_candidates`, not the grid rectangle.
+- Rooms, stairs, and loops all respect the shape mask.
+- Shape boundaries can be combined with image masking — a cell is blocked if either system marks it as blocked (logical OR).
+
+*Note: Shape boundaries are only available for Rectangular grids.*
+
+## 13. Vertex Painting
 
 *(Post-Processing panel)*
 
@@ -171,7 +214,7 @@ Procedurally paint vertex colors on maze meshes for shading, texturing, or game 
   - **Path Highlight**: Greens the floor tiles along the shortest path to the exit/center.
   - **Distance Gradient**: Black-to-white gradient mapped by BFS distance from the entrance.
 
-## 13. Prop & Decor Spawner EXPERIMENTAL
+## 14. Prop & Decor Spawner EXPERIMENTAL
 
 *(Prop & Decor Spawner panel)*
 
@@ -182,7 +225,7 @@ Automatically place decorative objects on wall faces, dead-ends, and entrances/e
 - **Door Object**: Assign a mesh to spawn at entrance and exit openings.
 - Spawned props are grouped under a scoped sub-collection (`FireMaze_Props_{parent_name}`), linked as a child of the maze collection, and tagged with a `fire_maze_data` custom property so they are reliably cleaned up when the maze is cleared.
 
-## 14. Post-Processing, Cleanups & Colliders
+## 15. Post-Processing, Cleanups & Colliders
 
 *(Post-Processing panel)*
 
@@ -197,13 +240,18 @@ Automatically place decorative objects on wall faces, dead-ends, and entrances/e
 - **Merge Colliders**: Combines all active collider objects into a single unified `FireMaze_Collider` mesh.
 - **Optimize Colliders**: Applies planar dissolve (limited dissolve) to collider meshes, merging coplanar faces to reduce polygon count. Works on individual or merged colliders.
 
-## 15. Multilevel Stairs & Ramps
+## 16. Multilevel Stairs & Ramps
 
 *(Maze Settings panel)*
 
 Configure vertical floor transitions and staircase layouts for multi-floor mazes:
 
 - **Floors**: Sets the number of vertical levels in the maze (supports 1 to 20).
+- **Floor Thickness** (`floor_thickness` — Float, 0.0–10.0, default 0.0): Adds physical depth to the floor slab between levels. When greater than zero:
+  - Floor tiles become 6-face boxes (top, bottom, and 4 sides) instead of single quads.
+  - Three material slots are used: 0 = top (walkable surface), 1 = bottom (underside), 2 = sides.
+  - All vertical positioning uses `level_height = wall_height + floor_thickness`.
+  - Custom floor/roof meshes are placed at the top surface and do not scale with thickness.
 - **Stairs Per Level** (`stair_count`): The number of staircase openings and paths generated between adjacent floor levels.
 - **Stair Style** (`stair_style`): Select between stepped **Staircase** (`stair`) and smooth sloped **Ramp** (`ramp`) geometry.
 - **Stair Footprint** (`stair_footprint`): Configures the size and layout of staircases on Rectangular grids:
